@@ -1,0 +1,1014 @@
+############################################################################################################################################################
+#
+# $File: //pdk/22FDSOI/22FDX-PLUS/dev/CDLIB/src/cdlib/cds/library_tech/tech.layermap $
+# $Revision: #33 $
+#
+# Last Changed:    $Author: kzikatan $
+#                  $DateTime: 2023/06/15 18:11:57 $
+#                  $Change: 734447 $
+#
+# Description:     cmos22fdx Virtuoso Layer Map
+#                  Metal stack 19: 10M_2Mx_5Cx_1Jx_2Qx_LB
+#
+############################################################################################################################################################
+#
+# The information contained herein is confidential and is the property of
+# GlobalFoundries and/or its licensors. GlobalFoundries reserves all
+# proprietary, design, manufacturing, reproduction, use, sales and other rights
+# in the information herein, in its products and services, and to any article or
+# process utilizing such information, except to the extent that rights are
+# expressly granted to others.
+# 
+# This document is for informational purposes only, is current only as of the
+# date of publication and is subject to change by GlobalFoundries at any time
+# without notice. While precautions have been taken in the preparation of the
+# information herein, it may contain technical inaccuracies, omissions and
+# typographical errors. GlobalFoundries is under no obligation to update or
+# otherwise correct this information.
+# 
+# All information contained herein is provided "AS IS." GlobalFoundries MAKES NO
+# REPRESENTATIONS AND DISCLAIMS ALL WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED,
+# INCLUDING WITHOUT LIMITATION ANY IMPLIED WARRANTIES OF NONINFRINGEMENT,
+# MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, WITH RESPECT TO THE
+# INFORMATION CONTAINED HEREIN.
+# 
+# Terms and conditions applicable to the purchase, quality and use of
+# GlobalFoundries' products and services are as set forth in your organization's
+# signed agreement with GlobalFoundries or in GlobalFoundries' Standard Terms
+# and Conditions of Sale. Unless otherwise authorized in a signed agreement with
+# GlobalFoundries, GlobalFoundries' products and services are NOT intended for
+# use in applications such as implantation, life support, or other hazardous
+# uses where malfunction could result in death, bodily injury, or catastrophic
+# property damage.
+# 
+# GF(R), GlobalFoundries(R), the GlobalFoundries logos, GLOBALSOLUTIONS(R), the
+# GLOBALSOLUTIONS(R) logo and combinations thereof, 12FDX(TM), 22FDX(TM),
+# AutoPro(TM), BCDLite(R), and FDX(TM) are trademarks and/or service marks of
+# GlobalFoundries Inc. in the United States and/or other jurisdictions.
+# Third-party usage of these marks is permissible only in connection with the
+# products and/or services of GlobalFoundries Inc. or its subsidiaries. Other
+# product or service names are for identification purposes only and may be
+# trademarks or service marks of their respective owners.
+# 
+# (c) GlobalFoundries Inc. 2023. Unless otherwise indicated, all rights
+# reserved. Do not copy or redistribute except as expressly permitted by
+# GlobalFoundries.
+
+#
+############################################################################################################################################################
+#--------------------------------|---------------------|--------------------------------------------------------------------------------|------------------|
+#       Virtuoso/OpenAccess      |     GDSII/OASIS     |                                Virtuoso                                        |  Design Manual   |
+#                                |                     |                                                                                |                  |
+#  Layer Name   |  Purpose Name  |  Number  | DataType |Material| Mask |                 Qualifier                  |  Photo   | Color  |   Layer Name     |
+#               |                |          |          |  Type  |   #  |                                            |  Mask    | State  |                  |
+#               |                |          |          |        |      |                                            |  Color   |        |                  |
+#---------------|----------------|----------|----------|--------|------|--------------------------------------------|----------|--------|------------------|
+RX               drawing                   2          0                 OASISLayerName:RX                                                # RX
+RX               exclude                   2          2                 OASISLayerName:RXEXCLUD                                          # RXEXCLUD
+RX               fuse                      2          4                 OASISLayerName:RXFUSE                                            # RXFUSE
+RX               net                       2         19                 OASISLayerName:RX_CDSNET                                         # RX_CDSNET
+RX               label                     2         20                 OASISLayerName:RX_NET                                            # RX_NET
+RX_LUP           drawing                   2         24                 OASISLayerName:RX_LUP                                            # RX_LUP
+RX               pin                       2         32                 OASISLayerName:RX_PIN                                            # RX_PIN
+RX               cfill                     2         52                 OASISLayerName:RXCFILL                                           # RXCFILL
+RX               fill                      2         52                 OASISLayerName:RXCFILL                                           # RXCFILL
+RX               cfillopc                  2         55                 OASISLayerName:RXCFILLOPC                                        # RXCFILLOPC
+RX               fillOPC                   2         55                 OASISLayerName:RXCFILLOPC                                        # RXCFILLOPC
+RX               cfilltr                   2         58                 OASISLayerName:RXCFILLTR                                         # RXCFILLTR
+RX               ing                       2         84                 OASISLayerName:RXING                                             # RXING
+RX               critexcl                  2       4373                 OASISLayerName:RXCRITEXCL                                        # RXCRITEXCL
+T3               drawing                   3          0                 OASISLayerName:T3                                                # T3
+T3               net                       3         19                 OASISLayerName:T3_CDSNET                                         # T3_CDSNET
+T3               label                     3         20                 OASISLayerName:T3_NET                                            # T3_NET
+T3               pin                       3         32                 OASISLayerName:T3_PIN                                            # T3_PIN
+NW               drawing                   4          0                 OASISLayerName:NW                                                # NW
+NW               label                     4         20                 OASISLayerName:NW_NET                                            # NW_NET
+NW               res                       4         21                 OASISLayerName:NWRES                                             # NWRES
+NW               pin                       4         32                 OASISLayerName:NW_PIN                                            # NW_PIN
+BFMOAT           drawing                   5         17                 OASISLayerName:BFMOAT                                            # BFMOAT
+BFMOAT           label                     5         20                 OASISLayerName:BFMOAT_LABEL                                      # BFMOAT_LABEL
+BFMOAT           pin                       5         32                 OASISLayerName:BFMOAT_PIN                                        # BFMOAT_PIN
+PC               drawing                   7          0                 OASISLayerName:PC                                                # PC
+PC               exclude                   7          2                 OASISLayerName:PCEXCLUD                                          # PCEXCLUD
+PC               net                       7         19                 OASISLayerName:PC_CDSNET                                         # PC_CDSNET
+PC               label                     7         20                 OASISLayerName:PC_NET                                            # PC_NET
+PC               lvsres                    7         22                 OASISLayerName:PC_RES                                            # PC_RES
+PC               pin                       7         32                 OASISLayerName:PC_PIN                                            # PC_PIN
+PC               cfill                     7         52                 OASISLayerName:PCCFILL                                           # PCCFILL
+PC               fill                      7         52                 OASISLayerName:PCCFILL                                           # PCCFILL
+PC               cfillopc                  7         55                 OASISLayerName:PCCFILLOPC                                        # PCCFILLOPC
+PC               fillOPC                   7         55                 OASISLayerName:PCCFILLOPC                                        # PCCFILLOPC
+PC               cfilltr                   7         58                 OASISLayerName:PCCFILLTR                                         # PCCFILLTR
+AUXPC            drawing                   7         83                 OASISLayerName:AUXPC                                             # AUXPC
+PC               ing                       7         84                 OASISLayerName:PCING                                             # PCING
+PCSTN4           drawing                   7        213                 OASISLayerName:PCSTN4                                            # PCSTN4
+PCSTN8           drawing                   7        217                 OASISLayerName:PCSTN8                                            # PCSTN8
+PCSTP4           drawing                   7        221                 OASISLayerName:PCSTP4                                            # PCSTP4
+PCSTP8           drawing                   7        225                 OASISLayerName:PCSTP8                                            # PCSTP8
+PCSTP12          drawing                   7        241                 OASISLayerName:PCSTP12                                           # PCSTP12
+PCSTP16          drawing                   7        242                 OASISLayerName:PCSTP16                                           # PCSTP16
+PCSTN12          drawing                   7        243                 OASISLayerName:PCSTN12                                           # PCSTN12
+PCSTN16          drawing                   7        244                 OASISLayerName:PCSTN16                                           # PCSTN16
+PC               critexcl                  7       4373                 OASISLayerName:PCCRITEXCL                                        # PCCRITEXCL
+BN               ing                      11         84                 OASISLayerName:BNING                                             # BNING
+NV               drawing                  12         30                 OASISLayerName:NV                                                # NV
+GUARDEDG         drawing                  12         36                 OASISLayerName:GUARDEDG                                          # GUARDEDG
+IND              drawing                  12         38                 OASISLayerName:IND                                               # IND
+EG               drawing                  12         43                 OASISLayerName:EG                                                # EG
+EG               v                        12         44                 OASISLayerName:EGV                                               # EGV
+MINLAYEF         drawing                  12         45                 OASISLayerName:MINLAYEF                                          # MINLAYEF
+NCAP             drawing                  12         47                 OASISLayerName:NCAP                                              # NCAP
+SBLK             drawing                  12         48                 OASISLayerName:SBLK                                              # SBLK
+BIPOLAR          drawing                  12         54                 OASISLayerName:BIPOLAR                                           # BIPOLAR
+TGMOL            drawing                  12         60                 OASISLayerName:TGMOL                                             # TGMOL
+PROBE            drawing                  12         62                 OASISLayerName:PROBE                                             # PROBE
+GUARDRNG         drawing                  12         71                 OASISLayerName:GUARDRNG                                          # GUARDRNG
+EG12V            drawing                  12         80                 OASISLayerName:EG12V                                             # EG12V
+PCAP             drawing                  12         86                 OASISLayerName:PCAP                                              # PCAP
+ESD              cdm                      12         88                 OASISLayerName:ESD_CDM                                           # ESD_CDM
+ESD              hbm                      12         94                 OASISLayerName:ESD_HBM                                           # ESD_HBM
+OUTLINE          efuse                    12         98                 OASISLayerName:EFUSE                                             # EFUSE
+HVTN             drawing                  12        106                 OASISLayerName:HVTN                                              # HVTN
+CELLACTIVE       drawing                  12        112                 OASISLayerName:CELLACTIVE                                        # CELLACTIVE
+ESD_CUST         drawing                  12        132                 OASISLayerName:ESD_CUST                                          # ESD_CUST
+SI_PROVEN        drawing                  12        133                 OASISLayerName:SI_PROVEN                                         # SI_PROVEN
+ROTDEV           drawing                  12        134                 OASISLayerName:ROTDEV                                            # ROTDEV
+TRANSISTORCELL   drawing                  12        143                 OASISLayerName:TRANSISTORCELL                                    # TRANSISTORCELL
+AUXPC2           drawing                  12        149                 OASISLayerName:AUXPC2                                            # AUXPC2
+NBIP             drawing                  12        155                 OASISLayerName:NBIP                                              # NBIP
+ZG33V            drawing                  12        163                 OASISLayerName:ZG33V                                             # ZG33V
+AUXPC3           drawing                  12        207                 OASISLayerName:AUXPC3                                            # AUXPC3
+DRES             drawing                  12        222                 OASISLayerName:DRES                                              # DRES
+ESD_CLAMP        drawing                  12        227                 OASISLayerName:ESD_CLAMP                                         # ESD_CLAMP
+AUXPC4           drawing                  12        290                 OASISLayerName:AUXPC4                                            # AUXPC4
+CA               drawing                  14          0                 OASISLayerName:CA                                                # CA
+CA               exclude                  14          2                 OASISLayerName:CAEXCLUD                                          # CAEXCLUD
+CA               net                      14         19                 OASISLayerName:CA_CDSNET                                         # CA_CDSNET
+CA               label                    14         20                 OASISLayerName:CA_NET                                            # CA_NET
+CA               pin                      14         32                 OASISLayerName:CA_PIN                                            # CA_PIN
+CA               cfillopc                 14         55                 OASISLayerName:CACFILLOPC                                        # CACFILLOPC
+CA               fillOPC                  14         55                 OASISLayerName:CACFILLOPC                                        # CACFILLOPC
+CA               ing                      14         84                 OASISLayerName:CAING                                             # CAING
+CAREC            drawing                  14         88                 OASISLayerName:CAREC                                             # CAREC
+CA               critexcl                 14       4373                 OASISLayerName:CACRITEXCL                                        # CACRITEXCL
+M1               drawing                  15          0                 OASISLayerName:M1                                                # M1
+M1               gnd                      15          0                 OASISLayerName:M1                                                # M1
+M1               vdd                      15          0                 OASISLayerName:M1                                                # M1
+M1               exclude                  15          2                 OASISLayerName:M1EXCLUD                                          # M1EXCLUD
+M1               net                      15         19                 OASISLayerName:M1_CDSNET                                         # M1_CDSNET
+M1               label                    15         20                 OASISLayerName:M1_NET                                            # M1_NET
+M1               lvsres                   15         22                 OASISLayerName:M1_RES                                            # M1_RES
+M1               pin                      15         32                 OASISLayerName:M1_PIN                                            # M1_PIN
+M1               cfill_e1                 15         53                 OASISLayerName:M1CFILL_E1                                        # M1CFILL_E1
+M1               fill                     15         53                 OASISLayerName:M1CFILL_E1                    mask1Color locked   # M1CFILL_E1
+M1               fill                     15         53                 OASISLayerName:M1CFILL_E1                    mask1Color unlocked # M1CFILL_E1
+M1               cfill_e2                 15         54                 OASISLayerName:M1CFILL_E2                                        # M1CFILL_E2
+M1               fill                     15         54                 OASISLayerName:M1CFILL_E2                    mask2Color locked   # M1CFILL_E2
+M1               fill                     15         54                 OASISLayerName:M1CFILL_E2                    mask2Color unlocked # M1CFILL_E2
+M1               cfillopc_e1              15         56                 OASISLayerName:M1CFILLOPC_E1                                     # M1CFILLOPC_E1
+M1               fillOPC                  15         56                 OASISLayerName:M1CFILLOPC_E1                 mask1Color locked   # M1CFILLOPC_E1
+M1               fillOPC                  15         56                 OASISLayerName:M1CFILLOPC_E1                 mask1Color unlocked # M1CFILLOPC_E1
+M1               cfillopc_e2              15         57                 OASISLayerName:M1CFILLOPC_E2                                     # M1CFILLOPC_E2
+M1               fillOPC                  15         57                 OASISLayerName:M1CFILLOPC_E2                 mask2Color locked   # M1CFILLOPC_E2
+M1               fillOPC                  15         57                 OASISLayerName:M1CFILLOPC_E2                 mask2Color unlocked # M1CFILLOPC_E2
+M1               esd                      15         60                 OASISLayerName:M1ESD                                             # M1ESD
+M1               vncap                    15         80                 OASISLayerName:VNCAP_M1                                          # VNCAP_M1
+M1               ing                      15         84                 OASISLayerName:M1ING                                             # M1ING
+M1               vdd1v2                   15        100                 OASISLayerName:M1VDD1V2                                          # M1VDD1V2
+M1               vdd1v5                   15        101                 OASISLayerName:M1VDD1V5                                          # M1VDD1V5
+M1               vdd1v8                   15        102                 OASISLayerName:M1VDD1V8                                          # M1VDD1V8
+M1               vdd2v5                   15        103                 OASISLayerName:M1VDD2V5                                          # M1VDD2V5
+M1               vdd3v3                   15        104                 OASISLayerName:M1VDD3V3                                          # M1VDD3V3
+M1               vdd5v0                   15        105                 OASISLayerName:M1VDD5V0                                          # M1VDD5V0
+M1               drawing                  15        235                 OASISLayerName:M1_E1                         mask1Color locked   # M1_E1
+M1               e1                       15        235                 OASISLayerName:M1_E1                                             # M1_E1
+M1               drawing                  15        236                 OASISLayerName:M1_E2                         mask2Color locked   # M1_E2
+M1               e2                       15        236                 OASISLayerName:M1_E2                                             # M1_E2
+CLIB_MKR2        M1                       15        516                 OASISLayerName:CLIB_MKR2_M1                                      # CLIB_MKR2_M1
+CLIB_MKR3        M1                       15        517                 OASISLayerName:CLIB_MKR3_M1                                      # CLIB_MKR3_M1
+M1               esd_custom               15        534                 OASISLayerName:M1ESD_CUSTOM                                      # M1ESD_CUSTOM
+M1               shld                     15       1010                 OASISLayerName:M1_SHLD                                           # M1_SHLD
+M1               shld                     15       1011                 OASISLayerName:M1_E1_SHLD                    mask1Color locked   # M1_E1_SHLD
+M1               shld                     15       1012                 OASISLayerName:M1_E2_SHLD                    mask2Color locked   # M1_E2_SHLD
+M1               vdd0v4                   15       1049                 OASISLayerName:M1VDD0V4                                          # M1VDD0V4
+M1               vdd6v5                   15       4319                 OASISLayerName:M1VDD6V5                                          # M1VDD6V5
+M1               vdd0v8                   15       4345                 OASISLayerName:M1VDD0V8                                          # M1VDD0V8
+M1               critexcl                 15       4373                 OASISLayerName:M1CRITEXCL                                        # M1CRITEXCL
+M1               vdd7v0                   15       4414                 OASISLayerName:M1VDD7V0                                          # M1VDD7V0
+M1               vdd10v0                  15       4415                 OASISLayerName:M1VDD10V0                                         # M1VDD10V0
+M1               hi                       15       4426                 OASISLayerName:M1_HI                                             # M1_HI
+M1               lo                       15       4427                 OASISLayerName:M1_LO                                             # M1_LO
+M1_PRIO_HI       drawing                  15       4428                 OASISLayerName:M1_PRIO_HI                                        # M1_PRIO_HI
+M1_PRIO_LO       drawing                  15       4429                 OASISLayerName:M1_PRIO_LO                                        # M1_PRIO_LO
+V1               drawing                  16          0 cut             OASISLayerName:V1,cutSize:0.040:0.040                            # V1
+V1               drawing                  16          1 cut             OASISLayerName:V1BAR                                             # V1BAR
+V1               exclude                  16          2                 OASISLayerName:V1EXCLUD                                          # V1EXCLUD
+V1               net                      16         19                 OASISLayerName:V1_CDSNET                                         # V1_CDSNET
+V1               pin                      16         32                 OASISLayerName:V1_PIN                                            # V1_PIN
+V1               cfill                    16         52                 OASISLayerName:V1CFILL                                           # V1CFILL
+V1               fill                     16         52                 OASISLayerName:V1CFILL                                           # V1CFILL
+V1               cfillopc                 16         55                 OASISLayerName:V1CFILLOPC                                        # V1CFILLOPC
+V1               fillOPC                  16         55                 OASISLayerName:V1CFILLOPC                                        # V1CFILLOPC
+V1               ing                      16         84                 OASISLayerName:V1ING                                             # V1ING
+V1               restep                   16        185                 OASISLayerName:V1_RESTEP                                         # V1_RESTEP
+V1               critexcl                 16       4373                 OASISLayerName:V1CRITEXCL                                        # V1CRITEXCL
+M2               drawing                  17          0                 OASISLayerName:M2                                                # M2
+M2               gnd                      17          0                 OASISLayerName:M2                                                # M2
+M2               vdd                      17          0                 OASISLayerName:M2                                                # M2
+M2               exclude                  17          2                 OASISLayerName:M2EXCLUD                                          # M2EXCLUD
+M2               net                      17         19                 OASISLayerName:M2_CDSNET                                         # M2_CDSNET
+M2               label                    17         20                 OASISLayerName:M2_NET                                            # M2_NET
+M2               lvsres                   17         22                 OASISLayerName:M2_RES                                            # M2_RES
+M2               pin                      17         32                 OASISLayerName:M2_PIN                                            # M2_PIN
+M2               cfill_e1                 17         53                 OASISLayerName:M2CFILL_E1                                        # M2CFILL_E1
+M2               fill                     17         53                 OASISLayerName:M2CFILL_E1                    mask1Color locked   # M2CFILL_E1
+M2               fill                     17         53                 OASISLayerName:M2CFILL_E1                    mask1Color unlocked # M2CFILL_E1
+M2               cfill_e2                 17         54                 OASISLayerName:M2CFILL_E2                                        # M2CFILL_E2
+M2               fill                     17         54                 OASISLayerName:M2CFILL_E2                    mask2Color locked   # M2CFILL_E2
+M2               fill                     17         54                 OASISLayerName:M2CFILL_E2                    mask2Color unlocked # M2CFILL_E2
+M2               cfillopc_e1              17         56                 OASISLayerName:M2CFILLOPC_E1                                     # M2CFILLOPC_E1
+M2               fillOPC                  17         56                 OASISLayerName:M2CFILLOPC_E1                 mask1Color locked   # M2CFILLOPC_E1
+M2               fillOPC                  17         56                 OASISLayerName:M2CFILLOPC_E1                 mask1Color unlocked # M2CFILLOPC_E1
+M2               cfillopc_e2              17         57                 OASISLayerName:M2CFILLOPC_E2                                     # M2CFILLOPC_E2
+M2               fillOPC                  17         57                 OASISLayerName:M2CFILLOPC_E2                 mask2Color locked   # M2CFILLOPC_E2
+M2               fillOPC                  17         57                 OASISLayerName:M2CFILLOPC_E2                 mask2Color unlocked # M2CFILLOPC_E2
+M2               esd                      17         60                 OASISLayerName:M2ESD                                             # M2ESD
+M2               vncap                    17         80                 OASISLayerName:VNCAP_M2                                          # VNCAP_M2
+M2               ing                      17         84                 OASISLayerName:M2ING                                             # M2ING
+M2               vdd1v2                   17        100                 OASISLayerName:M2VDD1V2                                          # M2VDD1V2
+M2               vdd1v5                   17        101                 OASISLayerName:M2VDD1V5                                          # M2VDD1V5
+M2               vdd1v8                   17        102                 OASISLayerName:M2VDD1V8                                          # M2VDD1V8
+M2               vdd2v5                   17        103                 OASISLayerName:M2VDD2V5                                          # M2VDD2V5
+M2               vdd3v3                   17        104                 OASISLayerName:M2VDD3V3                                          # M2VDD3V3
+M2               vdd5v0                   17        105                 OASISLayerName:M2VDD5V0                                          # M2VDD5V0
+M2               drawing                  17        235                 OASISLayerName:M2_E1                         mask1Color locked   # M2_E1
+M2               e1                       17        235                 OASISLayerName:M2_E1                                             # M2_E1
+M2               drawing                  17        236                 OASISLayerName:M2_E2                         mask2Color locked   # M2_E2
+M2               e2                       17        236                 OASISLayerName:M2_E2                                             # M2_E2
+CLIB_MKR2        M2                       17        516                 OASISLayerName:CLIB_MKR2_M2                                      # CLIB_MKR2_M2
+CLIB_MKR3        M2                       17        517                 OASISLayerName:CLIB_MKR3_M2                                      # CLIB_MKR3_M2
+M2               esd_custom               17        534                 OASISLayerName:M2ESD_CUSTOM                                      # M2ESD_CUSTOM
+M2               shld                     17       1010                 OASISLayerName:M2_SHLD                                           # M2_SHLD
+M2               shld                     17       1011                 OASISLayerName:M2_E1_SHLD                    mask1Color locked   # M2_E1_SHLD
+M2               shld                     17       1012                 OASISLayerName:M2_E2_SHLD                    mask2Color locked   # M2_E2_SHLD
+M2               vdd0v4                   17       1049                 OASISLayerName:M2VDD0V4                                          # M2VDD0V4
+M2               vdd6v5                   17       4319                 OASISLayerName:M2VDD6V5                                          # M2VDD6V5
+M2               vdd0v8                   17       4345                 OASISLayerName:M2VDD0V8                                          # M2VDD0V8
+M2               critexcl                 17       4373                 OASISLayerName:M2CRITEXCL                                        # M2CRITEXCL
+M2               vdd7v0                   17       4414                 OASISLayerName:M2VDD7V0                                          # M2VDD7V0
+M2               vdd10v0                  17       4415                 OASISLayerName:M2VDD10V0                                         # M2VDD10V0
+M2               hi                       17       4426                 OASISLayerName:M2_HI                                             # M2_HI
+M2               lo                       17       4427                 OASISLayerName:M2_LO                                             # M2_LO
+M2_PRIO_HI       drawing                  17       4428                 OASISLayerName:M2_PRIO_HI                                        # M2_PRIO_HI
+M2_PRIO_LO       drawing                  17       4429                 OASISLayerName:M2_PRIO_LO                                        # M2_PRIO_LO
+LV               drawing                  28          0                 OASISLayerName:LV                                                # LV
+YS               drawing                  33          0 cut             OASISLayerName:YS,cutSize:0.414:0.414                            # YS
+YS               drawing                  33          1 cut             OASISLayerName:YSBAR                                             # YSBAR
+YS               exclude                  33          2                 OASISLayerName:YSEXCLUD                                          # YSEXCLUD
+YS               net                      33         19                 OASISLayerName:YS_CDSNET                                         # YS_CDSNET
+YS               pin                      33         32                 OASISLayerName:YS_PIN                                            # YS_PIN
+YS               cfill                    33         52                 OASISLayerName:YSCFILL                                           # YSCFILL
+YS               fill                     33         52                 OASISLayerName:YSCFILL                                           # YSCFILL
+YS               critexcl                 33       4373                 OASISLayerName:YSCRITEXCL                                        # YSCRITEXCL
+OP               drawing                  37          0                 OASISLayerName:OP                                                # OP
+QB               drawing                  39          0                 OASISLayerName:QB                                                # QB
+QB               gnd                      39          0                 OASISLayerName:QB                                                # QB
+QB               vdd                      39          0                 OASISLayerName:QB                                                # QB
+QB               exclude                  39          2                 OASISLayerName:QBEXCLUD                                          # QBEXCLUD
+QB               net                      39         19                 OASISLayerName:QB_CDSNET                                         # QB_CDSNET
+QB               label                    39         20                 OASISLayerName:QB_NET                                            # QB_NET
+QB               lvsres                   39         22                 OASISLayerName:QB_RES                                            # QB_RES
+QB               pin                      39         32                 OASISLayerName:QB_PIN                                            # QB_PIN
+QB               cfill                    39         52                 OASISLayerName:QBCFILL                                           # QBCFILL
+QB               fill                     39         52                 OASISLayerName:QBCFILL                                           # QBCFILL
+QB               cfillopc                 39         55                 OASISLayerName:QBCFILLOPC                                        # QBCFILLOPC
+QB               fillOPC                  39         55                 OASISLayerName:QBCFILLOPC                                        # QBCFILLOPC
+QB               esd                      39         60                 OASISLayerName:QBESD                                             # QBESD
+QB               vdd1v2                   39        100                 OASISLayerName:QBVDD1V2                                          # QBVDD1V2
+QB               vdd1v5                   39        101                 OASISLayerName:QBVDD1V5                                          # QBVDD1V5
+QB               vdd1v8                   39        102                 OASISLayerName:QBVDD1V8                                          # QBVDD1V8
+QB               vdd2v5                   39        103                 OASISLayerName:QBVDD2V5                                          # QBVDD2V5
+QB               vdd3v3                   39        104                 OASISLayerName:QBVDD3V3                                          # QBVDD3V3
+QB               vdd5v0                   39        105                 OASISLayerName:QBVDD5V0                                          # QBVDD5V0
+QB               shld                     39       1010                 OASISLayerName:QB_SHLD                                           # QB_SHLD
+QB               vdd0v4                   39       1049                 OASISLayerName:QBVDD0V4                                          # QBVDD0V4
+QB               vdd6v5                   39       4319                 OASISLayerName:QBVDD6V5                                          # QBVDD6V5
+QB               vdd0v8                   39       4345                 OASISLayerName:QBVDD0V8                                          # QBVDD0V8
+QB               critexcl                 39       4373                 OASISLayerName:QBCRITEXCL                                        # QBCRITEXCL
+QB               vdd7v0                   39       4414                 OASISLayerName:QBVDD7V0                                          # QBVDD7V0
+QB               vdd10v0                  39       4415                 OASISLayerName:QBVDD10V0                                         # QBVDD10V0
+QB               hi                       39       4426                 OASISLayerName:QB_HI                                             # QB_HI
+QB               lo                       39       4427                 OASISLayerName:QB_LO                                             # QB_LO
+QB_PRIO_HI       drawing                  39       4428                 OASISLayerName:QB_PRIO_HI                                        # QB_PRIO_HI
+QB_PRIO_LO       drawing                  39       4429                 OASISLayerName:QB_PRIO_LO                                        # QB_PRIO_LO
+C4               drawing                  41          0                 OASISLayerName:C4                                                # C4
+C4               gnd                      41          0                 OASISLayerName:C4                                                # C4
+C4               vdd                      41          0                 OASISLayerName:C4                                                # C4
+C4               exclude                  41          2                 OASISLayerName:C4EXCLUD                                          # C4EXCLUD
+C4               net                      41         19                 OASISLayerName:C4_CDSNET                                         # C4_CDSNET
+C4               label                    41         20                 OASISLayerName:C4_NET                                            # C4_NET
+C4               lvsres                   41         22                 OASISLayerName:C4_RES                                            # C4_RES
+C4               pin                      41         32                 OASISLayerName:C4_PIN                                            # C4_PIN
+C4               cfill                    41         52                 OASISLayerName:C4CFILL                                           # C4CFILL
+C4               fill                     41         52                 OASISLayerName:C4CFILL                                           # C4CFILL
+C4               cfillopc                 41         55                 OASISLayerName:C4CFILLOPC                                        # C4CFILLOPC
+C4               fillOPC                  41         55                 OASISLayerName:C4CFILLOPC                                        # C4CFILLOPC
+C4               esd                      41         60                 OASISLayerName:C4ESD                                             # C4ESD
+C4               vncap                    41         80                 OASISLayerName:VNCAP_C4                                          # VNCAP_C4
+C4               ing                      41         84                 OASISLayerName:C4ING                                             # C4ING
+C4               vdd1v2                   41        100                 OASISLayerName:C4VDD1V2                                          # C4VDD1V2
+C4               vdd1v5                   41        101                 OASISLayerName:C4VDD1V5                                          # C4VDD1V5
+C4               vdd1v8                   41        102                 OASISLayerName:C4VDD1V8                                          # C4VDD1V8
+C4               vdd2v5                   41        103                 OASISLayerName:C4VDD2V5                                          # C4VDD2V5
+C4               vdd3v3                   41        104                 OASISLayerName:C4VDD3V3                                          # C4VDD3V3
+C4               vdd5v0                   41        105                 OASISLayerName:C4VDD5V0                                          # C4VDD5V0
+C4               shld                     41       1010                 OASISLayerName:C4_SHLD                                           # C4_SHLD
+C4               vdd0v4                   41       1049                 OASISLayerName:C4VDD0V4                                          # C4VDD0V4
+C4               vdd6v5                   41       4319                 OASISLayerName:C4VDD6V5                                          # C4VDD6V5
+C4               vdd0v8                   41       4345                 OASISLayerName:C4VDD0V8                                          # C4VDD0V8
+C4               critexcl                 41       4373                 OASISLayerName:C4CRITEXCL                                        # C4CRITEXCL
+C4               vdd7v0                   41       4414                 OASISLayerName:C4VDD7V0                                          # C4VDD7V0
+C4               vdd10v0                  41       4415                 OASISLayerName:C4VDD10V0                                         # C4VDD10V0
+C4               hi                       41       4426                 OASISLayerName:C4_HI                                             # C4_HI
+C4               lo                       41       4427                 OASISLayerName:C4_LO                                             # C4_LO
+C4_PRIO_HI       drawing                  41       4428                 OASISLayerName:C4_PRIO_HI                                        # C4_PRIO_HI
+C4_PRIO_LO       drawing                  41       4429                 OASISLayerName:C4_PRIO_LO                                        # C4_PRIO_LO
+MY               ing                      52         84                 OASISLayerName:MYING                                             # MYING
+JV               drawing                  54          0 cut             OASISLayerName:JV,cutSize:1.200:1.200                            # JV
+JV               drawing                  54          1 cut             OASISLayerName:JVBAR                                             # JVBAR
+JV               exclude                  54          2                 OASISLayerName:JVEXCLUD                                          # JVEXCLUD
+JV               net                      54         19                 OASISLayerName:JV_CDSNET                                         # JV_CDSNET
+JV               pin                      54         32                 OASISLayerName:JV_PIN                                            # JV_PIN
+JV               cfill                    54         52                 OASISLayerName:JVCFILL                                           # JVCFILL
+JV               fill                     54         52                 OASISLayerName:JVCFILL                                           # JVCFILL
+JV               critexcl                 54       4373                 OASISLayerName:JVCRITEXCL                                        # JVCRITEXCL
+JW               drawing                  55          0 cut             OASISLayerName:JW,cutSize:1.200:1.200                            # JW
+JW               drawing                  55          1 cut             OASISLayerName:JWBAR                                             # JWBAR
+JW               exclude                  55          2                 OASISLayerName:JWEXCLUD                                          # JWEXCLUD
+JW               net                      55         19                 OASISLayerName:JW_CDSNET                                         # JW_CDSNET
+JW               pin                      55         32                 OASISLayerName:JW_PIN                                            # JW_PIN
+JW               cfill                    55         52                 OASISLayerName:JWCFILL                                           # JWCFILL
+JW               fill                     55         52                 OASISLayerName:JWCFILL                                           # JWCFILL
+JW               critexcl                 55       4373                 OASISLayerName:JWCRITEXCL                                        # JWCRITEXCL
+WVR              drawing                  62          0                 OASISLayerName:WVR                                               # WVR
+CHIPEDGE         drawing                  62          1                 OASISLayerName:CHIPEDGE                                          # CHIPEDGE
+FLTGATE          drawing                  62          2                 OASISLayerName:FLTGATE                                           # FLTGATE
+DIODE            drawing                  62          4                 OASISLayerName:DIODE                                             # DIODE
+LOGOBND          drawing                  62          5                 OASISLayerName:LOGOBND                                           # LOGOBND
+CELLSNR          drawing                  62          6                 OASISLayerName:CELLSNR                                           # CELLSNR
+SXCUT            drawing                  62          9                 OASISLayerName:SXCUT                                             # SXCUT
+SXCUT            label                    62         10                 OASISLayerName:SXCUT_NET                                         # SXCUT_NET
+SXCUT            pin                      62         11                 OASISLayerName:SXCUT_PIN                                         # SXCUT_PIN
+ALPHA            drawing                  62         20                 OASISLayerName:ALPHA                                             # ALPHA
+OUTLINE          drawing                  62         21                 OASISLayerName:OUTLINE                                           # OUTLINE
+VNCAP            parm                     62         40                 OASISLayerName:VNCAP_PARM                                        # VNCAP_PARM
+VNCAP            count                    62         41                 OASISLayerName:VNCAP_COUNT                                       # VNCAP_COUNT
+OUTLINE          rf                       62         65                 OASISLayerName:OUTLINE_RF                                        # OUTLINE_RF
+VNCAP            hv                       62        110                 OASISLayerName:VNCAPHV                                           # VNCAPHV
+text             drawing                  63          0                 OASISLayerName:TEXTJNK                                           # TEXTJNK
+ALPHA            ip                       63         63                 OASISLayerName:ALPHA_IP                                          # ALPHA_IP
+SRPERIPH         drawing                  63         69                 OASISLayerName:SRPERIPH                                          # SRPERIPH
+LB               drawing                  69          0                 OASISLayerName:LB                                                # LB
+LB               gnd                      69          0                 OASISLayerName:LB                                                # LB
+LB               vdd                      69          0                 OASISLayerName:LB                                                # LB
+LB               exclude                  69          2                 OASISLayerName:LBEXCLUD                                          # LBEXCLUD
+LBDUMMY          drawing                  69          6                 OASISLayerName:LBDUMMY                                           # LBDUMMY
+LB               net                      69         19                 OASISLayerName:LB_CDSNET                                         # LB_CDSNET
+LB               label                    69         20                 OASISLayerName:LB_NET                                            # LB_NET
+LB               lvsres                   69         22                 OASISLayerName:LB_RES                                            # LB_RES
+LB               pin                      69         32                 OASISLayerName:LB_PIN                                            # LB_PIN
+LB               cfill                    69         52                 OASISLayerName:LBCFILL                                           # LBCFILL
+LB               fill                     69         52                 OASISLayerName:LBCFILL                                           # LBCFILL
+LB               esd                      69         60                 OASISLayerName:LBESD                                             # LBESD
+LB               vdd1v2                   69        100                 OASISLayerName:LBVDD1V2                                          # LBVDD1V2
+LB               vdd1v5                   69        101                 OASISLayerName:LBVDD1V5                                          # LBVDD1V5
+LB               vdd1v8                   69        102                 OASISLayerName:LBVDD1V8                                          # LBVDD1V8
+LB               vdd2v5                   69        103                 OASISLayerName:LBVDD2V5                                          # LBVDD2V5
+LB               vdd3v3                   69        104                 OASISLayerName:LBVDD3V3                                          # LBVDD3V3
+LB               vdd5v0                   69        105                 OASISLayerName:LBVDD5V0                                          # LBVDD5V0
+LB               esd_custom               69        534                 OASISLayerName:LBESD_CUSTOM                                      # LBESD_CUSTOM
+LB               shld                     69       1010                 OASISLayerName:LB_SHLD                                           # LB_SHLD
+LB               vdd0v4                   69       1049                 OASISLayerName:LBVDD0V4                                          # LBVDD0V4
+LB               vdd6v5                   69       4319                 OASISLayerName:LBVDD6V5                                          # LBVDD6V5
+LB               vdd0v8                   69       4345                 OASISLayerName:LBVDD0V8                                          # LBVDD0V8
+LB               critexcl                 69       4373                 OASISLayerName:LBCRITEXCL                                        # LBCRITEXCL
+LB               vdd7v0                   69       4414                 OASISLayerName:LBVDD7V0                                          # LBVDD7V0
+LB               vdd10v0                  69       4415                 OASISLayerName:LBVDD10V0                                         # LBVDD10V0
+LB               hi                       69       4426                 OASISLayerName:LB_HI                                             # LB_HI
+LB               lo                       69       4427                 OASISLayerName:LB_LO                                             # LB_LO
+LB_PRIO_HI       drawing                  69       4428                 OASISLayerName:LB_PRIO_HI                                        # LB_PRIO_HI
+LB_PRIO_LO       drawing                  69       4429                 OASISLayerName:LB_PRIO_LO                                        # LB_PRIO_LO
+VV               drawing                  70          0 cut             OASISLayerName:VV,cutSize:2.700:2.700                            # VV
+VV               drawing                  70          1 cut             OASISLayerName:VVBAR                                             # VVBAR
+VV               exclude                  70          2                 OASISLayerName:VVEXCLUD                                          # VVEXCLUD
+VV               net                      70         19                 OASISLayerName:VV_CDSNET                                         # VV_CDSNET
+VV               pin                      70         32                 OASISLayerName:VV_PIN                                            # VV_PIN
+VV               cfill                    70         52                 OASISLayerName:VVCFILL                                           # VVCFILL
+VV               critexcl                 70       4373                 OASISLayerName:VVCRITEXCL                                        # VVCRITEXCL
+CLHERE           drawing                 102         52                 OASISLayerName:CLHERE                                            # CLHERE
+PG               ing                     108          1                 OASISLayerName:PGING                                             # PGING
+LW               ing                     108         18                 OASISLayerName:LWING                                             # LWING
+XW               ing                     108         37                 OASISLayerName:XWING                                             # XWING
+GN               ing                     108         63                 OASISLayerName:GNING                                             # GNING
+TJ               ing                     108         95                 OASISLayerName:TJING                                             # TJING
+A2               drawing                 138          0 cut             OASISLayerName:A2,cutSize:0.044:0.044                            # A2
+A2               drawing                 138          1 cut             OASISLayerName:A2BAR                                             # A2BAR
+A2               exclude                 138          2                 OASISLayerName:A2EXCLUD                                          # A2EXCLUD
+A2               net                     138         19                 OASISLayerName:A2_CDSNET                                         # A2_CDSNET
+A2               pin                     138         32                 OASISLayerName:A2_PIN                                            # A2_PIN
+A2               cfill                   138         52                 OASISLayerName:A2CFILL                                           # A2CFILL
+A2               fill                    138         52                 OASISLayerName:A2CFILL                                           # A2CFILL
+A2               cfillopc                138         55                 OASISLayerName:A2CFILLOPC                                        # A2CFILLOPC
+A2               fillOPC                 138         55                 OASISLayerName:A2CFILLOPC                                        # A2CFILLOPC
+A2               ing                     138         84                 OASISLayerName:A2ING                                             # A2ING
+A2               critexcl                138       4373                 OASISLayerName:A2CRITEXCL                                        # A2CRITEXCL
+QA               drawing                 139          0                 OASISLayerName:QA                                                # QA
+QA               gnd                     139          0                 OASISLayerName:QA                                                # QA
+QA               vdd                     139          0                 OASISLayerName:QA                                                # QA
+QA               exclude                 139          2                 OASISLayerName:QAEXCLUD                                          # QAEXCLUD
+QA               net                     139         19                 OASISLayerName:QA_CDSNET                                         # QA_CDSNET
+QA               label                   139         20                 OASISLayerName:QA_NET                                            # QA_NET
+QA               lvsres                  139         22                 OASISLayerName:QA_RES                                            # QA_RES
+QA               pin                     139         32                 OASISLayerName:QA_PIN                                            # QA_PIN
+QA               cfill                   139         52                 OASISLayerName:QACFILL                                           # QACFILL
+QA               fill                    139         52                 OASISLayerName:QACFILL                                           # QACFILL
+QA               cfillopc                139         55                 OASISLayerName:QACFILLOPC                                        # QACFILLOPC
+QA               fillOPC                 139         55                 OASISLayerName:QACFILLOPC                                        # QACFILLOPC
+QA               esd                     139         60                 OASISLayerName:QAESD                                             # QAESD
+QA               vdd1v2                  139        100                 OASISLayerName:QAVDD1V2                                          # QAVDD1V2
+QA               vdd1v5                  139        101                 OASISLayerName:QAVDD1V5                                          # QAVDD1V5
+QA               vdd1v8                  139        102                 OASISLayerName:QAVDD1V8                                          # QAVDD1V8
+QA               vdd2v5                  139        103                 OASISLayerName:QAVDD2V5                                          # QAVDD2V5
+QA               vdd3v3                  139        104                 OASISLayerName:QAVDD3V3                                          # QAVDD3V3
+QA               vdd5v0                  139        105                 OASISLayerName:QAVDD5V0                                          # QAVDD5V0
+QA               shld                    139       1010                 OASISLayerName:QA_SHLD                                           # QA_SHLD
+QA               vdd0v4                  139       1049                 OASISLayerName:QAVDD0V4                                          # QAVDD0V4
+QA               vdd6v5                  139       4319                 OASISLayerName:QAVDD6V5                                          # QAVDD6V5
+QA               vdd0v8                  139       4345                 OASISLayerName:QAVDD0V8                                          # QAVDD0V8
+QA               critexcl                139       4373                 OASISLayerName:QACRITEXCL                                        # QACRITEXCL
+QA               vdd7v0                  139       4414                 OASISLayerName:QAVDD7V0                                          # QAVDD7V0
+QA               vdd10v0                 139       4415                 OASISLayerName:QAVDD10V0                                         # QAVDD10V0
+QA               hi                      139       4426                 OASISLayerName:QA_HI                                             # QA_HI
+QA               lo                      139       4427                 OASISLayerName:QA_LO                                             # QA_LO
+QA_PRIO_HI       drawing                 139       4428                 OASISLayerName:QA_PRIO_HI                                        # QA_PRIO_HI
+QA_PRIO_LO       drawing                 139       4429                 OASISLayerName:QA_PRIO_LO                                        # QA_PRIO_LO
+C3               drawing                 140          0                 OASISLayerName:C3                                                # C3
+C3               gnd                     140          0                 OASISLayerName:C3                                                # C3
+C3               vdd                     140          0                 OASISLayerName:C3                                                # C3
+C3               exclude                 140          2                 OASISLayerName:C3EXCLUD                                          # C3EXCLUD
+C3               net                     140         19                 OASISLayerName:C3_CDSNET                                         # C3_CDSNET
+C3               label                   140         20                 OASISLayerName:C3_NET                                            # C3_NET
+C3               lvsres                  140         22                 OASISLayerName:C3_RES                                            # C3_RES
+C3               pin                     140         32                 OASISLayerName:C3_PIN                                            # C3_PIN
+C3               cfill                   140         52                 OASISLayerName:C3CFILL                                           # C3CFILL
+C3               fill                    140         52                 OASISLayerName:C3CFILL                                           # C3CFILL
+C3               cfillopc                140         55                 OASISLayerName:C3CFILLOPC                                        # C3CFILLOPC
+C3               fillOPC                 140         55                 OASISLayerName:C3CFILLOPC                                        # C3CFILLOPC
+C3               esd                     140         60                 OASISLayerName:C3ESD                                             # C3ESD
+C3               vncap                   140         80                 OASISLayerName:VNCAP_C3                                          # VNCAP_C3
+C3               ing                     140         84                 OASISLayerName:C3ING                                             # C3ING
+C3               vdd1v2                  140        100                 OASISLayerName:C3VDD1V2                                          # C3VDD1V2
+C3               vdd1v5                  140        101                 OASISLayerName:C3VDD1V5                                          # C3VDD1V5
+C3               vdd1v8                  140        102                 OASISLayerName:C3VDD1V8                                          # C3VDD1V8
+C3               vdd2v5                  140        103                 OASISLayerName:C3VDD2V5                                          # C3VDD2V5
+C3               vdd3v3                  140        104                 OASISLayerName:C3VDD3V3                                          # C3VDD3V3
+C3               vdd5v0                  140        105                 OASISLayerName:C3VDD5V0                                          # C3VDD5V0
+C3               esd_custom              140        534                 OASISLayerName:C3ESD_CUSTOM                                      # C3ESD_CUSTOM
+C3               shld                    140       1010                 OASISLayerName:C3_SHLD                                           # C3_SHLD
+C3               vdd0v4                  140       1049                 OASISLayerName:C3VDD0V4                                          # C3VDD0V4
+C3               vdd6v5                  140       4319                 OASISLayerName:C3VDD6V5                                          # C3VDD6V5
+C3               vdd0v8                  140       4345                 OASISLayerName:C3VDD0V8                                          # C3VDD0V8
+C3               critexcl                140       4373                 OASISLayerName:C3CRITEXCL                                        # C3CRITEXCL
+C3               vdd7v0                  140       4414                 OASISLayerName:C3VDD7V0                                          # C3VDD7V0
+C3               vdd10v0                 140       4415                 OASISLayerName:C3VDD10V0                                         # C3VDD10V0
+C3               hi                      140       4426                 OASISLayerName:C3_HI                                             # C3_HI
+C3               lo                      140       4427                 OASISLayerName:C3_LO                                             # C3_LO
+C3_PRIO_HI       drawing                 140       4428                 OASISLayerName:C3_PRIO_HI                                        # C3_PRIO_HI
+C3_PRIO_LO       drawing                 140       4429                 OASISLayerName:C3_PRIO_LO                                        # C3_PRIO_LO
+C5               drawing                 141          0                 OASISLayerName:C5                                                # C5
+C5               gnd                     141          0                 OASISLayerName:C5                                                # C5
+C5               vdd                     141          0                 OASISLayerName:C5                                                # C5
+C5               exclude                 141          2                 OASISLayerName:C5EXCLUD                                          # C5EXCLUD
+C5               net                     141         19                 OASISLayerName:C5_CDSNET                                         # C5_CDSNET
+C5               label                   141         20                 OASISLayerName:C5_NET                                            # C5_NET
+C5               lvsres                  141         22                 OASISLayerName:C5_RES                                            # C5_RES
+C5               pin                     141         32                 OASISLayerName:C5_PIN                                            # C5_PIN
+C5               cfill                   141         52                 OASISLayerName:C5CFILL                                           # C5CFILL
+C5               fill                    141         52                 OASISLayerName:C5CFILL                                           # C5CFILL
+C5               cfillopc                141         55                 OASISLayerName:C5CFILLOPC                                        # C5CFILLOPC
+C5               fillOPC                 141         55                 OASISLayerName:C5CFILLOPC                                        # C5CFILLOPC
+C5               esd                     141         60                 OASISLayerName:C5ESD                                             # C5ESD
+C5               vncap                   141         80                 OASISLayerName:VNCAP_C5                                          # VNCAP_C5
+C5               ing                     141         84                 OASISLayerName:C5ING                                             # C5ING
+C5               vdd1v2                  141        100                 OASISLayerName:C5VDD1V2                                          # C5VDD1V2
+C5               vdd1v5                  141        101                 OASISLayerName:C5VDD1V5                                          # C5VDD1V5
+C5               vdd1v8                  141        102                 OASISLayerName:C5VDD1V8                                          # C5VDD1V8
+C5               vdd2v5                  141        103                 OASISLayerName:C5VDD2V5                                          # C5VDD2V5
+C5               vdd3v3                  141        104                 OASISLayerName:C5VDD3V3                                          # C5VDD3V3
+C5               vdd5v0                  141        105                 OASISLayerName:C5VDD5V0                                          # C5VDD5V0
+C5               shld                    141       1010                 OASISLayerName:C5_SHLD                                           # C5_SHLD
+C5               vdd0v4                  141       1049                 OASISLayerName:C5VDD0V4                                          # C5VDD0V4
+C5               vdd6v5                  141       4319                 OASISLayerName:C5VDD6V5                                          # C5VDD6V5
+C5               vdd0v8                  141       4345                 OASISLayerName:C5VDD0V8                                          # C5VDD0V8
+C5               critexcl                141       4373                 OASISLayerName:C5CRITEXCL                                        # C5CRITEXCL
+C5               vdd7v0                  141       4414                 OASISLayerName:C5VDD7V0                                          # C5VDD7V0
+C5               vdd10v0                 141       4415                 OASISLayerName:C5VDD10V0                                         # C5VDD10V0
+C5               hi                      141       4426                 OASISLayerName:C5_HI                                             # C5_HI
+C5               lo                      141       4427                 OASISLayerName:C5_LO                                             # C5_LO
+C5_PRIO_HI       drawing                 141       4428                 OASISLayerName:C5_PRIO_HI                                        # C5_PRIO_HI
+C5_PRIO_LO       drawing                 141       4429                 OASISLayerName:C5_PRIO_LO                                        # C5_PRIO_LO
+A3               drawing                 152          0 cut             OASISLayerName:A3,cutSize:0.044:0.044                            # A3
+A3               drawing                 152          1 cut             OASISLayerName:A3BAR                                             # A3BAR
+A3               exclude                 152          2                 OASISLayerName:A3EXCLUD                                          # A3EXCLUD
+A3               net                     152         19                 OASISLayerName:A3_CDSNET                                         # A3_CDSNET
+A3               pin                     152         32                 OASISLayerName:A3_PIN                                            # A3_PIN
+A3               cfill                   152         52                 OASISLayerName:A3CFILL                                           # A3CFILL
+A3               fill                    152         52                 OASISLayerName:A3CFILL                                           # A3CFILL
+A3               cfillopc                152         55                 OASISLayerName:A3CFILLOPC                                        # A3CFILLOPC
+A3               fillOPC                 152         55                 OASISLayerName:A3CFILLOPC                                        # A3CFILLOPC
+A3               ing                     152         84                 OASISLayerName:A3ING                                             # A3ING
+A3               critexcl                152       4373                 OASISLayerName:A3CRITEXCL                                        # A3CRITEXCL
+A4               drawing                 153          0 cut             OASISLayerName:A4,cutSize:0.044:0.044                            # A4
+A4               drawing                 153          1 cut             OASISLayerName:A4BAR                                             # A4BAR
+A4               exclude                 153          2                 OASISLayerName:A4EXCLUD                                          # A4EXCLUD
+A4               net                     153         19                 OASISLayerName:A4_CDSNET                                         # A4_CDSNET
+A4               pin                     153         32                 OASISLayerName:A4_PIN                                            # A4_PIN
+A4               cfill                   153         52                 OASISLayerName:A4CFILL                                           # A4CFILL
+A4               fill                    153         52                 OASISLayerName:A4CFILL                                           # A4CFILL
+A4               cfillopc                153         55                 OASISLayerName:A4CFILLOPC                                        # A4CFILLOPC
+A4               fillOPC                 153         55                 OASISLayerName:A4CFILLOPC                                        # A4CFILLOPC
+A4               ing                     153         84                 OASISLayerName:A4ING                                             # A4ING
+A4               critexcl                153       4373                 OASISLayerName:A4CRITEXCL                                        # A4CRITEXCL
+C1               drawing                 187          0                 OASISLayerName:C1                                                # C1
+C1               gnd                     187          0                 OASISLayerName:C1                                                # C1
+C1               vdd                     187          0                 OASISLayerName:C1                                                # C1
+C1               exclude                 187          2                 OASISLayerName:C1EXCLUD                                          # C1EXCLUD
+C1               net                     187         19                 OASISLayerName:C1_CDSNET                                         # C1_CDSNET
+C1               label                   187         20                 OASISLayerName:C1_NET                                            # C1_NET
+C1               lvsres                  187         22                 OASISLayerName:C1_RES                                            # C1_RES
+C1               pin                     187         32                 OASISLayerName:C1_PIN                                            # C1_PIN
+C1               cfill                   187         52                 OASISLayerName:C1CFILL                                           # C1CFILL
+C1               fill                    187         52                 OASISLayerName:C1CFILL                                           # C1CFILL
+C1               cfillopc                187         55                 OASISLayerName:C1CFILLOPC                                        # C1CFILLOPC
+C1               fillOPC                 187         55                 OASISLayerName:C1CFILLOPC                                        # C1CFILLOPC
+C1               esd                     187         60                 OASISLayerName:C1ESD                                             # C1ESD
+C1               vncap                   187         80                 OASISLayerName:VNCAP_C1                                          # VNCAP_C1
+C1               ing                     187         84                 OASISLayerName:C1ING                                             # C1ING
+C1               vdd1v2                  187        100                 OASISLayerName:C1VDD1V2                                          # C1VDD1V2
+C1               vdd1v5                  187        101                 OASISLayerName:C1VDD1V5                                          # C1VDD1V5
+C1               vdd1v8                  187        102                 OASISLayerName:C1VDD1V8                                          # C1VDD1V8
+C1               vdd2v5                  187        103                 OASISLayerName:C1VDD2V5                                          # C1VDD2V5
+C1               vdd3v3                  187        104                 OASISLayerName:C1VDD3V3                                          # C1VDD3V3
+C1               vdd5v0                  187        105                 OASISLayerName:C1VDD5V0                                          # C1VDD5V0
+C1               esd_custom              187        534                 OASISLayerName:C1ESD_CUSTOM                                      # C1ESD_CUSTOM
+C1               shld                    187       1010                 OASISLayerName:C1_SHLD                                           # C1_SHLD
+C1               vdd0v4                  187       1049                 OASISLayerName:C1VDD0V4                                          # C1VDD0V4
+C1               vdd6v5                  187       4319                 OASISLayerName:C1VDD6V5                                          # C1VDD6V5
+C1               vdd0v8                  187       4345                 OASISLayerName:C1VDD0V8                                          # C1VDD0V8
+C1               critexcl                187       4373                 OASISLayerName:C1CRITEXCL                                        # C1CRITEXCL
+C1               vdd7v0                  187       4414                 OASISLayerName:C1VDD7V0                                          # C1VDD7V0
+C1               vdd10v0                 187       4415                 OASISLayerName:C1VDD10V0                                         # C1VDD10V0
+C1               hi                      187       4426                 OASISLayerName:C1_HI                                             # C1_HI
+C1               lo                      187       4427                 OASISLayerName:C1_LO                                             # C1_LO
+C1_PRIO_HI       drawing                 187       4428                 OASISLayerName:C1_PRIO_HI                                        # C1_PRIO_HI
+C1_PRIO_LO       drawing                 187       4429                 OASISLayerName:C1_PRIO_LO                                        # C1_PRIO_LO
+A1               drawing                 188          0 cut             OASISLayerName:A1,cutSize:0.044:0.044                            # A1
+A1               drawing                 188          1 cut             OASISLayerName:A1BAR                                             # A1BAR
+A1               exclude                 188          2                 OASISLayerName:A1EXCLUD                                          # A1EXCLUD
+A1               net                     188         19                 OASISLayerName:A1_CDSNET                                         # A1_CDSNET
+A1               pin                     188         32                 OASISLayerName:A1_PIN                                            # A1_PIN
+A1               cfill                   188         52                 OASISLayerName:A1CFILL                                           # A1CFILL
+A1               fill                    188         52                 OASISLayerName:A1CFILL                                           # A1CFILL
+A1               cfillopc                188         55                 OASISLayerName:A1CFILLOPC                                        # A1CFILLOPC
+A1               fillOPC                 188         55                 OASISLayerName:A1CFILLOPC                                        # A1CFILLOPC
+A1               ing                     188         84                 OASISLayerName:A1ING                                             # A1ING
+A1               critexcl                188       4373                 OASISLayerName:A1CRITEXCL                                        # A1CRITEXCL
+C2               drawing                 197          0                 OASISLayerName:C2                                                # C2
+C2               gnd                     197          0                 OASISLayerName:C2                                                # C2
+C2               vdd                     197          0                 OASISLayerName:C2                                                # C2
+C2               exclude                 197          2                 OASISLayerName:C2EXCLUD                                          # C2EXCLUD
+C2               net                     197         19                 OASISLayerName:C2_CDSNET                                         # C2_CDSNET
+C2               label                   197         20                 OASISLayerName:C2_NET                                            # C2_NET
+C2               lvsres                  197         22                 OASISLayerName:C2_RES                                            # C2_RES
+C2               pin                     197         32                 OASISLayerName:C2_PIN                                            # C2_PIN
+C2               cfill                   197         52                 OASISLayerName:C2CFILL                                           # C2CFILL
+C2               fill                    197         52                 OASISLayerName:C2CFILL                                           # C2CFILL
+C2               cfillopc                197         55                 OASISLayerName:C2CFILLOPC                                        # C2CFILLOPC
+C2               fillOPC                 197         55                 OASISLayerName:C2CFILLOPC                                        # C2CFILLOPC
+C2               esd                     197         60                 OASISLayerName:C2ESD                                             # C2ESD
+C2               vncap                   197         80                 OASISLayerName:VNCAP_C2                                          # VNCAP_C2
+C2               ing                     197         84                 OASISLayerName:C2ING                                             # C2ING
+C2               vdd1v2                  197        100                 OASISLayerName:C2VDD1V2                                          # C2VDD1V2
+C2               vdd1v5                  197        101                 OASISLayerName:C2VDD1V5                                          # C2VDD1V5
+C2               vdd1v8                  197        102                 OASISLayerName:C2VDD1V8                                          # C2VDD1V8
+C2               vdd2v5                  197        103                 OASISLayerName:C2VDD2V5                                          # C2VDD2V5
+C2               vdd3v3                  197        104                 OASISLayerName:C2VDD3V3                                          # C2VDD3V3
+C2               vdd5v0                  197        105                 OASISLayerName:C2VDD5V0                                          # C2VDD5V0
+C2               esd_custom              197        534                 OASISLayerName:C2ESD_CUSTOM                                      # C2ESD_CUSTOM
+C2               shld                    197       1010                 OASISLayerName:C2_SHLD                                           # C2_SHLD
+C2               vdd0v4                  197       1049                 OASISLayerName:C2VDD0V4                                          # C2VDD0V4
+C2               vdd6v5                  197       4319                 OASISLayerName:C2VDD6V5                                          # C2VDD6V5
+C2               vdd0v8                  197       4345                 OASISLayerName:C2VDD0V8                                          # C2VDD0V8
+C2               critexcl                197       4373                 OASISLayerName:C2CRITEXCL                                        # C2CRITEXCL
+C2               vdd7v0                  197       4414                 OASISLayerName:C2VDD7V0                                          # C2VDD7V0
+C2               vdd10v0                 197       4415                 OASISLayerName:C2VDD10V0                                         # C2VDD10V0
+C2               hi                      197       4426                 OASISLayerName:C2_HI                                             # C2_HI
+C2               lo                      197       4427                 OASISLayerName:C2_LO                                             # C2_LO
+C2_PRIO_HI       drawing                 197       4428                 OASISLayerName:C2_PRIO_HI                                        # C2_PRIO_HI
+C2_PRIO_LO       drawing                 197       4429                 OASISLayerName:C2_PRIO_LO                                        # C2_PRIO_LO
+ZG18V            drawing                 200         12                 OASISLayerName:ZG18V                                             # ZG18V
+LVTP             drawing                 200         14                 OASISLayerName:LVTP                                              # LVTP
+HVTP             drawing                 200         17                 OASISLayerName:HVTP                                              # HVTP
+LVS              drawing                 200        200                 OASISLayerName:LVS                                               # LVS
+LVS              drawing1                200        201                 OASISLayerName:LVS1                                              # LVS1
+LVS              drawing2                200        202                 OASISLayerName:LVS2                                              # LVS2
+LVS              drawing3                200        203                 OASISLayerName:LVS3                                              # LVS3
+LVS              drawing4                200        204                 OASISLayerName:LVS4                                              # LVS4
+LVS              drawing5                200        205                 OASISLayerName:LVS5                                              # LVS5
+LVS              drawing6                200        206                 OASISLayerName:LVS6                                              # LVS6
+LVS              drawing7                200        207                 OASISLayerName:LVS7                                              # LVS7
+LVS              drawing8                200        208                 OASISLayerName:LVS8                                              # LVS8
+LVS              drawing9                200        209                 OASISLayerName:LVS9                                              # LVS9
+LVS1             drawing                 200        210                 OASISLayerName:LVS10                                             # LVS10
+LVS1             drawing1                200        211                 OASISLayerName:LVS11                                             # LVS11
+LVS1             drawing2                200        212                 OASISLayerName:LVS12                                             # LVS12
+LVS1             drawing3                200        213                 OASISLayerName:LVS13                                             # LVS13
+LVS1             drawing4                200        214                 OASISLayerName:LVS14                                             # LVS14
+LVS1             drawing5                200        215                 OASISLayerName:LVS15                                             # LVS15
+LVS1             drawing6                200        216                 OASISLayerName:LVS16                                             # LVS16
+LVS1             drawing7                200        217                 OASISLayerName:LVS17                                             # LVS17
+LVS1             drawing8                200        218                 OASISLayerName:LVS18                                             # LVS18
+LVS1             drawing9                200        219                 OASISLayerName:LVS19                                             # LVS19
+LVS2             drawing                 200        220                 OASISLayerName:LVS20                                             # LVS20
+LVS2             drawing1                200        221                 OASISLayerName:LVS21                                             # LVS21
+LVS2             drawing2                200        222                 OASISLayerName:LVS22                                             # LVS22
+LVS2             drawing3                200        223                 OASISLayerName:LVS23                                             # LVS23
+LVS2             drawing4                200        224                 OASISLayerName:LVS24                                             # LVS24
+ERC              drawing                 200        225                 OASISLayerName:ERC0                                              # ERC0
+ERC              drawing1                200        226                 OASISLayerName:ERC1                                              # ERC1
+ERC              drawing2                200        227                 OASISLayerName:ERC2                                              # ERC2
+ERC              drawing3                200        228                 OASISLayerName:ERC3                                              # ERC3
+ERC              drawing4                200        229                 OASISLayerName:ERC4                                              # ERC4
+ERC              drawing5                200        230                 OASISLayerName:ERC5                                              # ERC5
+ERC              drawing6                200        231                 OASISLayerName:ERC6                                              # ERC6
+ERC              drawing7                200        232                 OASISLayerName:ERC7                                              # ERC7
+ERC              drawing8                200        233                 OASISLayerName:ERC8                                              # ERC8
+ERC              drawing9                200        234                 OASISLayerName:ERC9                                              # ERC9
+ERC1             drawing                 200        235                 OASISLayerName:ERC10                                             # ERC10
+ERC1             drawing1                200        236                 OASISLayerName:ERC11                                             # ERC11
+ERC1             drawing2                200        237                 OASISLayerName:ERC12                                             # ERC12
+ERC1             drawing3                200        238                 OASISLayerName:ERC13                                             # ERC13
+ERC1             drawing4                200        239                 OASISLayerName:ERC14                                             # ERC14
+ERC1             drawing5                200        240                 OASISLayerName:ERC15                                             # ERC15
+ERC1             drawing6                200        241                 OASISLayerName:ERC16                                             # ERC16
+ERC1             drawing7                200        242                 OASISLayerName:ERC17                                             # ERC17
+ERC1             drawing8                200        243                 OASISLayerName:ERC18                                             # ERC18
+ERC1             drawing9                200        244                 OASISLayerName:ERC19                                             # ERC19
+ERC2             drawing                 200        245                 OASISLayerName:ERC20                                             # ERC20
+ERC2             drawing1                200        246                 OASISLayerName:ERC21                                             # ERC21
+ERC2             drawing2                200        247                 OASISLayerName:ERC22                                             # ERC22
+ERC2             drawing3                200        248                 OASISLayerName:ERC23                                             # ERC23
+ERC2             drawing4                200        249                 OASISLayerName:ERC24                                             # ERC24
+TRANSMIS         drawing                 212          7                 OASISLayerName:TRANSMIS                                          # TRANSMIS
+ESDSCR           hbm                     212         16                 OASISLayerName:ESDSCR_HBM                                        # ESDSCR_HBM
+SRAM_M           drawing                 212         19                 OASISLayerName:SRAM_M                                            # SRAM_M
+SRAM_N           drawing                 212         22                 OASISLayerName:SRAM_N                                            # SRAM_N
+SRAM_T           drawing                 212         23                 OASISLayerName:SRAM_T                                            # SRAM_T
+SRAM_B           drawing                 212         24                 OASISLayerName:SRAM_B                                            # SRAM_B
+SRAM_A           drawing                 212         26                 OASISLayerName:SRAM_A                                            # SRAM_A
+SRAM_C           drawing                 212         28                 OASISLayerName:SRAM_C                                            # SRAM_C
+SRAM_PG          drawing                 212         31                 OASISLayerName:SRAM_PG                                           # SRAM_PG
+SLVTN            drawing                 212         52                 OASISLayerName:SLVTN                                             # SLVTN
+SLVTP            drawing                 212         53                 OASISLayerName:SLVTP                                             # SLVTP
+ZG               drawing                 212         74                 OASISLayerName:ZG                                                # ZG
+SRAM_D           drawing                 212         98                 OASISLayerName:SRAM_D                                            # SRAM_D
+SRAM             drawing1                212         99                 OASISLayerName:SRAM_E                                            # SRAM_E
+SRAM             drawing2                212        101                 OASISLayerName:SRAM_G                                            # SRAM_G
+ESD              polyb                   212        122                 OASISLayerName:ESD_POLYB                                         # ESD_POLYB
+SRAM             drawing3                212        129                 OASISLayerName:SRAM_H                                            # SRAM_H
+SRAM             drawing7                212        130                 OASISLayerName:SRAM_L                                            # SRAM_L
+OUTLINE          fuse                    212        133                 OASISLayerName:FUSEANODE                                         # FUSEANODE
+SRAM_I           drawing                 212        144                 OASISLayerName:SRAM_I                                            # SRAM_I
+SRAM_J           drawing                 212        145                 OASISLayerName:SRAM_J                                            # SRAM_J
+SRAM_K           drawing                 212        146                 OASISLayerName:SRAM_K                                            # SRAM_K
+SRAM_U           drawing                 212        150                 OASISLayerName:SRAM_U                                            # SRAM_U
+LDFET            drawing                 212        164                 OASISLayerName:LDFET                                             # LDFET
+LOWVOLT          drawing                 212        171                 OASISLayerName:LOWVOLT                                           # LOWVOLT
+AY               drawing                 213          0 cut             OASISLayerName:AY,cutSize:0.040:0.040                            # AY
+AY               drawing                 213          1 cut             OASISLayerName:AYBAR                                             # AYBAR
+AY               exclude                 213          2                 OASISLayerName:AYEXCLUD                                          # AYEXCLUD
+AY               net                     213         19                 OASISLayerName:AY_CDSNET                                         # AY_CDSNET
+AY               pin                     213         32                 OASISLayerName:AY_PIN                                            # AY_PIN
+AY               cfill                   213         52                 OASISLayerName:AYCFILL                                           # AYCFILL
+AY               fill                    213         52                 OASISLayerName:AYCFILL                                           # AYCFILL
+AY               cfillopc                213         55                 OASISLayerName:AYCFILLOPC                                        # AYCFILLOPC
+AY               fillOPC                 213         55                 OASISLayerName:AYCFILLOPC                                        # AYCFILLOPC
+AY               ing                     213         84                 OASISLayerName:AYING                                             # AYING
+AY               critexcl                213       4373                 OASISLayerName:AYCRITEXCL                                        # AYCRITEXCL
+CB               drawing                 245          0                 OASISLayerName:CB                                                # CB
+CB               net                     245         19                 OASISLayerName:CB_CDSNET                                         # CB_CDSNET
+CB               label                   245         20                 OASISLayerName:CB_NET                                            # CB_NET
+CB               pin                     245         32                 OASISLayerName:CB_PIN                                            # CB_PIN
+CT               drawing                 247          0                 OASISLayerName:CT                                                # CT
+CT               exclude                 247          2                 OASISLayerName:CTEXCLUD                                          # CTEXCLUD
+CT               cfillopc                247         55                 OASISLayerName:CTCFILLOPC                                        # CTCFILLOPC
+CT               fillOPC                 247         55                 OASISLayerName:CTCFILLOPC                                        # CTCFILLOPC
+CT               cfilltr                 247         58                 OASISLayerName:CTCFILLTR                                         # CTCFILLTR
+CT               ing                     247         84                 OASISLayerName:CTING                                             # CTING
+CT               critexcl                247       4373                 OASISLayerName:CTCRITEXCL                                        # CTCRITEXCL
+WJ               drawing                 408          0                 OASISLayerName:WJ                                                # WJ
+WJ               label                   408         20                 OASISLayerName:WJ_NET                                            # WJ_NET
+WJ               pin                     408         32                 OASISLayerName:WJ_PIN                                            # WJ_PIN
+SIOTP            drawing                 506          0                 OASISLayerName:SIOTP                                             # SIOTP
+PKIND            drawing                 507          0                 OASISLayerName:PKIND                                             # PKIND
+TCOIL3           drawing                 508          0                 OASISLayerName:TCOIL3                                            # TCOIL3
+GAMK_GF          drawing                 509          0                 OASISLayerName:GAMK_GF                                           # GAMK_GF
+PAMK_GF          drawing                 510          0                 OASISLayerName:PAMK_GF                                           # PAMK_GF
+CLIB_MKR1        drawing                 511          0                 OASISLayerName:CLIB_MKR1                                         # CLIB_MKR1
+CLIB_MKR2        drawing                 512          0                 OASISLayerName:CLIB_MKR2                                         # CLIB_MKR2
+CLIB_MKR3        drawing                 513          0                 OASISLayerName:CLIB_MKR3                                         # CLIB_MKR3
+CLIB_MKR4        drawing                 514          0                 OASISLayerName:CLIB_MKR4                                         # CLIB_MKR4
+OVL_BEOL1        drawing                 515          0                 OASISLayerName:OVL_BEOL1                                         # OVL_BEOL1
+OVL_BEOL2        drawing                 516          0                 OASISLayerName:OVL_BEOL2                                         # OVL_BEOL2
+OVL_BEOL3        drawing                 517          0                 OASISLayerName:OVL_BEOL3                                         # OVL_BEOL3
+OVL_BEOL4        drawing                 518          0                 OASISLayerName:OVL_BEOL4                                         # OVL_BEOL4
+GP               drawing                 519          0                 OASISLayerName:GP                                                # GP
+GP               ing                     519         84                 OASISLayerName:GPING                                             # GPING
+OVL_BEOL5        drawing                 520          0                 OASISLayerName:OVL_BEOL5                                         # OVL_BEOL5
+OVL_FEOL1        drawing                 521          0                 OASISLayerName:OVL_FEOL1                                         # OVL_FEOL1
+OVL_FEOL2        drawing                 522          0                 OASISLayerName:OVL_FEOL2                                         # OVL_FEOL2
+OVL_FEOL3        drawing                 523          0                 OASISLayerName:OVL_FEOL3                                         # OVL_FEOL3
+OVL_FEOL4        drawing                 524          0                 OASISLayerName:OVL_FEOL4                                         # OVL_FEOL4
+OVL_FEOL5        drawing                 525          0                 OASISLayerName:OVL_FEOL5                                         # OVL_FEOL5
+ENSGBFMOAT       drawing                 526          0                 OASISLayerName:ENSGBFMOAT                                        # ENSGBFMOAT
+2CACOL           drawing                 561          0                 OASISLayerName:2CACOL                                            # 2CACOL
+3CACOL           drawing                 562          0                 OASISLayerName:3CACOL                                            # 3CACOL
+GPAPMOM          drawing                 563          0                 OASISLayerName:GPAPMOM                                           # GPAPMOM
+IPEXCLUD         drawing                 564          0                 OASISLayerName:IPEXCLUD                                          # IPEXCLUD
+ECOCELL          drawing                 615          0                 OASISLayerName:ECOCELL                                           # ECOCELL
+WB_PAD_RF        drawing                 616          0                 OASISLayerName:WB_PAD_RF                                         # WB_PAD_RF
+CLIB_MKR5        drawing                 651          0                 OASISLayerName:CLIB_MKR5                                         # CLIB_MKR5
+ENEGUBFMOAT      drawing                 652          0                 OASISLayerName:ENEGUBFMOAT                                       # ENEGUBFMOAT
+ENEGBFMOAT       drawing                 653          0                 OASISLayerName:ENEGBFMOAT                                        # ENEGBFMOAT
+ENEGVBFMOAT      drawing                 654          0                 OASISLayerName:ENEGVBFMOAT                                       # ENEGVBFMOAT
+TRANSMISEM       drawing                 672          0                 OASISLayerName:TRANSMISEM                                        # TRANSMISEM
+DPNP             drawing                 673          0                 OASISLayerName:DPNP                                              # DPNP
+CLIB_MKR41       drawing                 675          0                 OASISLayerName:CLIB_MKR41                                        # CLIB_MKR41
+L_FAMILY         drawing                 685          0                 OASISLayerName:L_FAMILY                                          # L_FAMILY
+CLIB_MKR51       drawing                 690          0                 OASISLayerName:CLIB_MKR51                                        # CLIB_MKR51
+EDFET            drawing                 691          0                 OASISLayerName:EDFET                                             # EDFET
+3RA              drawing                 694          0                 OASISLayerName:3RA                                               # 3RA
+3RA              net                     694         19                 OASISLayerName:3RA_CDSNET                                        # 3RA_CDSNET
+3RA              label                   694         20                 OASISLayerName:3RA_NET                                           # 3RA_NET
+3RA              pin                     694         32                 OASISLayerName:3RA_PIN                                           # 3RA_PIN
+THERMALCP        drawing                 710          0                 OASISLayerName:THERMALCP                                         # THERMALCP
+MOSVAR           drawing                 711          0                 OASISLayerName:MOSVAR                                            # MOSVAR
+PWFET            drawing                 715          0                 OASISLayerName:PWFET                                             # PWFET
+MRAM_A           drawing                 716          0                 OASISLayerName:MRAM_A                                            # MRAM_A
+MRAM_B           drawing                 717          0                 OASISLayerName:MRAM_B                                            # MRAM_B
+MIMBLOCK         drawing                 722          1                 OASISLayerName:MIMBLOCK                                          # MIMBLOCK
+LDDRIFT          drawing                 736          0                 OASISLayerName:LDDRIFT                                           # LDDRIFT
+PP               cfill                   743         52                 OASISLayerName:PPCFILL                                           # PPCFILL
+PP               fill                    743         52                 OASISLayerName:PPCFILL                                           # PPCFILL
+PP               cfillopc                743         55                 OASISLayerName:PPCFILLOPC                                        # PPCFILLOPC
+PP               fillOPC                 743         55                 OASISLayerName:PPCFILLOPC                                        # PPCFILLOPC
+PP               cfilltr                 743         58                 OASISLayerName:PPCFILLTR                                         # PPCFILLTR
+LDFET7V0         drawing                 751          0                 OASISLayerName:LDFET7V0                                          # LDFET7V0
+CLIB_MKR6        drawing                 770          0                 OASISLayerName:CLIB_MKR6                                         # CLIB_MKR6
+LVS_GC1          drawing                 771          0                 OASISLayerName:LVS_GC1                                           # LVS_GC1
+LVS_GJA          drawing                 772          0                 OASISLayerName:LVS_GJA                                           # LVS_GJA
+DEV_MREP         drawing                 778          0                 OASISLayerName:DEV_MREP                                          # DEV_MREP
+LVS_MREP         drawing                 779          0                 OASISLayerName:LVS_MREP                                          # LVS_MREP
+LVTN             drawing                 780         11                 OASISLayerName:LVTN                                              # LVTN
+PPLUS            drawing                 780         47                 OASISLayerName:PPLUS                                             # PPLUS
+RES_BODY         drawing                 780        140                 OASISLayerName:RES_BODY                                          # RES_BODY
+VNCAP2           drawing                 780        141                 OASISLayerName:VNCAP2                                            # VNCAP2
+RVTN             drawing                 780        177                 OASISLayerName:RVTN                                              # RVTN
+RVTP             drawing                 780        178                 OASISLayerName:RVTP                                              # RVTP
+FUSECATHODE      drawing                 780        223                 OASISLayerName:FUSECATHODE                                       # FUSECATHODE
+RRAMCELL         drawing                 780        232                 OASISLayerName:RRAMCELL                                          # RRAMCELL
+RRAM_1PC         drawing                 780        246                 OASISLayerName:RRAM_1PC                                          # RRAM_1PC
+RRAM_2PC         drawing                 780        247                 OASISLayerName:RRAM_2PC                                          # RRAM_2PC
+RRAM_A           drawing                 780        248                 OASISLayerName:RRAM_A                                            # RRAM_A
+RRAM_B           drawing                 780        249                 OASISLayerName:RRAM_B                                            # RRAM_B
+RRAM_C           drawing                 780        250                 OASISLayerName:RRAM_C                                            # RRAM_C
+RRAM_D           drawing                 780        251                 OASISLayerName:RRAM_D                                            # RRAM_D
+RRAM_E           drawing                 780        252                 OASISLayerName:RRAM_E                                            # RRAM_E
+RRAM_F           drawing                 780        253                 OASISLayerName:RRAM_F                                            # RRAM_F
+RRAM_G           drawing                 780        254                 OASISLayerName:RRAM_G                                            # RRAM_G
+RRAM_H           drawing                 780        255                 OASISLayerName:RRAM_H                                            # RRAM_H
+RXPHTM           drawing                 780        600                 OASISLayerName:RXPHTM                                            # RXPHTM
+PCPHTM           drawing                 780        601                 OASISLayerName:PCPHTM                                            # PCPHTM
+PC15PHTM         drawing                 780        602                 OASISLayerName:PC15PHTM                                          # PC15PHTM
+PC38PHTM         drawing                 780        603                 OASISLayerName:PC38PHTM                                          # PC38PHTM
+CAPHTM           drawing                 780        604                 OASISLayerName:CAPHTM                                            # CAPHTM
+CTPHTM           drawing                 780        605                 OASISLayerName:CTPHTM                                            # CTPHTM
+NPLUSPHTM        drawing                 780        606                 OASISLayerName:NPLUSPHTM                                         # NPLUSPHTM
+PPLUSPHTM        drawing                 780        607                 OASISLayerName:PPLUSPHTM                                         # PPLUSPHTM
+HYBRIDPHTM       drawing                 780        609                 OASISLayerName:HYBRIDPHTM                                        # HYBRIDPHTM
+8CPHTM           drawing                 780        610                 OASISLayerName:8CPHTM                                            # 8CPHTM
+M1PHTM           drawing                 780        611                 OASISLayerName:M1PHTM                                            # M1PHTM
+V1PHTM           drawing                 780        612                 OASISLayerName:V1PHTM                                            # V1PHTM
+AYPHTM           drawing                 780        613                 OASISLayerName:AYPHTM                                            # AYPHTM
+A1PHTM           drawing                 780        614                 OASISLayerName:A1PHTM                                            # A1PHTM
+A2PHTM           drawing                 780        615                 OASISLayerName:A2PHTM                                            # A2PHTM
+WTPHTM           drawing                 780        616                 OASISLayerName:WTPHTM                                            # WTPHTM
+WAPHTM           drawing                 780        617                 OASISLayerName:WAPHTM                                            # WAPHTM
+YZPHTM           drawing                 780        618                 OASISLayerName:YZPHTM                                            # YZPHTM
+JQPHTM           drawing                 780        619                 OASISLayerName:JQPHTM                                            # JQPHTM
+MYPHTM           drawing                 780        620                 OASISLayerName:MYPHTM                                            # MYPHTM
+DIODEANT         drawing                 800          1                 OASISLayerName:DIODEANT                                          # DIODEANT
+EGLVTN           drawing                 800          4                 OASISLayerName:EGLVTN                                            # EGLVTN
+EGLVTP           drawing                 800          5                 OASISLayerName:EGLVTP                                            # EGLVTP
+EGSLVTN          drawing                 800          8                 OASISLayerName:EGSLVTN                                           # EGSLVTN
+EGSLVTP          drawing                 800          9                 OASISLayerName:EGSLVTP                                           # EGSLVTP
+EGZVTP           drawing                 800         10                 OASISLayerName:EGZVTP                                            # EGZVTP
+HYBRID           drawing                 800         11                 OASISLayerName:HYBRID                                            # HYBRID
+LONRES           drawing                 800         12                 OASISLayerName:LONRES                                            # LONRES
+NRES             drawing                 800         13                 OASISLayerName:NRES                                              # NRES
+EGUOSLVTN        drawing                 845          0                 OASISLayerName:EGUOSLVTN                                         # EGUOSLVTN
+OUTLINE_RFPAD    drawing                 873          0                 OASISLayerName:OUTLINE_RFPAD                                     # OUTLINE_RFPAD
+BSNIT_MK         drawing                 932          0                 OASISLayerName:BSNIT_MK                                          # BSNIT_MK
+FGBG             drawing                 937          0                 OASISLayerName:FGBG                                              # FGBG
+RMB              drawing                 971          0                 OASISLayerName:RMB                                               # RMB
+RMB              bar                     971          1                 OASISLayerName:RMBBAR                                            # RMBBAR
+RMB              net                     971         19                 OASISLayerName:RMB_CDSNET                                        # RMB_CDSNET
+RMB              label                   971         20                 OASISLayerName:RMB_NET                                           # RMB_NET
+RMB              pin                     971         32                 OASISLayerName:RMB_PIN                                           # RMB_PIN
+RMT              drawing                 972          0                 OASISLayerName:RMT                                               # RMT
+RMT              net                     972         19                 OASISLayerName:RMT_CDSNET                                        # RMT_CDSNET
+RMT              label                   972         20                 OASISLayerName:RMT_NET                                           # RMT_NET
+RMT              pin                     972         32                 OASISLayerName:RMT_PIN                                           # RMT_PIN
+RMV              drawing                 974          0                 OASISLayerName:RMV                                               # RMV
+RMV              bar                     974          1                 OASISLayerName:RMVBAR                                            # RMVBAR
+RMV              net                     974         19                 OASISLayerName:RMV_CDSNET                                        # RMV_CDSNET
+RMV              label                   974         20                 OASISLayerName:RMV_NET                                           # RMV_NET
+RMV              pin                     974         32                 OASISLayerName:RMV_PIN                                           # RMV_PIN
+INDIEWB          drawing                 987          0                 OASISLayerName:INDIEWB                                           # INDIEWB
+NPLUS            drawing                1008          0                 OASISLayerName:NPLUS                                             # NPLUS
+NP               cfill                  1008         52                 OASISLayerName:NPCFILL                                           # NPCFILL
+NP               fill                   1008         52                 OASISLayerName:NPCFILL                                           # NPCFILL
+NP               cfillopc               1008         55                 OASISLayerName:NPCFILLOPC                                        # NPCFILLOPC
+NP               fillOPC                1008         55                 OASISLayerName:NPCFILLOPC                                        # NPCFILLOPC
+NP               cfilltr                1008         58                 OASISLayerName:NPCFILLTR                                         # NPCFILLTR
+C1VTRACK         drawing                1055          0                 OASISLayerName:C1VTRACK                                          # C1VTRACK
+C1VTRACK         label                  1055         20                 OASISLayerName:C1VTRACK_LABEL                                    # C1VTRACK_LABEL
+C2VTRACK         drawing                1056          0                 OASISLayerName:C2VTRACK                                          # C2VTRACK
+C2VTRACK         label                  1056         20                 OASISLayerName:C2VTRACK_LABEL                                    # C2VTRACK_LABEL
+C3VTRACK         drawing                1057          0                 OASISLayerName:C3VTRACK                                          # C3VTRACK
+C3VTRACK         label                  1057         20                 OASISLayerName:C3VTRACK_LABEL                                    # C3VTRACK_LABEL
+C4VTRACK         drawing                1058          0                 OASISLayerName:C4VTRACK                                          # C4VTRACK
+C4VTRACK         label                  1058         20                 OASISLayerName:C4VTRACK_LABEL                                    # C4VTRACK_LABEL
+C5VTRACK         drawing                1059          0                 OASISLayerName:C5VTRACK                                          # C5VTRACK
+C5VTRACK         label                  1059         20                 OASISLayerName:C5VTRACK_LABEL                                    # C5VTRACK_LABEL
+JAVTRACK         drawing                1063          0                 OASISLayerName:JAVTRACK                                          # JAVTRACK
+JAVTRACK         label                  1063         20                 OASISLayerName:JAVTRACK_LABEL                                    # JAVTRACK_LABEL
+LBVTRACK         drawing                1065          0                 OASISLayerName:LBVTRACK                                          # LBVTRACK
+LBVTRACK         label                  1065         20                 OASISLayerName:LBVTRACK_LABEL                                    # LBVTRACK_LABEL
+M1VTRACK         drawing                1066          0                 OASISLayerName:M1VTRACK                                          # M1VTRACK
+M1VTRACK         label                  1066         20                 OASISLayerName:M1VTRACK_LABEL                                    # M1VTRACK_LABEL
+M2VTRACK         drawing                1067          0                 OASISLayerName:M2VTRACK                                          # M2VTRACK
+M2VTRACK         label                  1067         20                 OASISLayerName:M2VTRACK_LABEL                                    # M2VTRACK_LABEL
+QAVTRACK         drawing                1069          0                 OASISLayerName:QAVTRACK                                          # QAVTRACK
+QAVTRACK         label                  1069         20                 OASISLayerName:QAVTRACK_LABEL                                    # QAVTRACK_LABEL
+QBVTRACK         drawing                1070          0                 OASISLayerName:QBVTRACK                                          # QBVTRACK
+QBVTRACK         label                  1070         20                 OASISLayerName:QBVTRACK_LABEL                                    # QBVTRACK_LABEL
+APMOM4V          drawing                1089          0                 OASISLayerName:APMOM4V                                           # APMOM4V
+INDEM            drawing                1091          0                 OASISLayerName:INDEM                                             # INDEM
+TZ5              drawing                1335          0                 OASISLayerName:TZ5                                               # TZ5
+TZ5              label                  1335         20                 OASISLayerName:TZ5_NET                                           # TZ5_NET
+TZ5              lvsres                 1335         22                 OASISLayerName:TZ5_RES                                           # TZ5_RES
+TZ5              pin                    1335         32                 OASISLayerName:TZ5_PIN                                           # TZ5_PIN
+WI               drawing                1655          0                 OASISLayerName:WI                                                # WI
+WI               label                  1655         20                 OASISLayerName:WI_NET                                            # WI_NET
+WI               lvsres                 1655         22                 OASISLayerName:WI_RES                                            # WI_RES
+WI               pin                    1655         32                 OASISLayerName:WI_PIN                                            # WI_PIN
+WK               drawing                1656          0                 OASISLayerName:WK                                                # WK
+WK               label                  1656         20                 OASISLayerName:WK_NET                                            # WK_NET
+WK               pin                    1656         32                 OASISLayerName:WK_PIN                                            # WK_PIN
+## GDSII layer numbers reserved for customer internal use with any data type:  2000 through 2499
+BXRVTN           drawing                3000          0                 OASISLayerName:BXRVTN                                            # BXRVTN
+BXRVTP           drawing                3001          0                 OASISLayerName:BXRVTP                                            # BXRVTP
+BXBODY           drawing                3002          0                 OASISLayerName:BXBODY                                            # BXBODY
+ESD_VBIPOLAR     drawing                3286          0                 OASISLayerName:ESD_VBIPOLAR                                      # ESD_VBIPOLAR
+ALLEXCLUD        drawing                4008          0                 OASISLayerName:ALLEXCLUD                                         # ALLEXCLUD
+FLTNW            drawing                4009          0                 OASISLayerName:FLTNW                                             # FLTNW
+EMTRAN           drawing                4012          0                 OASISLayerName:EMTRAN                                            # EMTRAN
+FNCAP            drawing                4019          0                 OASISLayerName:FNCAP                                             # FNCAP
+NANRES           drawing                4047          0                 OASISLayerName:NANRES                                            # NANRES
+RDL1             drawing                4104          0                 OASISLayerName:RDL1                                              # RDL1
+RDL1             label                  4104         20                 OASISLayerName:RDL1_NET                                          # RDL1_NET
+RDL1             pin                    4104         32                 OASISLayerName:RDL1_PIN                                          # RDL1_PIN
+EQUALIZER        drawing                4112          0                 OASISLayerName:EQUALIZER                                         # EQUALIZER
+SRAM_Q           drawing                4121          0                 OASISLayerName:SRAM_Q                                            # SRAM_Q
+SI               exclude                4227          2                 OASISLayerName:SIEXCLUD                                          # SIEXCLUD
+SRAM_R           drawing                4323         11                 OASISLayerName:SRAM_R                                            # SRAM_R
+RDL2             label                  4323         20                 OASISLayerName:RDL2_NET                                          # RDL2_NET
+RDL2             pin                    4323         32                 OASISLayerName:RDL2_PIN                                          # RDL2_PIN
+LURES500         drawing                4323         43                 OASISLayerName:LURES500                                          # LURES500
+SLMPAD           drawing                4323        113                 OASISLayerName:SLMPAD                                            # SLMPAD
+RDL2             drawing                4323        190                 OASISLayerName:RDL2                                              # RDL2
+PM1              drawing                4323        191                 OASISLayerName:PM1                                               # PM1
+PM2              drawing                4323        192                 OASISLayerName:PM2                                               # PM2
+SRAM_S           drawing                4323        218                 OASISLayerName:SRAM_S                                            # SRAM_S
+SLMPAD_ARRAY     drawing                4323        253                 OASISLayerName:SLMPAD_ARRAY                                      # SLMPAD_ARRAY
+PRLMOSMKR        drawing                4323        257                 OASISLayerName:PRLMOSMKR                                         # PRLMOSMKR
+S3               drawing                4323        259                 OASISLayerName:S3                                                # S3
+PEX_BOUNDARY     drawing                4323        265                 OASISLayerName:PEX_BOUNDARY                                      # PEX_BOUNDARY
+IND2             drawing                4323        266                 OASISLayerName:IND2                                              # IND2
+ZGRVTN           drawing                4323        281                 OASISLayerName:ZGRVTN                                            # ZGRVTN
+ZGRVTP           drawing                4323        282                 OASISLayerName:ZGRVTP                                            # ZGRVTP
+SRAM_V           drawing                4323        283                 OASISLayerName:SRAM_V                                            # SRAM_V
+ULLN             drawing                4323        287                 OASISLayerName:ULLN                                              # ULLN
+ULLP             drawing                4323        288                 OASISLayerName:ULLP                                              # ULLP
+LLN              drawing                4323        289                 OASISLayerName:LLN                                               # LLN
+LLP              drawing                4323        290                 OASISLayerName:LLP                                               # LLP
+ZGSLVTN          drawing                4323        291                 OASISLayerName:ZGSLVTN                                           # ZGSLVTN
+ZGSLVTP          drawing                4323        292                 OASISLayerName:ZGSLVTP                                           # ZGSLVTP
+SRC              drawing                4323        300                 OASISLayerName:SRC                                               # SRC
+LDFET3V3         drawing                4323        301                 OASISLayerName:LDFET3V3                                          # LDFET3V3
+LDFET5V0         drawing                4323        302                 OASISLayerName:LDFET5V0                                          # LDFET5V0
+ROM              drawing                4323        304                 OASISLayerName:ROM                                               # ROM
+LDFET6V5         drawing                4323        310                 OASISLayerName:LDFET6V5                                          # LDFET6V5
+2NB              drawing                4327          0                 OASISLayerName:2NB                                               # 2NB
+RS               drawing                4328          0                 OASISLayerName:RS                                                # RS
+3PL              ing                    4344         84                 OASISLayerName:3PLING                                            # 3PLING
+JA               drawing                4349          0                 OASISLayerName:JA                                                # JA
+JA               gnd                    4349          0                 OASISLayerName:JA                                                # JA
+JA               vdd                    4349          0                 OASISLayerName:JA                                                # JA
+JA               exclude                4349          2                 OASISLayerName:JAEXCLUD                                          # JAEXCLUD
+JA               net                    4349         19                 OASISLayerName:JA_CDSNET                                         # JA_CDSNET
+JA               label                  4349         20                 OASISLayerName:JA_NET                                            # JA_NET
+JA               lvsres                 4349         22                 OASISLayerName:JA_RES                                            # JA_RES
+JA               pin                    4349         32                 OASISLayerName:JA_PIN                                            # JA_PIN
+JA               cfill                  4349         52                 OASISLayerName:JACFILL                                           # JACFILL
+JA               fill                   4349         52                 OASISLayerName:JACFILL                                           # JACFILL
+JA               cfillopc               4349         55                 OASISLayerName:JACFILLOPC                                        # JACFILLOPC
+JA               fillOPC                4349         55                 OASISLayerName:JACFILLOPC                                        # JACFILLOPC
+JA               esd                    4349         60                 OASISLayerName:JAESD                                             # JAESD
+JA               vdd1v2                 4349        100                 OASISLayerName:JAVDD1V2                                          # JAVDD1V2
+JA               vdd1v5                 4349        101                 OASISLayerName:JAVDD1V5                                          # JAVDD1V5
+JA               vdd1v8                 4349        102                 OASISLayerName:JAVDD1V8                                          # JAVDD1V8
+JA               vdd2v5                 4349        103                 OASISLayerName:JAVDD2V5                                          # JAVDD2V5
+JA               vdd3v3                 4349        104                 OASISLayerName:JAVDD3V3                                          # JAVDD3V3
+JA               vdd5v0                 4349        105                 OASISLayerName:JAVDD5V0                                          # JAVDD5V0
+JA               shld                   4349       1010                 OASISLayerName:JA_SHLD                                           # JA_SHLD
+JA               vdd0v4                 4349       1049                 OASISLayerName:JAVDD0V4                                          # JAVDD0V4
+JA               vdd6v5                 4349       4319                 OASISLayerName:JAVDD6V5                                          # JAVDD6V5
+JA               vdd0v8                 4349       4345                 OASISLayerName:JAVDD0V8                                          # JAVDD0V8
+JA               critexcl               4349       4373                 OASISLayerName:JACRITEXCL                                        # JACRITEXCL
+JA               vdd7v0                 4349       4414                 OASISLayerName:JAVDD7V0                                          # JAVDD7V0
+JA               vdd10v0                4349       4415                 OASISLayerName:JAVDD10V0                                         # JAVDD10V0
+JA               hi                     4349       4426                 OASISLayerName:JA_HI                                             # JA_HI
+JA               lo                     4349       4427                 OASISLayerName:JA_LO                                             # JA_LO
+JA_PRIO_HI       drawing                4349       4428                 OASISLayerName:JA_PRIO_HI                                        # JA_PRIO_HI
+JA_PRIO_LO       drawing                4349       4429                 OASISLayerName:JA_PRIO_LO                                        # JA_PRIO_LO
+EGULLP           drawing                4357          0                 OASISLayerName:EGULLP                                            # EGULLP
+APMOM3V3         drawing                4431          0                 OASISLayerName:APMOM3V3                                          # APMOM3V3
+APMOM5V          drawing                4432          0                 OASISLayerName:APMOM5V                                           # APMOM5V
+MOM7V            drawing                4433          0                 OASISLayerName:MOM7V                                             # MOM7V
+APMOM1V8         drawing                4448          0                 OASISLayerName:APMOM1V8                                          # APMOM1V8
+PCISWAP          drawing                4501          0                 OASISLayerName:PCISWAP                                           # PCISWAP
+TRANSISTORCELLSWAP drawing                4502          0                 OASISLayerName:TRANSISTORCELLSWAP                                # TRANSISTORCELLSWAP
+ELVTN            drawing                4503          0                 OASISLayerName:ELVTN                                             # ELVTN
+TRANSISTORCELLSWAP1 drawing                4506          0                 OASISLayerName:TRANSISTORCELLSWAP1                               # TRANSISTORCELLSWAP1
+TRANSISTORCELLSWAP2 drawing                4507          0                 OASISLayerName:TRANSISTORCELLSWAP2                               # TRANSISTORCELLSWAP2
+TRANSISTORCELLSWAP3 drawing                4508          0                 OASISLayerName:TRANSISTORCELLSWAP3                               # TRANSISTORCELLSWAP3
+LVS_BFMOAT       drawing                4510          0                 OASISLayerName:LVS_BFMOAT                                        # LVS_BFMOAT
+XSUB             label                  4511         20                 OASISLayerName:XSUB_LABEL                                        # XSUB_LABEL
+XSUB             pin                    4511         32                 OASISLayerName:XSUB_PIN                                          # XSUB_PIN
+LVS_NREP         drawing                4587          0                 OASISLayerName:LVS_NREP                                          # LVS_NREP
+ULPN             drawing                4601          0                 OASISLayerName:ULPN                                              # ULPN
+ULPP             drawing                4602          0                 OASISLayerName:ULPP                                              # ULPP
+SCHKY            drawing                4618          0                 OASISLayerName:SCHKY                                             # SCHKY
+INDMMW           drawing                4621          0                 OASISLayerName:INDMMW                                            # INDMMW
+BGSIG            drawing                4677          0                 OASISLayerName:BGSIG                                             # BGSIG
+LVS_MMW          drawing                4688          0                 OASISLayerName:LVS_MMW                                           # LVS_MMW
+LVS_MMW1         drawing1               4689          0                 OASISLayerName:LVS_MMW1                                          # LVS_MMW1
+HVNETRESCUT      drawing                4783          0                 OASISLayerName:HVNETRESCUT                                       # HVNETRESCUT
+ELVTWFP          drawing                4812          0                 OASISLayerName:ELVTWFP                                           # ELVTWFP
+SGBFMOAT         drawing                4813          0                 OASISLayerName:SGBFMOAT                                          # SGBFMOAT
+EGBFMOAT         drawing                4814          0                 OASISLayerName:EGBFMOAT                                          # EGBFMOAT
+EGVBFMOAT        drawing                4815          0                 OASISLayerName:EGVBFMOAT                                         # EGVBFMOAT
+EGUBFMOAT        drawing                4816          0                 OASISLayerName:EGUBFMOAT                                         # EGUBFMOAT
+CPP2X            drawing                4817          0                 OASISLayerName:CPP2X                                             # CPP2X
+CPP3X            drawing                4818          0                 OASISLayerName:CPP3X                                             # CPP3X
+MMWAVE           drawing                4819          0                 OASISLayerName:MMWAVE                                            # MMWAVE
+MRAM8CBLK        drawing                4824          0                 OASISLayerName:MRAM8CBLK                                         # MRAM8CBLK
+LDNBODY          drawing                4897          0                 OASISLayerName:LDNBODY                                           # LDNBODY
+ANALOG           drawing                4898          0                 OASISLayerName:ANALOG                                            # ANALOG
+INDCT            drawing                4991          0                 OASISLayerName:INDCT                                             # INDCT
+INDXFORMER       drawing                4992          0                 OASISLayerName:INDXFORMER                                        # INDXFORMER
+INTBALUN         drawing                4993          0                 OASISLayerName:INTBALUN                                          # INTBALUN
+STXFORMER        drawing                4994          0                 OASISLayerName:STXFORMER                                         # STXFORMER
+STBALUN          drawing                4995          0                 OASISLayerName:STBALUN                                           # STBALUN
+TRANSMIS_45L     drawing                4996       4001                 OASISLayerName:TRANSMIS_45L                                      # TRANSMIS_45L
+TRANSMIS_90L     drawing                4996       4002                 OASISLayerName:TRANSMIS_90L                                      # TRANSMIS_90L
+TRANSMIS_45BEND  drawing                4996       4003                 OASISLayerName:TRANSMIS_45BEND                                   # TRANSMIS_45BEND
+TRANSMIS_90BEND  drawing                4996       4004                 OASISLayerName:TRANSMIS_90BEND                                   # TRANSMIS_90BEND
+TRANSMIS_TEE     drawing                4996       4005                 OASISLayerName:TRANSMIS_TEE                                      # TRANSMIS_TEE
+TRANSMIS_SW      drawing                4996       4006                 OASISLayerName:TRANSMIS_SW                                       # TRANSMIS_SW
+TRANSMIS_SGN     transmis               4998       4430                 OASISLayerName:TRANSMIS_SGN                                      # TRANSMIS_SGN
+TRANSMIS_SHORT   transmis               4999       4430                 OASISLayerName:TRANSMIS_SHORT                                    # TRANSMIS_SHORT
+TRANSMIS_RADIAL  transmis               5000       4430                 OASISLayerName:TRANSMIS_RADIAL                                   # TRANSMIS_RADIAL
+ESD_LBIPOLAR     drawing                5001          0                 OASISLayerName:ESD_LBIPOLAR                                      # ESD_LBIPOLAR
