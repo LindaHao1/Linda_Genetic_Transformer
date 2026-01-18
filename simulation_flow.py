@@ -15,8 +15,77 @@ gf.gpdk.PDK.activate()
 # 1. Instantiate your layer map
 layermap = LayerMap
 
+# Parameters
+
+rows = 21   # Must be odd to ensure center alignment with transmission line can change in the future
+cols = 30
+pitch_x: float = 20
+pitch_y: float = 20
+pixel_w: float = 24
+pixel_h: float = 24
+tl_w: float = 26.0   
+tl_l: float = 40.0
+port_stick_len: float = 5.0
+
+def check_connectivity(matrix, rows, cols, pitch_y, pixel_h, tline_width, pitch_x_req):
+    from collections import deque
+    # Calculate geometric Y-centers for rows to check tline overlap
+    y_coords = np.arange(rows) * pitch_y
+    center_y = (y_coords[-1] + y_coords[0]) / 2.0
+    
+    tline_min = center_y - tline_width / 2.0
+    tline_max = center_y + tline_width / 2.0
+    
+    start_nodes = []
+    end_nodes = []
+    
+    # Identify ports: pixels intersecting tline by at least pitch_x
+    for r in range(rows):
+        p_min = y_coords[r] - pixel_h / 2.0
+        p_max = y_coords[r] + pixel_h / 2.0
+        
+        overlap_len = max(0, min(tline_max, p_max) - max(tline_min, p_min))
+        
+        if overlap_len >= pitch_x_req - 1e-9:
+            if matrix[r, 0] == 1:
+                start_nodes.append((r, 0))
+            if matrix[r, cols - 1] == 1:
+                end_nodes.append((r, cols - 1))
+                
+    if not start_nodes or not end_nodes:
+        return False
+        
+    # BFS Pathfinding (8-way connectivity)
+    queue = deque(start_nodes)
+    visited = set(start_nodes)
+    targets = set(end_nodes)
+    
+    while queue:
+        r, c = queue.popleft()
+        if (r, c) in targets:
+            return True
+        
+        # 8 neighbors (diagonal included)
+        neighbors = [(-1, -1), (-1, 0), (-1, 1),
+                     (0, -1),           (0, 1),
+                     (1, -1),  (1, 0),  (1, 1)]
+                     
+        for dr, dc in neighbors:
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols:
+                if matrix[nr, nc] == 1 and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    queue.append((nr, nc))
+    return False
+
+connectivity = False
 # 2. Generate the design matrix independently
-my_matrix = generate_design_matrix(rows=20, cols=30)
+while not connectivity:
+    my_matrix = generate_design_matrix(rows=rows, cols=cols)
+    # Check Connectivity
+    connectivity = check_connectivity(my_matrix, rows, cols, pitch_y, pixel_h, tl_w, pitch_x)
+    if not connectivity:
+        print("Matrix did not satisfy connectivity/intersection check. Regenerating...")
 
 # 3. Pass the matrix and the specific layers into the drawing function
 device, name = draw_pixelated_device(
@@ -25,9 +94,24 @@ device, name = draw_pixelated_device(
     layer_ground=layermap.JA,
     layer_top_port=layermap.LB_PIN,
     layer_ground_port=layermap.JA_PIN,
-    tl_w=20.0 # Thin transmission line
+    tl_w=tl_w, 
+    pitch_x=pitch_x,
+    pitch_y=pitch_y,
+    pixel_w=pixel_w,
+    pixel_h=pixel_h,
+    tl_l=tl_l,
+    port_stick_len=port_stick_len
 )
 device.write_gds(f"demo_gds/{name}.gds")  # Write it to a GDS file. You can open it in klayout.
+
+# Plot the matrix in black and white and save as numpy file
+import matplotlib.pyplot as plt
+plt.imshow(my_matrix, cmap='gray_r', interpolation='nearest')
+plt.title("Generated Design Matrix")
+plt.xlabel("Columns")
+plt.ylabel("Rows")
+plt.savefig(f"demo_gds/{name}_binary.png")
+np.save(f"demo_gds/{name}.npy", my_matrix)
 
 fig = device.plot(return_fig=True)
 fig.savefig(f"demo_gds/{name}.png")
