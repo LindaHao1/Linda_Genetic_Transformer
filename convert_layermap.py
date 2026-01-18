@@ -83,7 +83,7 @@ def layermap_to_python(input_file, output_file):
     # --- 3. Write Output ---
     with open(output_file, 'w') as f:
         f.write("import gdsfactory as gf\n\n")
-        f.write("class LayerMap(gf.LayerMap):\n")
+        f.write("class LayerMap(gf.Technology.LayerMap):\n")
         f.write('    """\n    Auto-generated LayerMap for GF 22FDX.\n')
         f.write('    NOTE: Duplicate names were suffixed with datatypes.\n    """\n')
         
@@ -92,7 +92,7 @@ def layermap_to_python(input_file, output_file):
             f.write(definitions[var_name] + "\n")
             
         f.write("\n")
-        f.write("LAYER = LayerMap()\n")
+        # f.write("LAYER = LayerMap()\n")
 
     print(f"Success! Generated {output_file} with {len(definitions)} unique layers.")
 

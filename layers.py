@@ -1,6 +1,6 @@
 import gdsfactory as gf
 
-class LayerMap(gf.LayerMap):
+class LayerMap(gf.technology.LayerMap):
     """
     Auto-generated LayerMap for GF 22FDX.
     NOTE: Duplicate names were suffixed with datatypes.
@@ -945,5 +945,3 @@ class LayerMap(gf.LayerMap):
     ZGRVTP = (4323, 282)
     ZGSLVTN = (4323, 291)
     ZGSLVTP = (4323, 292)
-
-LAYER = LayerMap()
