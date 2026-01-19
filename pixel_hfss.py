@@ -31,12 +31,12 @@ def create_custom_material(hfss, name, properties):
 def draw_pixelated_device_hfss(
     design_matrix: np.ndarray,
     # --- Geometry Parameters (Values in Microns) ---
-    pitch_x: float = 15,
-    pitch_y: float = 15,
-    pixel_w: float = 18,
-    pixel_h: float = 18,
-    tl_w: float = 20.0,
-    tl_l: float = 40.0,
+    pitch_x: float = 30,
+    pitch_y: float = 30,
+    pixel_w: float = 34,
+    pixel_h: float = 34,
+    tl_w: float = 34.0,
+    tl_l: float = 60.0,
     # --- Stackup & Materials ---
     ground_thickness: float = 1.04,
     substrate_thickness: float = 10.3,
@@ -260,6 +260,12 @@ if __name__ == "__main__":
     # rows, cols = 5, 5
     # matrix = generate_design_matrix(rows, cols)
     # read from npy
+    pitch_x: float = 30,
+    pitch_y: float = 30,
+    pixel_w: float = 34,
+    pixel_h: float = 34,
+    tl_w: float = 34.0,
+    tl_l: float = 60.0,
     matrix = np.load("pixelated_device_20260118_005234_264557.npy")
     print("Design Matrix:")
     print(matrix)
@@ -267,7 +273,13 @@ if __name__ == "__main__":
         hfss = draw_pixelated_device_hfss(
             design_matrix=matrix,
             non_graphical=False,
-            design_name="test1"
+            design_name="test1",
+            pitch_x=pitch_x,
+            pitch_y=pitch_y,
+            pixel_w=pixel_w,
+            pixel_h=pixel_h,
+            tl_w=tl_w,
+            tl_l=tl_l,
         )
         print("Done.")
     except Exception as e:

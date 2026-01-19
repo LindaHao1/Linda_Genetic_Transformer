@@ -19,12 +19,12 @@ layermap = LayerMap
 
 rows = 21   # Must be odd to ensure center alignment with transmission line can change in the future
 cols = 30
-pitch_x: float = 20
-pitch_y: float = 20
-pixel_w: float = 24
-pixel_h: float = 24
-tl_w: float = 26.0   
-tl_l: float = 40.0
+pitch_x: float = 30
+pitch_y: float = 30
+pixel_w: float = 34
+pixel_h: float = 34
+tl_w: float = 34.0   
+tl_l: float = 60.0
 port_stick_len: float = 5.0
 
 def check_connectivity(matrix, rows, cols, pitch_y, pixel_h, tline_width, pitch_x_req):
