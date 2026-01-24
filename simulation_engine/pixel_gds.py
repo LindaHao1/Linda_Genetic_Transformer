@@ -1,7 +1,7 @@
 import gdsfactory as gf
 import numpy as np
 from gdsfactory.typings import LayerSpec
-from layers import LayerMap
+from .layers import LayerMap
 import uuid
 from typing import Tuple
 from datetime import datetime  # <-- added import
@@ -30,12 +30,16 @@ def draw_pixelated_device(
     pixel_h: float = 18,
     tl_w: float = 20.0,
     tl_l: float = 40.0,
-    port_stick_len: float = 5.0, 
+    port_stick_len: float = 5.0,
+    device_name: str = None,
 ) -> Tuple[gf.Component, str]:
     
-    # Use timestamp for the component name (format: YYYYMMDD_HHMMSS_milliseconds)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    unique_name = f"pixelated_device_{timestamp}"
+    # Use provided device_name or generate timestamp-based name
+    if device_name is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        unique_name = f"pixelated_device_{timestamp}"
+    else:
+        unique_name = device_name
     c = gf.Component(unique_name)
     
     rows, cols = design_matrix.shape

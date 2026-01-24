@@ -1,12 +1,12 @@
-from pixel_gds import generate_design_matrix, draw_pixelated_device
+from simulation_engine.pixel_gds import generate_design_matrix, draw_pixelated_device
 import gdsfactory as gf
 import numpy as np
 from gdsfactory.typings import LayerSpec
-from layers import LayerMap
+from simulation_engine.layers import LayerMap
 import uuid
 
-from emx_runner import EMXSimInterface
-from snp_processing import process_snp_file
+from simulation_engine.emx_runner import EMXSimInterface
+from simulation_engine.snp_processing import process_snp_file
 import os
 
 # Active a dummy PDK as this is required by gdsfactory

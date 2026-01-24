@@ -40,7 +40,14 @@ def process_snp_file(sim_file_path, save_path, P1_SIG_IDX=0, P1_GND_IDX=1, P2_SI
     net_2p.name = "Renormalized_2Port"
 
     # ==============================================================================
-    # 4. Plot Results
+    # 4. Save 2-Port S-Parameters to file
+    # ==============================================================================
+    s2p_output_path = f"{save_path}/network_2port.s2p"
+    net_2p.write_touchstone(s2p_output_path)  # Real/Imaginary format
+    print(f"Saved 2-port S-parameters to: {s2p_output_path}")
+
+    # ==============================================================================
+    # 5. Plot Results
     # ==============================================================================
     plt.figure(figsize=(10, 6))
     net_2p.plot_s_db(m=0, n=0, label='S11 (Return Loss)')

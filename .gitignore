@@ -2,3 +2,4 @@ demo_gds
 simulation_results*
 __pycache__
 emxdc.dat
+engine_results_*

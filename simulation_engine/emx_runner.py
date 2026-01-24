@@ -1,45 +1,39 @@
 import os
 import subprocess
 from typing import List, Optional
+from . import emx_config
 
 class EMXSimInterface:
     def __init__(
         self, 
         destination_folder: str,
-        emx_bin_path: str = "emx",
-        proc_file_path: str = "/disk/smiao23/GF22/PDK_240627_121855_281/22FDX-PLUS/V1.0_2.3/Emagnetic/EMX/10M_2Mx_5Cx_1Jx_2Qx_LBthick/22fdsoi_10M_2Mx_5Cx_1Jx_2Qx_LBthick_nominal_detailed.encrypted.proc"
+        emx_bin_path: Optional[str] = None,
+        proc_file_path: Optional[str] = None,
+        parallel_threads: Optional[int] = None,
+        max_memory: Optional[str] = None,
     ):
         """
         Initialize the EMX Interface with your specific environment paths.
+        
+        Args:
+            destination_folder: Where to save simulation results
+            emx_bin_path: Path to EMX binary (None = use config)
+            proc_file_path: Path to process file (None = use config)
+            parallel_threads: Number of parallel threads (None = use config, 0 = auto-detect)
+            max_memory: Memory limit like "8G", "-2G", "75%" (None = use config)
         """
-        self.emx_bin = emx_bin_path
-        self.proc_file = proc_file_path
+        self.emx_bin = emx_bin_path or emx_config.EMX_BIN_PATH
+        self.proc_file = proc_file_path or emx_config.PROC_FILE_PATH
         self.dest_folder = os.path.abspath(destination_folder)
+        
+        # Parallel and memory settings
+        self.parallel_threads = parallel_threads if parallel_threads is not None else emx_config.get_parallel_threads()
+        self.max_memory = max_memory if max_memory is not None else emx_config.EMX_MAX_MEMORY
         
         # Ensure destination folder exists
         os.makedirs(self.dest_folder, exist_ok=True)
 
-    def run_batch(self, gds_files: List[str], cell_names: List[str]) -> List[str]:
-        """
-        Iterates through the list of GDS files and Cell names, running EMX for each.
-        """
-        results = []
-        
-        if len(gds_files) != len(cell_names):
-            raise ValueError("The list of GDS files and Cell names must be the same length.")
-
-        for gds, cell in zip(gds_files, cell_names):
-            print(f"--- Starting Simulation for: {cell} ---")
-            result_file = self._run_single_emx(gds, cell)
-            if result_file:
-                results.append(result_file)
-                print(f"Success: {result_file}")
-            else:
-                print(f"Failed: {cell}")
-        
-        return results
-
-    def _run_single_emx(self, gds_file: str, cell_name: str) -> Optional[str]:
+    def run_single_emx(self, gds_file: str, cell_name: str) -> Optional[str]:
         """
         Constructs and runs the exact EMX command for a single design.
         """
@@ -55,14 +49,10 @@ class EMXSimInterface:
         log_file = os.path.join(self.dest_folder, f"{cell_name}_emx.log")
 
         # 2. Define Port Mapping
-        # Based on your command: -p P000=P1 -p P001=P2 ...
-        # This maps the Layout Label (Value) to the S-Param Port Name (Key)
-        port_flags = [
-            "-p", "P000=P1",
-            "-p", "P001=P1_G",
-            "-p", "P002=P2",
-            "-p", "P003=P2_G"
-        ]
+        # Load port mapping from config
+        port_flags = []
+        for gds_label, sport_name in emx_config.PORT_MAPPING.items():
+            port_flags.extend(["-p", f"{gds_label}={sport_name}"])
 
         # 3. Construct the Command List
         cmd = [
@@ -72,38 +62,45 @@ class EMXSimInterface:
             self.proc_file,                 # Process File
             
             # --- Meshing & Geometry ---
-            "-e", "0.25", 
-            "-t", "0.25", 
-            "-v", "0.5", 
+            "-e", emx_config.MESH_EDGE_LENGTH, 
+            "-t", emx_config.MESH_THICKNESS, 
+            "-v", emx_config.MESH_VIA_SIZE, 
             "--3d=-*",                      # Exclude 3D export for specific layers if needed
             
             # --- Ports ---
             *port_flags,
             
-            # --- Sweep Settings (0 to 60GHz, 500MHz step) ---
-            "--sweep", "0", "6e+10", 
-            "--sweep-stepsize", "5e+08",
+            # --- Sweep Settings ---
+            "--sweep", emx_config.SWEEP_START, emx_config.SWEEP_END, 
+            "--sweep-stepsize", emx_config.SWEEP_STEPSIZE,
             
             # --- Logging & Verbosity ---
-            "--verbose=3",
+            f"--verbose={emx_config.VERBOSE_LEVEL}",
             "--print-command-line",
             "--log-time-level=0",
             "--extended-warnings",
             f"--message-file={log_file}",
             
             # --- Simulation Flags ---
-            "-l", "0",                      # Layer 0 (Substrate/GND usually)
+            "-l", emx_config.SUBSTRATE_LAYER,
             "--quasistatic",
             "--dump-connectivity",
-            "--parallel=4",             
+            f"--parallel={self.parallel_threads}",
             "--simultaneous-frequencies=0",
-            "--recommended-memory",
-            "--key=EMXkey",
-            
-            # --- Output Format ---
+            f"--key={emx_config.EMX_KEY}",
+        ]
+        
+        # Add memory setting if specified
+        if self.max_memory:
+            cmd.append(f"--max-memory={self.max_memory}")
+        else:
+            cmd.append("--recommended-memory")
+        
+        # Add output format
+        cmd.extend([
             "--format=touchstone2",
             "-s", output_arg                # Result saved to destination folder
-        ]
+        ])
 
         # 4. Execute
         try:
@@ -152,10 +149,18 @@ if __name__ == "__main__":
         # "another_device_top",
     ]
 
-    # 4. Run Batch
-    s_files = runner.run_batch(my_gds_list, my_cell_names)
+    # 4. Run simulations
+    s_files = []
+    for gds, cell in zip(my_gds_list, my_cell_names):
+        print(f"--- Starting Simulation for: {cell} ---")
+        result = runner.run_single_emx(gds, cell)
+        if result:
+            s_files.append(result)
+            print(f"Success: {result}")
+        else:
+            print(f"Failed: {cell}")
     
-    print("\n--- Batch Complete ---")
+    print("\n--- Complete ---")
     print("Generated S-parameter files:")
     for f in s_files:
         print(f)
