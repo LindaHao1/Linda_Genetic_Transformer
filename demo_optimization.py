@@ -9,30 +9,26 @@ from simulation_engine import SimulationEngine
 from optimization import SimulatedAnnealingOptimizer
 
 
-def check_connectivity(matrix, rows, cols, pitch_y, pixel_h, tline_width, pitch_x_req):
-    """Check if the matrix has a valid path from left to right."""
-    # Calculate geometric Y-centers for rows to check tline overlap
-    y_coords = np.arange(rows) * pitch_y
-    center_y = (y_coords[-1] + y_coords[0]) / 2.0
+def check_connectivity(matrix, rows, cols):
+    """Check if the matrix has a valid path from left to right through center rows."""
+    from collections import deque
     
-    tline_min = center_y - tline_width / 2.0
-    tline_max = center_y + tline_width / 2.0
+    # Middle rows (ports are always in the middle)
+    center_row = rows // 2
+    port_rows = [center_row - 1, center_row, center_row + 1] if rows > 2 else [center_row]
     
     start_nodes = []
     end_nodes = []
     
-    # Identify ports: pixels intersecting tline by at least pitch_x
-    for r in range(rows):
-        p_min = y_coords[r] - pixel_h / 2.0
-        p_max = y_coords[r] + pixel_h / 2.0
-        
-        overlap_len = max(0, min(tline_max, p_max) - max(tline_min, p_min))
-        
-        if overlap_len >= pitch_x_req - 1e-9:
-            if matrix[r, 0] == 1:
-                start_nodes.append((r, 0))
-            if matrix[r, cols - 1] == 1:
-                end_nodes.append((r, cols - 1))
+    # Start nodes: left column, middle rows
+    for r in port_rows:
+        if 0 <= r < rows and matrix[r, 0] == 1:
+            start_nodes.append((r, 0))
+    
+    # End nodes: right column, middle rows  
+    for r in port_rows:
+        if 0 <= r < rows and matrix[r, cols - 1] == 1:
+            end_nodes.append((r, cols - 1))
                 
     if not start_nodes or not end_nodes:
         return False
@@ -65,47 +61,62 @@ def main():
     """Run the optimization."""
     
     # Design parameters
-    rows = 21
-    cols = 30
+    rows = 41
+    cols = 50
     pitch_x = 30.0
     pitch_y = 30.0
-    pixel_h = 34.0
-    tl_w = 34.0
+    pixel_h = 32.0
+    tl_w = 15.8
     
     # Create connectivity checker
     def connectivity_validator(matrix):
-        return check_connectivity(matrix, rows, cols, pitch_y, pixel_h, tl_w, pitch_x)
+        return check_connectivity(matrix, rows, cols)
     
     # Initialize simulation engine
     print("🚀 Initializing Simulation Engine...")
     engine = SimulationEngine(
-        base_output_dir="./optimization_simulations",
+        base_output_dir="./optimization_simulations_lower_rejection_large",
         max_parallel=4,  # Run 4 simulations in parallel
         rows=rows,
         cols=cols,
         pitch_x=pitch_x,
         pitch_y=pitch_y,
-        pixel_w=34.0,
-        pixel_h=34.0,
+        pixel_w=pixel_h,
+        pixel_h=pixel_h,
         tl_w=tl_w,
-        tl_l=60.0,
+        tl_l=40.0,
         port_stick_len=5.0
     )
     
     try:
+        # Filter specifications
+        center_freq_ghz = 35.0       # Center frequency
+        bandwidth_percent = 0.25     # 25% fractional bandwidth
+        passband_loss_target = 5.0   # Max insertion loss in passband (dB)
+        stopband_loss_target = 10.0  # Min rejection in stopband (dB)
+        stopband_offset = 4.0        # Gap between passband and stopband (GHz)
+        stopband_width = 10.0        # Width of each stopband region (GHz)
+        
         # Initialize optimizer
         optimizer = SimulatedAnnealingOptimizer(
             simulation_engine=engine,
             rows=rows,
             cols=cols,
-            initial_temp=2.0,        # Starting temperature
-            cooling_rate=0.92,       # Cool down 8% each iteration
-            min_temp=0.05,           # Stop when temp < 0.05
+            initial_temp=10.0,       # Higher temp to accept worse solutions initially (cost scale ~6)
+            cooling_rate=0.997,      # Slower cooling for more exploration
+            min_temp=0.01,           # Minimum temperature floor
             parallel_sims=4,         # 4 parallel simulations per iteration
             num_random=1,            # 1 random + 3 neighbors
-            num_flips=10,            # Flip 10 pixels for neighbors
+            num_flips=5,             # Base num_flips (overridden to 1-10 range in SA)
             connectivity_check=connectivity_validator,
-            output_dir="./optimization_results"
+            output_dir="./optimization_results_low_rejection_large",
+            # Filter specifications
+            center_freq_ghz=center_freq_ghz,
+            bandwidth_percent=bandwidth_percent,
+            passband_loss_target_db=passband_loss_target,
+            stopband_loss_target_db=stopband_loss_target,
+            stopband_offset_ghz=stopband_offset,
+            stopband_width_ghz=stopband_width
         )
         
         # Run optimization
@@ -116,7 +127,7 @@ def main():
         # 4. Accept/reject based on temperature and cost improvement
         # 5. Cool down temperature
         
-        results = optimizer.optimize(max_iterations=20)  # Run for 20 iterations
+        results = optimizer.optimize(max_iterations=500)  # Run for 20 iterations
         
         print("\n" + "="*80)
         print("📊 OPTIMIZATION RESULTS")

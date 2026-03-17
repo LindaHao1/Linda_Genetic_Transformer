@@ -1,0 +1,115 @@
+# ============================================================
+# Virtuoso Pixel Engine — Default Configuration
+#
+# ── Simulation Modes ──────────────────────────────────────
+#
+#   layout_pixel  (default)
+#     Full layout-based simulation.  Uses NMOS + MIM capacitor
+#     placed in Virtuoso, exported to GDS, and extracted by EMX.
+#     Spectre re-inserts device models and sweeps the gate voltage.
+#     Tunable parameters: nmos.*, mim_cap.*
+#     Cell name example: pixel_nmos_w3u_l80n_nf4_miml10u_mimw10u
+#
+#   simplified_pixel
+#     Compact-model simulation.  Only the top metal (pixel_layer)
+#     and ground shield (gnd_layer) are drawn — no transistor
+#     layout.  EMX extracts a 3-port S-parameter (PIX_OUT, VSS,
+#     CENTER).  Spectre connects CENTER to a switch circuit:
+#       ON : CENTER → cap_value → r_on → GND
+#       OFF: CENTER → cap_value → r_off → c_off → GND
+#     Tunable parameters: layout.pixel_size, switch_model.*
+#     Cell name example: simplepix_ps35p0_cap1e-12_ron3_roff260_coff8e-14
+#
+# ── Adding Future Modes ────────────────────────────────────
+#   See the "Adding New Modes" section in engine.py.
+# ============================================================
+
+# ── Active simulation mode ───────────────────────────────────────────────────
+# Set to "layout_pixel" or "simplified_pixel".
+# Can be overridden per-run: engine.run({"mode": "simplified_pixel"})
+mode: "simplified_pixel"
+
+# ============================================================
+# PROJECT SETTINGS
+# ============================================================
+project:
+  lib_name: "mingTest"
+  pdk_lib: "tsmcN65"
+  # All runs land under this folder; sub-dir is auto-generated
+  # from the tunable params (e.g. pixel_nmos_w3u_l80n_nf4_miml10u_mimw10u)
+  parent_output_dir: "/disk/mcao53/Sim_engine_results/pixel_results"
+  # Virtuoso must be started from this directory (cds.lib + PDK configured)
+  virtuoso_dir: "/disk/mcao53/Sim_engine_results"
+  # X display for headless Virtuoso (Xvfb must be running on this display
+  # before the engine starts — launch it in a separate tmux session:
+  #   Xvfb :99 -screen 0 1024x768x24 -extension XKEYBOARD &
+  display: ":99"
+
+# ============================================================
+# TUNABLE PARAMETERS — layout_pixel mode
+# These define the unique cell name for layout_pixel runs.
+# ============================================================
+nmos:
+  width: "3u"      # wr — e.g. "3u", "6u", "9u"
+  length: "80n"    # lr — e.g. "80n", "100n"
+  fingers: 4       # nr — integer
+  cell_layout: "nmos_rf"     # cell name used in layout instantiation
+  cell_spectre: "nmos_rf"    # cell name used in Spectre netlist re-insertion
+
+mim_cap:
+  length: "12u"    # lt — layout geometry AND Spectre re-insertion
+  width: "12u"     # wt — layout geometry AND Spectre re-insertion
+  total_c: "1p"    # approximate total capacitance (informational label)
+  cell_layout: "mimcap_um_rf"       # cell name for layout instantiation
+  cell_spectre: "mimcap_um_sin_rf"  # cell name for Spectre netlist re-insertion
+
+# ============================================================
+# TUNABLE PARAMETERS — simplified_pixel mode
+# These define the unique cell name and switch behavior.
+# ============================================================
+switch_model:
+  # Series coupling capacitance (models pixel-stack AC coupling, in Farads)
+  cap_value: "1e-12"
+
+  # ON state: transistor in conduction — low-impedance path
+  # Imaginary contribution is small and can be neglected at these frequencies.
+  r_on: 3           # ohm
+
+  # OFF state: transistor open — high-impedance path
+  r_off: 260        # ohm  (drain-source leakage resistance)
+  c_off: "8e-14"    # F    (drain-source parasitic capacitance, ~80 fF)
+
+# ============================================================
+# LAYOUT GEOMETRY — shared by all modes
+# ============================================================
+layout:
+  pixel_size: 35.0   # um — square pixel side length
+  gnd_layer: "M4"
+  pixel_layer: "M9"
+  via_size: 3.8      # um — via stack area half-size (layout_pixel mode only)
+
+# ============================================================
+# SIMULATION — shared frequency sweep settings
+# ============================================================
+simulation:
+  # Gate voltage sweep for layout_pixel mode
+  control_voltages: [1.0, 0.0]   # V_gate values (on → off)
+
+  # EMX EM extraction sweep
+  emx_freq_start: 0
+  emx_freq_stop: "40e9"
+  emx_freq_step: "100e6"
+  emx_parallel_threads: 8
+
+  # Spectre SP analysis
+  spectre_freq_start: "0G"
+  spectre_freq_stop: "40G"
+  spectre_freq_step: "100M"
+
+# ============================================================
+# FIXED PATHS
+# ============================================================
+paths:
+  proc_file: "/disk/mcao53/Project65/proc65/RC_IRCX_CRN65G+_1P9M+UT-ALRDL_6X1Z1U_MiM_typical.proc"
+  tsmc_models: "/disk/TSMC65GP_PDK/MSRF_General_Purpose_Plus/PDK/CadenceOA/tn65cmsp018k3_1_0c/models/spectre/crn65gplus_2d5_lk_v1d0.scs"
+  emx_binary: "/cae/apps/data/cadence-2025/installs/EMX20251/bin/emx"

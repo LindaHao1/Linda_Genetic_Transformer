@@ -13,7 +13,8 @@ def calculate_filter_cost(
     bandwidth_percent: float = 0.25,
     passband_loss_target_db: float = 5.0,
     stopband_loss_target_db: float = 10.0,
-    freq_range_ghz: Tuple[float, float] = (10.0, 60.0)
+    stopband_offset_ghz: float = 4.0,
+    stopband_width_ghz: float = 10.0
 ) -> float:
     """
     Calculate cost for a bandpass filter based on S21/S12 parameters.
@@ -28,7 +29,8 @@ def calculate_filter_cost(
         bandwidth_percent: Fractional bandwidth (default: 0.25 = 25%)
         passband_loss_target_db: Target max loss in passband (default: 5 dB)
         stopband_loss_target_db: Target min loss in stopband (default: 10 dB)
-        freq_range_ghz: Frequency range to evaluate (default: 10-60 GHz)
+        stopband_offset_ghz: Gap between passband edge and stopband (default: 4 GHz)
+        stopband_width_ghz: Width of each stopband region (default: 10 GHz)
         
     Returns:
         Cost value (lower is better, 0 is perfect)
@@ -45,13 +47,22 @@ def calculate_filter_cost(
         passband_min = center_freq_ghz - bw_ghz / 2
         passband_max = center_freq_ghz + bw_ghz / 2
         
+        # Calculate stopband regions dynamically
+        # Lower stopband: offset below passband, with specified width
+        lower_stopband_max = passband_min - stopband_offset_ghz
+        lower_stopband_min = lower_stopband_max - stopband_width_ghz
+        # Upper stopband: offset above passband, with specified width
+        upper_stopband_min = passband_max + stopband_offset_ghz
+        upper_stopband_max = upper_stopband_min + stopband_width_ghz
+        
         # Get S21 magnitude in dB (insertion loss)
         s21_db = 20 * np.log10(np.abs(net.s[:, 1, 0]))
         
         # Create masks for passband and stopband
         passband_mask = (freqs_ghz >= passband_min) & (freqs_ghz <= passband_max)
-        stopband_mask = ((freqs_ghz >= freq_range_ghz[0]) & (freqs_ghz < passband_min)) | \
-                       ((freqs_ghz > passband_max) & (freqs_ghz <= freq_range_ghz[1]))
+        lower_stopband_mask = (freqs_ghz >= lower_stopband_min) & (freqs_ghz <= lower_stopband_max)
+        upper_stopband_mask = (freqs_ghz >= upper_stopband_min) & (freqs_ghz <= upper_stopband_max)
+        stopband_mask = lower_stopband_mask | upper_stopband_mask
         
         if not np.any(passband_mask):
             return 1e6  # Huge penalty if no passband points
@@ -61,6 +72,8 @@ def calculate_filter_cost(
         
         # Stopband rejection (should be large negative, ideally < -target dB)
         stopband_loss = -s21_db[stopband_mask]  # Convert to positive loss
+        lower_stopband_loss = -s21_db[lower_stopband_mask] if np.any(lower_stopband_mask) else np.array([0])
+        upper_stopband_loss = -s21_db[upper_stopband_mask] if np.any(upper_stopband_mask) else np.array([0])
         
         # Cost components
         # 1. Passband penalty: penalize loss > target
@@ -70,20 +83,34 @@ def calculate_filter_cost(
         # Also penalize average loss even if below target (want it close to 0)
         passband_avg_cost = np.mean(passband_loss) ** 2
         
-        # 2. Stopband penalty: penalize rejection < target
-        stopband_violations = np.maximum(0, stopband_loss_target_db - stopband_loss)
-        stopband_cost = np.mean(stopband_violations) ** 2 if len(stopband_violations) > 0 else 0
+        # 2. Stopband penalty: penalize rejection < target (separate lower/upper)
+        lower_violations = np.maximum(0, stopband_loss_target_db - lower_stopband_loss)
+        upper_violations = np.maximum(0, stopband_loss_target_db - upper_stopband_loss)
+        lower_stopband_cost = np.mean(lower_violations) ** 2 if len(lower_violations) > 0 else 0
+        upper_stopband_cost = np.mean(upper_violations) ** 2 if len(upper_violations) > 0 else 0
+        
+        # Also minimize average stopband loss even when meeting threshold
+        lower_avg = np.mean(lower_stopband_loss) if len(lower_stopband_loss) > 0 else 0
+        upper_avg = np.mean(upper_stopband_loss) if len(upper_stopband_loss) > 0 else 0
+        # Inverse penalty: reward higher stopband loss (better rejection)
+        # Using dB directly - normalize by typical target (10-30 dB range)
+        lower_improvement = np.maximum(0, 30.0 - lower_avg) / 30.0 if lower_avg > 0 else 1.0
+        upper_improvement = np.maximum(0, 30.0 - upper_avg) / 30.0 if upper_avg > 0 else 1.0
         
         # 3. Flatness penalty in passband (reward flat response)
         passband_std = np.std(passband_loss)
         flatness_cost = passband_std ** 2
         
         # Weighted total cost
+        # Upper stopband gets 2x weight since it's performing worse
         total_cost = (
-            1.0 * passband_cost +        # Primary: meet passband target
-            0.5 * passband_avg_cost +    # Secondary: minimize passband loss
-            0.5 * stopband_cost +        # Tertiary: meet stopband target
-            0.2 * flatness_cost          # Bonus: flat passband
+            1.0 * passband_cost +           # Primary: meet passband target
+            0.3 * passband_avg_cost +       # Secondary: minimize passband loss
+            1.5 * lower_stopband_cost +     # Lower stopband violations
+            # 1.5 * upper_stopband_cost +     # Upper stopband violations 
+            1.0 * lower_improvement       # Bonus: maximize lower stopband
+            # 0.5 * upper_improvement +        # Bonus: maximize upper stopband (2x)
+            # 0.2 * flatness_cost             # Bonus: flat passband
         )
         
         return total_cost
@@ -96,7 +123,9 @@ def calculate_filter_cost(
 def analyze_filter_performance(
     s2p_path: str,
     center_freq_ghz: float = 35.0,
-    bandwidth_percent: float = 0.25
+    bandwidth_percent: float = 0.25,
+    stopband_offset_ghz: float = 4.0,
+    stopband_width_ghz: float = 10.0
 ) -> dict:
     """
     Detailed analysis of filter performance.
@@ -149,7 +178,9 @@ def analyze_filter_performance(
             bw_3db = 0.0
         
         return {
-            'cost': calculate_filter_cost(s2p_path, center_freq_ghz, bandwidth_percent),
+            'cost': calculate_filter_cost(s2p_path, center_freq_ghz, bandwidth_percent,
+                                        stopband_offset_ghz=stopband_offset_ghz,
+                                        stopband_width_ghz=stopband_width_ghz),
             'passband_loss_avg_db': passband_loss_avg,
             'passband_loss_max_db': passband_loss_max,
             'passband_loss_min_db': passband_loss_min,

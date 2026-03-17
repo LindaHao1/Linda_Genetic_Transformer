@@ -3,3 +3,7 @@ simulation_results*
 __pycache__
 emxdc.dat
 engine_results_*
+optimization_results*
+optimization_simulations*
+.vscode
+Inductor_spar/Simulated_Active_inductance.zip
