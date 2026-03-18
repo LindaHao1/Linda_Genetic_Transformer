@@ -80,6 +80,7 @@ from .pixel_matrix import (
     build_emx_port_flags,
     build_skill_pixel_types_list,
     build_skill_port_names_list,
+    get_feed_rows,
     total_ports as matrix_total_ports,
 )
 from .spectre_runner import run_all_states
@@ -174,11 +175,14 @@ class VirtuosoPixelEngine:
             results = engine.sweep(...)
     """
 
-    def __init__(self, config_path: str | Path):
+    def __init__(self, config_path: str | Path, worker_id: Optional[int] = None):
         self.config_path = Path(config_path)
         self.base_config = self._load_yaml(self.config_path)
         self._runner: Optional[PersistentVirtuosoRunner] = None
-        print(f"[VirtuosoPixelEngine] Loaded config: {self.config_path}")
+        self._worker_id  = worker_id
+        self._lp = f"[W{worker_id}] " if worker_id is not None else ""
+        print(f"[VirtuosoPixelEngine] Loaded config: {self.config_path}"
+              + (f" (worker {worker_id})" if worker_id is not None else ""))
 
     # ------------------------------------------------------------------
     # Context manager support
@@ -212,6 +216,8 @@ class VirtuosoPixelEngine:
             RunResult with success flags, log text, and plot paths.
         """
         cfg  = _deep_merge(self.base_config, config_override or {})
+        if self._worker_id is not None:
+            cfg = _apply_worker_config(cfg, self._worker_id)
         mode = cfg.get("mode", "layout_pixel")
 
         if mode not in _MODE_TEMPLATES:
@@ -234,9 +240,9 @@ class VirtuosoPixelEngine:
         with config_snapshot.open("w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
-        print(f"\n[run] Mode:   {mode}")
-        print(f"[run] Cell:   {cell_name}")
-        print(f"[run] Output: {run_dir}")
+        print(f"\n{self._lp}[run] Mode:   {mode}")
+        print(f"{self._lp}[run] Cell:   {cell_name}")
+        print(f"{self._lp}[run] Output: {run_dir}")
 
         # --- Ensure Virtuoso session is running ---
         runner = self._get_runner(cfg)
@@ -246,15 +252,15 @@ class VirtuosoPixelEngine:
         layout_log = log_dir / "virtuoso_layout.log"
         self._render_layout(cfg, cell_name, layout_il)
 
-        print(f"[run] Running Virtuoso layout generation ({mode})...")
+        print(f"{self._lp}[run] Running Virtuoso layout generation ({mode})...")
         layout_result = runner.run_script(
             skill_file=layout_il,
             log_file=layout_log,
         )
-        _print_result("layout", layout_result)
+        _print_result("layout", layout_result, self._lp)
 
         if not layout_result.success:
-            print("[run] Layout failed — skipping simulation.")
+            print(f"{self._lp}[run] Layout failed — skipping simulation.")
             return RunResult(
                 cell_name=cell_name,
                 run_dir=run_dir,
@@ -271,12 +277,12 @@ class VirtuosoPixelEngine:
         sim_log = log_dir / "virtuoso_sim.log"
         self._render_sim(cfg, cell_name, emx_dir, sim_il)
 
-        print(f"[run] Running Virtuoso EMX + Spectre simulation ({mode})...")
+        print(f"{self._lp}[run] Running Virtuoso EMX + Spectre simulation ({mode})...")
         sim_result = runner.run_script(
             skill_file=sim_il,
             log_file=sim_log,
         )
-        _print_result("simulation", sim_result)
+        _print_result("simulation", sim_result, self._lp)
 
         # --- Post-EMX Python step (pixelated_design_simple only) ---
         extra_s_param_files = self._post_emx_step(cfg, cell_name, emx_dir)
@@ -294,7 +300,7 @@ class VirtuosoPixelEngine:
                 plot_dir=plot_dir,
             )
         else:
-            print("[run] No S-parameter files found — skipping plots.")
+            print(f"{self._lp}[run] No S-parameter files found — skipping plots.")
 
         return RunResult(
             cell_name=cell_name,
@@ -388,10 +394,16 @@ class VirtuosoPixelEngine:
             display = proj.get("display", ":99")
             log_dir = Path(proj["parent_output_dir"]) / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
+            runner_label = (
+                f"VirtuosoRunner-W{self._worker_id}"
+                if self._worker_id is not None
+                else "VirtuosoRunner"
+            )
             self._runner = PersistentVirtuosoRunner(
                 virtuoso_dir=proj["virtuoso_dir"],
                 display=display,
                 session_log=log_dir / "virtuoso_session.log",
+                label=runner_label,
             )
             self._runner.start()
         return self._runner
@@ -605,7 +617,6 @@ class VirtuosoPixelEngine:
         cap_values = pd.get("cap_values", [])
         state_list = pd.get("state_list", [])
         feedline   = pd.get("feedline", {})
-        feedline_row = feedline.get("feedline_row", 0)
 
         if len(cap_values) != mat_info["num_sw"]:
             raise ValueError(
@@ -619,29 +630,28 @@ class VirtuosoPixelEngine:
                         f"state_list[{i}] length ({len(sv)}) must equal "
                         f"number of switch pixels ({mat_info['num_sw']})."
                     )
-        if not (0 <= feedline_row < mat_info["num_rows"]):
-            raise ValueError(
-                f"feedline_row {feedline_row} out of range "
-                f"[0, {mat_info['num_rows'] - 1}]."
-            )
+
+        # Feed rows are read directly from col 0 and col N-1 of the matrix.
+        feed_row_left, feed_row_right = get_feed_rows(matrix)
 
         template_text = (_TEMPLATES_DIR / "pixelated_design_simple/layout.il").read_text()
 
         rendered = string.Template(template_text).substitute(
-            LIB_NAME          = cfg["project"]["lib_name"],
-            CELL_NAME         = cell_name,
-            PIXEL_SIZE        = la["pixel_size"],
-            GRID_SIZE         = la.get("grid_size", la["pixel_size"]),
-            GND_LAYER         = la["gnd_layer"],
-            PIXEL_LAYER       = la["pixel_layer"],
-            NUM_ROWS          = mat_info["num_rows"],
-            NUM_COLS          = mat_info["num_cols"],
-            PIXEL_TYPES_SKILL = build_skill_pixel_types_list(matrix),
-            PORT_NAMES_SKILL  = build_skill_port_names_list(mat_info),
-            FEEDLINE_ROW      = feedline_row,
-            FEEDLINE_WIDTH    = feedline.get("feedline_width", 5.0),
-            FEEDLINE_PADDING  = feedline.get("feedline_padding", 10.0),
-            GND_Y_EXTENSION   = la.get("gnd_y_extension", 0.0),
+            LIB_NAME           = cfg["project"]["lib_name"],
+            CELL_NAME          = cell_name,
+            PIXEL_SIZE         = la["pixel_size"],
+            GRID_SIZE          = la.get("grid_size", la["pixel_size"]),
+            GND_LAYER          = la["gnd_layer"],
+            PIXEL_LAYER        = la["pixel_layer"],
+            NUM_ROWS           = mat_info["num_rows"],
+            NUM_COLS           = mat_info["num_cols"],
+            PIXEL_TYPES_SKILL  = build_skill_pixel_types_list(matrix),
+            PORT_NAMES_SKILL   = build_skill_port_names_list(mat_info),
+            FEEDLINE_ROW_LEFT  = feed_row_left,
+            FEEDLINE_ROW_RIGHT = feed_row_right,
+            FEEDLINE_WIDTH     = feedline.get("feedline_width", 5.0),
+            FEEDLINE_PADDING   = feedline.get("feedline_padding", 10.0),
+            GND_Y_EXTENSION    = la.get("gnd_y_extension", 0.0),
         )
         output_path.write_text(rendered)
 
@@ -758,7 +768,8 @@ def _make_cell_name(cfg: dict) -> str:
     simplified_pixel         → simplepix_ps35p0_cap1em12_ron3_roff260_coff8em14
     pixelated_design_simple  → pixsimple_r3c5_ps35p0_fr1
     """
-    mode = cfg.get("mode", "layout_pixel")
+    mode   = cfg.get("mode", "layout_pixel")
+    suffix = f"_w{cfg['_worker_id']}" if cfg.get("_worker_id") is not None else ""
 
     if mode == "simplified_pixel":
         la  = cfg["layout"]
@@ -770,7 +781,7 @@ def _make_cell_name(cfg: dict) -> str:
             f"_ron{_cellname_safe(sw['r_on'])}"
             f"_roff{_cellname_safe(sw['r_off'])}"
             f"_coff{_cellname_safe(sw['c_off'])}"
-        )
+        ) + suffix
 
     if mode == "pixelated_design_simple":
         pd  = cfg["pixelated"]
@@ -778,15 +789,15 @@ def _make_cell_name(cfg: dict) -> str:
         mat = pd["pixel_state_matrix"]
         rows = len(mat)
         cols = len(mat[0]) if rows else 0
-        feedline_row = pd.get("feedline", {}).get("feedline_row", 0)
-        grid_size    = la.get("grid_size", la["pixel_size"])
+        grid_size = la.get("grid_size", la["pixel_size"])
+        frl, frr  = get_feed_rows(mat)
         return (
             f"pixsimple"
             f"_r{rows}c{cols}"
             f"_ps{_cellname_safe(la['pixel_size'])}"
             f"_gs{_cellname_safe(grid_size)}"
-            f"_fr{feedline_row}"
-        )
+            f"_frl{frl}frr{frr}"
+        ) + suffix
 
     # Default: layout_pixel
     n = cfg["nmos"]
@@ -798,7 +809,7 @@ def _make_cell_name(cfg: dict) -> str:
         f"_nf{n['fingers']}"
         f"_miml{m['length']}"
         f"_mimw{m['width']}"
-    )
+    ) + suffix
 
 
 def _get_run_labels(cfg: dict) -> list:
@@ -850,6 +861,23 @@ def _make_plots(
     )
 
 
+def _apply_worker_config(cfg: dict, worker_id: int) -> dict:
+    """
+    Return a deep copy of *cfg* with worker-specific isolation applied.
+
+    Each worker uses:
+      - ``project.lib_name``         →  ``{base}_w{worker_id}``
+      - ``project.parent_output_dir`` → ``{base}/worker_{worker_id}``
+      - ``_worker_id``                  stored for cell-name suffix generation
+    """
+    cfg = copy.deepcopy(cfg)
+    proj = cfg["project"]
+    proj["lib_name"]           = f"{proj['lib_name']}_w{worker_id}"
+    proj["parent_output_dir"]  = f"{proj['parent_output_dir']}/worker_{worker_id}"
+    cfg["_worker_id"]          = worker_id
+    return cfg
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     """Recursively merge *override* into a deep copy of *base*."""
     result = copy.deepcopy(base)
@@ -872,8 +900,8 @@ def _build_nested(path: List[str], value: Any) -> dict:
     return d
 
 
-def _print_result(stage: str, result: VirtuosoResult) -> None:
+def _print_result(stage: str, result: VirtuosoResult, prefix: str = "") -> None:
     status = "OK" if result.success else "FAILED"
-    print(f"[run] {stage} → {status} ({result.elapsed_sec:.1f}s)")
+    print(f"{prefix}[run] {stage} → {status} ({result.elapsed_sec:.1f}s)")
     if not result.success:
-        print(f"      error: {result.error_message}")
+        print(f"{prefix}      error: {result.error_message}")

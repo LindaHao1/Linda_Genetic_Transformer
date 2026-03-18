@@ -38,8 +38,9 @@ procedure( build_pixelated_simple()
 let( (cv libName cellName
       pixel_size grid_size gnd_layer pixel_layer
       num_rows num_cols pixel_types port_names
-      feedline_row feedline_width feedline_padding gnd_y_extension
-      fl_y_center fl_y_bottom fl_y_top
+      feedline_row_left feedline_row_right feedline_width feedline_padding gnd_y_extension
+      fl_left_y_center  fl_left_y_bottom  fl_left_y_top
+      fl_right_y_center fl_right_y_bottom fl_right_y_top
       gnd_y_bottom gnd_y_top
       fl_x_left fl_x_right
       ptype pname center_x center_y
@@ -57,12 +58,13 @@ gnd_layer        = "${GND_LAYER}"
 pixel_layer      = "${PIXEL_LAYER}"
 num_rows         = ${NUM_ROWS}
 num_cols         = ${NUM_COLS}
-pixel_types      = ${PIXEL_TYPES_SKILL}
-port_names       = ${PORT_NAMES_SKILL}
-feedline_row     = ${FEEDLINE_ROW}
-feedline_width   = ${FEEDLINE_WIDTH}
-feedline_padding = ${FEEDLINE_PADDING}
-gnd_y_extension  = ${GND_Y_EXTENSION}
+pixel_types        = ${PIXEL_TYPES_SKILL}
+port_names         = ${PORT_NAMES_SKILL}
+feedline_row_left  = ${FEEDLINE_ROW_LEFT}   ; row of left  feed col (derived from matrix col 0)
+feedline_row_right = ${FEEDLINE_ROW_RIGHT}  ; row of right feed col (derived from matrix col N-1)
+feedline_width     = ${FEEDLINE_WIDTH}
+feedline_padding   = ${FEEDLINE_PADDING}
+gnd_y_extension    = ${GND_Y_EXTENSION}
 
 ; ============================================================
 ; 2. INITIALIZATION
@@ -75,10 +77,18 @@ printf("    Grid: %dx%d  pixel_size=%.2f um  grid_size=%.2f um  gnd_ext=%.2f um\
 pin_size         = 0.5             ; um — central port pin size
 feedline_pin_size = feedline_width ; feedline port pin height = feedline width
 
-; Feedline Y geometry (derived from grid_size pitch)
-fl_y_center = feedline_row * grid_size + grid_size / 2.0
-fl_y_bottom = fl_y_center - feedline_width / 2.0
-fl_y_top    = fl_y_center + feedline_width / 2.0
+; Row 0 in the matrix is the TOP row visually, so it maps to the highest Y.
+; Flipped Y for row i:  y_center = (num_rows - 1 - i) * grid_size + grid_size/2
+
+; Left feedline Y geometry (col 0 feed row, flipped)
+fl_left_y_center = (num_rows - 1 - feedline_row_left)  * grid_size + grid_size / 2.0
+fl_left_y_bottom = fl_left_y_center - feedline_width / 2.0
+fl_left_y_top    = fl_left_y_center + feedline_width / 2.0
+
+; Right feedline Y geometry (col N-1 feed row, flipped)
+fl_right_y_center = (num_rows - 1 - feedline_row_right) * grid_size + grid_size / 2.0
+fl_right_y_bottom = fl_right_y_center - feedline_width / 2.0
+fl_right_y_top    = fl_right_y_center + feedline_width / 2.0
 
 ; Ground Y extent for active columns (grid height + bilateral extension)
 gnd_y_bottom = 0.0 - gnd_y_extension
@@ -97,18 +107,27 @@ for( col_i 0 (num_cols - 1)
 
         ; ---- FEED COLUMN: feedline trace (feedline_width) + full-height ground ----
         ;  No pixel patch is drawn.  Top metal height = feedline_width only.
-        ;  Ground height = gnd_y_bottom → gnd_y_top (same as active columns)
-        ;  so the ground plane is one continuous rectangle across all columns.
-        let( (fc_x_left fc_x_right)
+        ;  Left and right feed columns use independent Y centres derived from
+        ;  the non-zero row in col 0 / col N-1 of the pixel_state_matrix.
+        ;  Ground height = gnd_y_bottom → gnd_y_top (same as active columns).
+        let( (fc_x_left fc_x_right fc_fl_y_bottom fc_fl_y_top)
             fc_x_left  = col_i * grid_size
             fc_x_right = (col_i + 1) * grid_size
 
+            if( col_i == 0 then
+                fc_fl_y_bottom = fl_left_y_bottom
+                fc_fl_y_top    = fl_left_y_top
+            else
+                fc_fl_y_bottom = fl_right_y_bottom
+                fc_fl_y_top    = fl_right_y_top
+            )
+
             dbCreateRect(cv pixel_layer
-                list(list(fc_x_left fl_y_bottom) list(fc_x_right fl_y_top)))
+                list(list(fc_x_left fc_fl_y_bottom) list(fc_x_right fc_fl_y_top)))
             dbCreateRect(cv gnd_layer
                 list(list(fc_x_left gnd_y_bottom) list(fc_x_right gnd_y_top)))
             printf("  [feed col %d] metal y=[%.2f,%.2f]  gnd y=[%.2f,%.2f]\n"
-                   col_i fl_y_bottom fl_y_top gnd_y_bottom gnd_y_top)
+                   col_i fc_fl_y_bottom fc_fl_y_top gnd_y_bottom gnd_y_top)
         )
 
     else
@@ -132,7 +151,7 @@ for( col_i 0 (num_cols - 1)
             )
 
             center_x = col_i * grid_size + grid_size / 2.0
-            center_y = row_i * grid_size + grid_size / 2.0
+            center_y = (num_rows - 1 - row_i) * grid_size + grid_size / 2.0
 
             ; --- Top metal patch (types 1, 2, 3): pixel_size centred in cell ---
             when( ptype > 0
@@ -169,24 +188,20 @@ printf(" [3] Pixel grid drawn: %d rows x %d cols\n" num_rows num_cols)
 ;    ground strip (feedline_width height, centred on fl_y_center).
 ; ============================================================
 
-; --- Left extension ---
-; Top metal: feedline_width only (the signal trace)
-; Ground:    full height gnd_y_bottom → gnd_y_top (continuous with pixel-grid ground)
+; --- Left extension (uses left feed row Y) ---
 dbCreateRect(cv pixel_layer
-    list(list(fl_x_left fl_y_bottom) list(0.0 fl_y_top)))
+    list(list(fl_x_left fl_left_y_bottom) list(0.0 fl_left_y_top)))
 dbCreateRect(cv gnd_layer
     list(list(fl_x_left gnd_y_bottom) list(0.0 gnd_y_top)))
 
-; --- Right extension ---
-; Top metal: feedline_width only (the signal trace)
-; Ground:    full height gnd_y_bottom → gnd_y_top (continuous with pixel-grid ground)
+; --- Right extension (uses right feed row Y) ---
 dbCreateRect(cv pixel_layer
-    list(list(num_cols * grid_size fl_y_bottom) list(fl_x_right fl_y_top)))
+    list(list(num_cols * grid_size fl_right_y_bottom) list(fl_x_right fl_right_y_top)))
 dbCreateRect(cv gnd_layer
     list(list(num_cols * grid_size gnd_y_bottom) list(fl_x_right gnd_y_top)))
 
-printf(" [4] Feedline extensions: left x=[%.2f, 0]  right x=[%.2f, %.2f]\n"
-       fl_x_left (num_cols * grid_size) fl_x_right)
+printf(" [4] Left  extension: x=[%.2f, 0]   y_center=%.2f\n" fl_x_left fl_left_y_center)
+printf(" [4] Right extension: x=[%.2f,%.2f]  y_center=%.2f\n" (num_cols * grid_size) fl_x_right fl_right_y_center)
 
 ; ============================================================
 ; 5. PLACE I/O AND GROUND PINS  (at feedline ends)
@@ -200,40 +215,40 @@ printf(" [4] Feedline extensions: left x=[%.2f, 0]  right x=[%.2f, %.2f]\n"
 ;   reference ports.
 ; ============================================================
 
-; --- PIX_IN (pixel_layer, left end) ---
+; --- PIX_IN (pixel_layer, left end, at left feed row Y) ---
 let( (pin_box)
     pin_box = list(
-        list(fl_x_left              fl_y_center - feedline_pin_size/2.0)
-        list(fl_x_left + pin_size   fl_y_center + feedline_pin_size/2.0))
+        list(fl_x_left              fl_left_y_center - feedline_pin_size/2.0)
+        list(fl_x_left + pin_size   fl_left_y_center + feedline_pin_size/2.0))
     pixsimple_create_pin(cv "PIX_IN" list(pixel_layer "pin") pin_box "input")
-    printf(" [5a] PIX_IN     on %-3s  at x=%.2f\n" pixel_layer fl_x_left)
+    printf(" [5a] PIX_IN     on %-3s  x=%.2f  y_center=%.2f\n" pixel_layer fl_x_left fl_left_y_center)
 )
 
-; --- PIX_IN_GND (gnd_layer, same position) ---
+; --- PIX_IN_GND (gnd_layer, same position as PIX_IN) ---
 let( (pin_box)
     pin_box = list(
-        list(fl_x_left              fl_y_center - feedline_pin_size/2.0)
-        list(fl_x_left + pin_size   fl_y_center + feedline_pin_size/2.0))
+        list(fl_x_left              fl_left_y_center - feedline_pin_size/2.0)
+        list(fl_x_left + pin_size   fl_left_y_center + feedline_pin_size/2.0))
     pixsimple_create_pin(cv "PIX_IN_GND" list(gnd_layer "pin") pin_box "inputOutput")
-    printf(" [5b] PIX_IN_GND on %-3s  at x=%.2f\n" gnd_layer fl_x_left)
+    printf(" [5b] PIX_IN_GND on %-3s  x=%.2f  y_center=%.2f\n" gnd_layer fl_x_left fl_left_y_center)
 )
 
-; --- PIX_OUT (pixel_layer, right end) ---
+; --- PIX_OUT (pixel_layer, right end, at right feed row Y) ---
 let( (pin_box)
     pin_box = list(
-        list(fl_x_right - pin_size  fl_y_center - feedline_pin_size/2.0)
-        list(fl_x_right             fl_y_center + feedline_pin_size/2.0))
+        list(fl_x_right - pin_size  fl_right_y_center - feedline_pin_size/2.0)
+        list(fl_x_right             fl_right_y_center + feedline_pin_size/2.0))
     pixsimple_create_pin(cv "PIX_OUT" list(pixel_layer "pin") pin_box "output")
-    printf(" [5c] PIX_OUT    on %-3s  at x=%.2f\n" pixel_layer fl_x_right)
+    printf(" [5c] PIX_OUT    on %-3s  x=%.2f  y_center=%.2f\n" pixel_layer fl_x_right fl_right_y_center)
 )
 
-; --- PIX_OUT_GND (gnd_layer, same position) ---
+; --- PIX_OUT_GND (gnd_layer, same position as PIX_OUT) ---
 let( (pin_box)
     pin_box = list(
-        list(fl_x_right - pin_size  fl_y_center - feedline_pin_size/2.0)
-        list(fl_x_right             fl_y_center + feedline_pin_size/2.0))
+        list(fl_x_right - pin_size  fl_right_y_center - feedline_pin_size/2.0)
+        list(fl_x_right             fl_right_y_center + feedline_pin_size/2.0))
     pixsimple_create_pin(cv "PIX_OUT_GND" list(gnd_layer "pin") pin_box "inputOutput")
-    printf(" [5d] PIX_OUT_GND on %-3s at x=%.2f\n" gnd_layer fl_x_right)
+    printf(" [5d] PIX_OUT_GND on %-3s x=%.2f  y_center=%.2f\n" gnd_layer fl_x_right fl_right_y_center)
 )
 
 ; ============================================================

@@ -29,9 +29,11 @@ from .runner import VirtuosoResult, PersistentVirtuosoRunner
 from .plotter import plot_s11_results, plot_s2p_results
 from .pixel_matrix import analyze_matrix, build_emx_port_flags
 from .spectre_runner import parse_snp_port_order, run_all_states
+from .parallel_engine import ParallelVirtuosoEngine
 
 __all__ = [
     "VirtuosoPixelEngine",
+    "ParallelVirtuosoEngine",
     "RunResult",
     "VirtuosoResult",
     "PersistentVirtuosoRunner",

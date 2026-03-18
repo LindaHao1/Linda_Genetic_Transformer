@@ -42,7 +42,7 @@ mode: "pixelated_design_simple"
 # PROJECT SETTINGS
 # ============================================================
 project:
-  lib_name: "mingTest"
+  lib_name: "pySim"
   pdk_lib: "tsmcN65"
   # All runs land under this folder; sub-dir is auto-generated
   # from the tunable params (e.g. pixel_nmos_w3u_l80n_nf4_miml10u_mimw10u)
@@ -151,7 +151,7 @@ pixelated:
   pixel_state_matrix:
     - [1, 1, 2, 1, 0]
     - [0, 3, 1, 3, 1]
-    - [0, 1, 2, 1, 0]
+    - [0, 0, 2, 1, 0]
 
   # 4 states for 2 switches: all combinations of ON/OFF
   state_list:
@@ -172,6 +172,15 @@ pixelated:
   # Inductor S-parameter file (hyperparameter: choose one of the available files)
   # Available: 100nH, 200nH, 400nH, 800nH active inductance
   inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+
+# ============================================================
+# PARALLEL ENGINE SETTINGS
+# ============================================================
+parallel:
+  # Number of concurrent Virtuoso workers for ParallelVirtuosoEngine.
+  # Each worker gets its own Virtuoso process, library, and output folder.
+  # Worker N uses lib_name "{lib_name}_wN" and output dir "{parent_output_dir}/worker_N/"
+  num_workers: 2
 
 # ============================================================
 # FIXED PATHS

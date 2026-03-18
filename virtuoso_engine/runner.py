@@ -148,6 +148,26 @@ virtuosoSkillServer("{JOB_DIR}")
 # Persistent runner
 # ---------------------------------------------------------------------------
 
+def _remove_virtuoso_lock_files(session_log: Path, label: str = "VirtuosoRunner") -> None:
+    """
+    Remove Cadence session lock files that prevent Virtuoso from starting.
+
+    Virtuoso creates ``<session_log>`` and ``<session_log>.cdslck`` in the
+    log directory.  If a previous run crashed, these files linger and block
+    the next startup.  Call this before launching a new Virtuoso process.
+    """
+    log_dir = session_log.parent
+    log_dir.mkdir(parents=True, exist_ok=True)
+    for fname in [session_log.name, session_log.name + ".cdslck"]:
+        f = log_dir / fname
+        if f.exists():
+            try:
+                f.unlink()
+                print(f"[{label}] Removed stale lock file: {f}")
+            except OSError as exc:
+                print(f"[{label}] Warning: could not remove {f}: {exc}")
+
+
 class PersistentVirtuosoRunner:
     """
     Manages a single long-lived Virtuoso process that accepts SKILL jobs via
@@ -185,14 +205,17 @@ class PersistentVirtuosoRunner:
         session_log: Optional[Path] = None,
         default_timeout: int = 3600,
         max_restarts: int = 3,
+        label: str = "VirtuosoRunner",
     ) -> None:
         self.virtuoso_dir    = Path(virtuoso_dir)
         self.display         = display
         self.default_timeout = default_timeout
         self.max_restarts    = max_restarts
+        self._label          = label
 
-        # Unique job directory — avoids collisions between parallel processes
-        self._job_dir = Path(f"/tmp/virt_job_{os.getpid()}")
+        # Unique job directory per instance — pid alone is not enough when
+        # multiple runners live in the same process (parallel workers).
+        self._job_dir = Path(f"/tmp/virt_job_{os.getpid()}_{id(self)}")
         self._session_log = (
             Path(session_log) if session_log
             else self._job_dir / "session.log"
@@ -208,6 +231,9 @@ class PersistentVirtuosoRunner:
     def start(self) -> None:
         """Start Virtuoso with the SKILL server loop."""
         self._job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Remove stale Cadence lock files that would block Virtuoso startup
+        _remove_virtuoso_lock_files(self._session_log, self._label)
 
         # Write the server SKILL script with the actual job-dir path embedded
         server_il = self._job_dir / "server.il"
@@ -234,11 +260,11 @@ class PersistentVirtuosoRunner:
         )
 
         print(
-            f"[VirtuosoRunner] Started pid={self._proc.pid}, "
+            f"[{self._label}] Started pid={self._proc.pid}, "
             f"DISPLAY={self.display}"
         )
         print(
-            f"[VirtuosoRunner] Waiting {self.STARTUP_WAIT_SEC}s for "
+            f"[{self._label}] Waiting {self.STARTUP_WAIT_SEC}s for "
             f"Virtuoso to initialise..."
         )
         time.sleep(self.STARTUP_WAIT_SEC)
@@ -247,7 +273,7 @@ class PersistentVirtuosoRunner:
             raise RuntimeError(
                 f"Virtuoso failed to start — check {self._session_log}"
             )
-        print("[VirtuosoRunner] Virtuoso ready.")
+        print(f"[{self._label}] Virtuoso ready.")
 
     def close(self) -> None:
         """Gracefully shut down the Virtuoso server loop."""
@@ -260,7 +286,7 @@ class PersistentVirtuosoRunner:
             self._proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
             self._proc.kill()
-        print("[VirtuosoRunner] Virtuoso session closed.")
+        print(f"[{self._label}] Virtuoso session closed.")
 
     def __enter__(self) -> "PersistentVirtuosoRunner":
         self.start()
@@ -315,9 +341,9 @@ class PersistentVirtuosoRunner:
 
         # Write a stripped copy of the script (remove exit() to keep Virtuoso alive)
         clean_il   = _strip_exit_calls(skill_file.read_text())
-        clean_file = Path(
-            tempfile.mktemp(suffix=".il", prefix="virt_clean_", dir="/tmp")
-        )
+        fd, clean_path = tempfile.mkstemp(suffix=".il", prefix="virt_clean_", dir="/tmp")
+        clean_file = Path(clean_path)
+        os.close(fd)
         clean_file.write_text(clean_il)
 
         # Record session-log offset so we can extract per-script log later
@@ -436,7 +462,7 @@ class PersistentVirtuosoRunner:
             )
         self._restart_count += 1
         print(
-            f"[VirtuosoRunner] Restarting Virtuoso "
+            f"[{self._label}] Restarting Virtuoso "
             f"(attempt {self._restart_count}/{self.max_restarts})..."
         )
         if self._proc and self._proc.poll() is None:

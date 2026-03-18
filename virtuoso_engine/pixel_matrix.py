@@ -22,7 +22,7 @@ changing one without the other will silently break the port-to-component mapping
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,51 @@ def analyze_matrix(matrix: List[List[int]]) -> Dict[str, Any]:
         "num_sw":     sw_idx,
         "all_pixels": all_pixels,
     }
+
+
+# ---------------------------------------------------------------------------
+# Feed-row extractor
+# ---------------------------------------------------------------------------
+
+def get_feed_rows(matrix: List[List[int]]) -> Tuple[int, int]:
+    """
+    Determine the feedline row for the left (col 0) and right (col N-1) feed
+    columns by finding the first non-zero pixel type in each column.
+
+    The pixel_state_matrix encodes the feed position implicitly: whichever
+    row has a non-zero value in the leftmost / rightmost column is where
+    the feedline trace will be drawn.
+
+    Returns:
+        (left_row, right_row) — 0-based row indices (row 0 = bottom in layout).
+
+    Raises:
+        ValueError if either feed column is entirely zero.
+    """
+    num_rows = len(matrix)
+    num_cols = len(matrix[0])
+
+    left_row: Optional[int] = None
+    right_row: Optional[int] = None
+
+    for row in range(num_rows):
+        if left_row  is None and matrix[row][0]           != 0:
+            left_row  = row
+        if right_row is None and matrix[row][num_cols - 1] != 0:
+            right_row = row
+
+    if left_row is None:
+        raise ValueError(
+            "Left feed column (col 0) is entirely zero — "
+            "place a non-zero pixel type in col 0 to mark the input row."
+        )
+    if right_row is None:
+        raise ValueError(
+            "Right feed column (col N-1) is entirely zero — "
+            "place a non-zero pixel type in the last column to mark the output row."
+        )
+
+    return left_row, right_row
 
 
 # ---------------------------------------------------------------------------

@@ -67,3 +67,14 @@ Output: s2p fiels for each states the number of files are the same as the length
 
 
 There are some misunderstanding about the pixel layout structure. The left and right line will occupy the pixel places, they are not assumed to be additional to the pixel design. so the left most col and the right most col are actually not full pixels, but only the lines, so their ground plane are also smaller to align with the feed length. Your current drawing is a pixel penetrating the whole strucutre. But I want only the left and right part instead. Second, We chan have the total grond plane larger than the pixel design in the y direction. Third, we can define two dimensions, pixel size and grid size, where pixel is larger than the grid a little bit so that we create some overlap between pixels. FInally, add PIX_IN_GND and PIX_OUT_GND in the gnd layer at directly same position. SO when do the spectre, also connet the gnd.
+
+
+%%%%%% The above task is completed. 
+
+parallelization and simulator structure. The current pixel simulation only has one single virtuoso running.  I want a parallel virtuoso runner with x number of virtuosos running concurrently (configure file to configure this). The engine structure will be using a producer/consumer design framework. there will be multiple workers in the engine, and the consumer only needs to feed the engine with tasks. (task is defined also by cofiguration file (but for easier to use, user can choose to overwirte some existing template configuration)). Each virtuoso thred will use a different library name, different output folder. So all emx log and result log paths should be configured accordingly. basically they are disjoint
+
+In the folder for each simulation result, please save the configuraion that runs this simulation. 
+
+In the naming of the cell name and file name should have some name extension to ensure name does not clash between simulations. 
+
+One of the problem of the current simulation is virtuoso_session.log.cdslck and virtuoso_session.log in the logs/ folder will prevent virtuoso from starting. SO if these files are detected during start (for each thread) please remove them. Sometimes we might have crash or timeout for virtuoso or emx. In this case please restart the correcponding virtuoso server at the corresponding thread.
