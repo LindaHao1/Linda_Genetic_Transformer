@@ -174,7 +174,7 @@ class PersistentVirtuosoRunner:
     """
 
     # Seconds to wait after launching Virtuoso before checking it's alive
-    STARTUP_WAIT_SEC = 10
+    STARTUP_WAIT_SEC = 5
     # Seconds between job-completion polls
     POLL_INTERVAL = 0.5
 

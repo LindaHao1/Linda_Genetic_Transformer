@@ -20,14 +20,23 @@
 #     Tunable parameters: layout.pixel_size, switch_model.*
 #     Cell name example: simplepix_ps35p0_cap1e-12_ron3_roff260_coff8e-14
 #
+#   pixelated_design_simple
+#     Full NxM pixel-grid simulation for a switchable RF filter.
+#     Pixel types: 0=ground, 1=metal, 2=inductor, 3=switch.
+#     EMX extracts a multi-port S-parameter; Python generates one
+#     Spectre testbench per switch state and runs them.
+#     Output: one .s2p file per state (2-port: PIX_IN → PIX_OUT).
+#     Tunable parameters: pixelated.*, switch_model.*, layout.pixel_size
+#     Cell name example: pixsimple_r3c5_ps35p0_fr1
+#
 # ── Adding Future Modes ────────────────────────────────────
 #   See the "Adding New Modes" section in engine.py.
 # ============================================================
 
 # ── Active simulation mode ───────────────────────────────────────────────────
-# Set to "layout_pixel" or "simplified_pixel".
-# Can be overridden per-run: engine.run({"mode": "simplified_pixel"})
-mode: "simplified_pixel"
+# Set to "layout_pixel", "simplified_pixel", or "pixelated_design_simple".
+# Can be overridden per-run: engine.run({"mode": "pixelated_design_simple"})
+mode: "pixelated_design_simple"
 
 # ============================================================
 # PROJECT SETTINGS
@@ -83,10 +92,14 @@ switch_model:
 # LAYOUT GEOMETRY — shared by all modes
 # ============================================================
 layout:
-  pixel_size: 35.0   # um — square pixel side length
+  pixel_size: 35.0   # um — metal patch size (top layer); may be > grid_size for overlap
+  grid_size: 33.0    # um — pitch between pixel centres (pixelated_design_simple only)
+                     #      pixel_size > grid_size creates intentional pixel overlap
   gnd_layer: "M4"
   pixel_layer: "M9"
   via_size: 3.8      # um — via stack area half-size (layout_pixel mode only)
+  gnd_y_extension: 10.0  # um — ground plane extension beyond pixel grid in ±Y
+                          #      (pixelated_design_simple only)
 
 # ============================================================
 # SIMULATION — shared frequency sweep settings
@@ -105,6 +118,60 @@ simulation:
   spectre_freq_start: "0G"
   spectre_freq_stop: "40G"
   spectre_freq_step: "100M"
+
+# ============================================================
+# TUNABLE PARAMETERS — pixelated_design_simple mode
+#
+# pixel_state_matrix: 2D grid of pixel types
+#   0 — ground layer only (M4, no central port)
+#   1 — top + ground layer (M9 + M4, no central port)
+#   2 — top + ground + inductor central port (IND_<i>, connected to inductor_s1p)
+#   3 — top + ground + switch central port (SW_<i>, ON/OFF per state)
+#
+# state_list: list of binary switch-state vectors (1=ON, 0=OFF).
+#   Length = number of simulation states.
+#   Each inner list length = number of type-3 (switch) pixels.
+#
+# cap_values: per-switch series capacitance (F).
+#   Length = number of type-3 pixels (row-first order).
+#
+# feedline: horizontal metal trace at feedline_row that forms the I/O path.
+#   PIX_IN port at left end, PIX_OUT port at right end.
+#
+# inductor_s1p: path to a 1-port S-parameter file for all inductor pixels.
+#   Choose from: 100nH, 200nH, 400nH, 800nH active inductance files.
+#
+# switch_model parameters (r_on, r_off, c_off) are shared with simplified_pixel.
+#
+# Output: one .s2p file per state (2-port: PIX_IN → PIX_OUT).
+# Cell name example: pixsimple_r3c5_ps35p0_fr1
+# ============================================================
+pixelated:
+  # 3×5 example: outer rows = reflectors, middle row = active filter
+  pixel_state_matrix:
+    - [1, 1, 2, 1, 0]
+    - [0, 3, 1, 3, 1]
+    - [0, 1, 2, 1, 0]
+
+  # 4 states for 2 switches: all combinations of ON/OFF
+  state_list:
+    - [0, 0]   # both OFF
+    - [1, 0]   # SW_0 ON, SW_1 OFF
+    - [0, 1]   # SW_0 OFF, SW_1 ON
+    - [1, 1]   # both ON
+
+  # Per-switch series coupling capacitance (same order as SW_* ports, row-first)
+  cap_values: [1.0e-12, 1.0e-12]
+
+  # Feedline configuration
+  feedline:
+    feedline_row: 1        # 0-indexed row where the feedline runs (middle row here)
+    feedline_width: 5.0    # um — metal width of the feedline trace
+    feedline_padding: 10.0 # um — extension beyond pixel-grid edge for port placement
+
+  # Inductor S-parameter file (hyperparameter: choose one of the available files)
+  # Available: 100nH, 200nH, 400nH, 800nH active inductance
+  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
 
 # ============================================================
 # FIXED PATHS

@@ -1,10 +1,16 @@
 """
 S-parameter plotting using scikit-rf.
 
-Reads .s1p Touchstone files (one per control voltage) and produces:
-  1. S11 magnitude vs frequency (dB)        — all voltages on one axes
-  2. S11 on a Smith chart (with labels)     — all voltages on one axes
-  3. |Z(V1)| / |Z(V2)| ratio vs frequency  — when exactly 2 voltages given
+plot_s11_results  (layout_pixel, simplified_pixel)
+    Reads .s1p Touchstone files (one per control voltage/state) and produces:
+      1. S11 magnitude vs frequency (dB)        — all states on one axes
+      2. S11 on a Smith chart (with labels)     — all states on one axes
+      3. |Z(V1)| / |Z(V2)| ratio vs frequency  — when exactly 2 states given
+
+plot_s2p_results  (pixelated_design_simple)
+    Reads .s2p Touchstone files (one per switch state) and produces:
+      1. S21 magnitude vs frequency (dB)  — filter transmission, all states
+      2. S11 magnitude vs frequency (dB)  — input match, all states
 
 Outputs are saved as PNG files in the run's plots/ directory.
 """
@@ -33,6 +39,73 @@ except ImportError as exc:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def plot_s2p_results(
+    s2p_files: List[Path],
+    state_labels: List[str],
+    output_dir: Path,
+) -> dict:
+    """
+    Plot S21 and S11 for each switch state and save PNGs to *output_dir*.
+
+    Args:
+        s2p_files:    Ordered list of .s2p paths, one per state.
+        state_labels: Corresponding state labels (e.g. ["state0", "state1"]).
+        output_dir:   Directory where plots are saved.
+
+    Returns:
+        dict with keys 's21_magnitude' and 's11_magnitude', each pointing to
+        the saved PNG path (or None if that plot could not be generated).
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    networks = _load_networks(s2p_files, state_labels)
+    if not networks:
+        print("  [plotter] No valid .s2p files to plot.")
+        return {"s21_magnitude": None, "s11_magnitude": None}
+
+    s21_path = output_dir / "s21_magnitude.png"
+    s11_path = output_dir / "s11_magnitude.png"
+
+    _plot_s2p_magnitude(networks, s21_path, row=1, col=0, ylabel="S21 (dB)",
+                        title="S21 Magnitude vs Frequency (Filter Transmission)")
+    _plot_s2p_magnitude(networks, s11_path, row=0, col=0, ylabel="S11 (dB)",
+                        title="S11 Magnitude vs Frequency (Input Match)")
+
+    print(f"  [plotter] S21 magnitude → {s21_path}")
+    print(f"  [plotter] S11 magnitude → {s11_path}")
+
+    return {"s21_magnitude": str(s21_path), "s11_magnitude": str(s11_path)}
+
+
+def _plot_s2p_magnitude(
+    networks: List[Tuple[Any, str]],
+    save_path: Path,
+    row: int,
+    col: int,
+    ylabel: str,
+    title: str,
+) -> None:
+    """Plot S[row][col] magnitude in dB vs frequency (GHz) for 2-port networks."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    for ntwk, label in networks:
+        freq_ghz = ntwk.f / 1e9
+        s_db     = ntwk.s_db[:, row, col]
+        ax.plot(freq_ghz, s_db, label=label, linewidth=1.8)
+
+    ax.set_xlabel("Frequency (GHz)", fontsize=12)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title(title, fontsize=13)
+    ax.legend(fontsize=11)
+    ax.grid(True, linestyle="--", alpha=0.6)
+    ax.set_xlim(left=0)
+
+    fig.tight_layout()
+    fig.savefig(str(save_path), dpi=150)
+    plt.close(fig)
+
 
 def plot_s11_results(
     s1p_files: List[Path],

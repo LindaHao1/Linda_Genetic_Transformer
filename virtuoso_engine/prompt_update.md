@@ -64,3 +64,6 @@ Input 3: cap values list. Each switch pixel is connected to a cap. This is a flo
 
 
 Output: s2p fiels for each states the number of files are the same as the length of list of states.
+
+
+There are some misunderstanding about the pixel layout structure. The left and right line will occupy the pixel places, they are not assumed to be additional to the pixel design. so the left most col and the right most col are actually not full pixels, but only the lines, so their ground plane are also smaller to align with the feed length. Your current drawing is a pixel penetrating the whole strucutre. But I want only the left and right part instead. Second, We chan have the total grond plane larger than the pixel design in the y direction. Third, we can define two dimensions, pixel size and grid size, where pixel is larger than the grid a little bit so that we create some overlap between pixels. FInally, add PIX_IN_GND and PIX_OUT_GND in the gnd layer at directly same position. SO when do the spectre, also connet the gnd.
