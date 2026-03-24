@@ -63,12 +63,12 @@ filter_specs:
     stopband_regions:
       - [30.0,    36.0e9]                   # below passband
       - [44.0e9,  50.0e9]                   # above passband
-    stopband_max_db: -25.0                  # > -25 dB in stopband is penalised
+    stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
     weight: 2.0
     # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
     cross_stopband_regions:
       - [18.0e9, 22.0e9]
-    cross_stopband_max_db: -10.0
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
   - state_index:     1
@@ -77,12 +77,12 @@ filter_specs:
     stopband_regions:
       - [15.0,     18.0e9]
       - [22.0e9,  25.0e9]
-    stopband_max_db: -25.0
+    stopband_max_db: -20.0
     weight: 2.0
     # Decoupling: state 1 must also attenuate at state 0's passband (40 GHz)
     cross_stopband_regions:
       - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -10.0
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
 # ---------------------------------------------------------------------------

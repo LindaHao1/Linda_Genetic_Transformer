@@ -69,3 +69,8 @@ Use some encoder frame work to deal with the pixel designs. Out put s parameters
 
 Create  a configuration of detials. (e.g. how many points are there in toal, pixel rows and cols, basically all parameters needed)
 
+## Feasibility Labeling.
+
+We will label the infeasible design with some mark (like some impossible values liek all 1 s parameters to let the network know it is not feasible). These designs will bypass world model and simulation. During sampling, give low priority to infeasible design. 
+
+We don't want the infeasible design to dominate, 

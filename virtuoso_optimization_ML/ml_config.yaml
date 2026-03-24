@@ -1,0 +1,129 @@
+# =============================================================================
+# ml_config.yaml — Online ML optimizer for the switchable filter design
+# =============================================================================
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+output_dir:      "/disk/mcao53/Sim_engine_results/ml_filter_results"
+
+# -----------------------------------------------------------------------------
+# GRID / DESIGN SPACE
+# Mirrors the SA/GA config structure.
+# -----------------------------------------------------------------------------
+grid:
+  rows:              25
+  cols:              27
+  n_switches:        4
+  max_inductors:     10
+  n_states:          2
+  cap_min:           200.0e-15   # 200 fF
+  cap_max:           1000.0e-15  # 1 pF
+  n_inductor_values: 4           # entries in the inductor_translation_table
+
+# -----------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATIONS
+# Same format as SA/GA filter_specs.
+# State 0: 40 GHz passband  |  State 1: 20 GHz passband
+# -----------------------------------------------------------------------------
+filter_specs:
+  - state_index: 0
+    passband: [36.0e9, 44.0e9]
+    passband_min_db: -3.0
+    stopband_regions:
+      - [3.0e9, 35.0e9]
+      - [45.0e9, 50.0e9]
+    stopband_max_db: -15.0
+    cross_stopband_regions:
+      - [18.0e9, 22.0e9]
+    cross_stopband_max_db: -15.0
+    weight: 1.0
+
+  - state_index: 1
+    passband: [18.0e9, 22.0e9]
+    passband_min_db: -3.0
+    stopband_regions:
+      - [3.0e9, 17.0e9]
+      - [23.0e9, 50.0e9]
+    stopband_max_db: -15.0
+    cross_stopband_regions:
+      - [36.0e9, 44.0e9]
+    cross_stopband_max_db: -15.0
+    weight: 1.0
+
+# -----------------------------------------------------------------------------
+# S-PARAMETER FREQUENCY GRID
+# All ML modules interpolate Touchstone files onto this canonical grid.
+# -----------------------------------------------------------------------------
+s_param:
+  freq_min: 0.0e9     # 1 GHz
+  freq_max: 50.0e9    # 50 GHz
+  n_freq:   101       # number of uniformly spaced points
+
+# -----------------------------------------------------------------------------
+# ENCODING
+# Gap between pixel-type regions in the [0,1] float encoding.
+# -----------------------------------------------------------------------------
+encoding:
+  region_gap: 0.05
+
+# -----------------------------------------------------------------------------
+# GENERATIVE MODEL (conditional flow matching)
+# -----------------------------------------------------------------------------
+generative_model:
+  cond_dim:       256     # S-param conditioning vector dimension
+  t_dim:          128     # time embedding dimension
+  base_channels:  64      # U-Net first-stage channel count
+  n_steps:        50      # Euler integration steps at inference
+  guidance_scale: 2.0     # classifier-free guidance scale (1.0 = no guidance)
+  p_uncond:       0.1     # CFG null-conditioning dropout probability
+  lr:             1.0e-4
+  batch_size:     32
+
+# -----------------------------------------------------------------------------
+# WORLD MODEL (ensemble surrogate)
+# -----------------------------------------------------------------------------
+world_model:
+  n_members:            5
+  lr:                   1.0e-4
+  batch_size:           32
+  std_scale:            3.0     # dB — calibration for confidence score
+  confidence_threshold: 0.7     # above this → relabel; below → simulate
+  use_bagging:          true    # each member trains on random 80% of batch
+  correction_interval:  10      # run Step 5 every N iterations
+
+# -----------------------------------------------------------------------------
+# REPLAY BUFFER
+# -----------------------------------------------------------------------------
+replay_buffer:
+  max_size:           10000
+  alpha_recency:      0.6       # weight for recency term in priority
+  alpha_real:         0.4       # weight for real-data bonus term
+  real_bonus:         2.0       # additive bonus for real simulation entries
+  decay_rate:         0.05      # exponential decay rate for recency
+  infeasible_weight:  0.1       # priority multiplier for infeasible entries
+
+# -----------------------------------------------------------------------------
+# TRAINING LOOP
+# -----------------------------------------------------------------------------
+training:
+  warmup_n_designs:      100    # number of random designs to simulate at warmup
+  n_iterations:          500    # total online training iterations
+  n_gen_samples:         20     # designs sampled from gen model per iteration
+  n_sim_max:             8      # max new real simulations per iteration
+  gen_train_steps:       10     # Adam steps for generative model per iteration
+  wm_train_steps:        10     # Adam steps for world model per iteration
+  wm_correction_n:       5      # high-confidence entries to re-simulate in Step 5
+  max_resample_attempts: 5      # retries to get feasible decoded design
+
+# -----------------------------------------------------------------------------
+# PARALLEL SIMULATION
+# -----------------------------------------------------------------------------
+parallel:
+  num_workers: 4
+
+# -----------------------------------------------------------------------------
+# CHECKPOINTING
+# -----------------------------------------------------------------------------
+checkpoint_interval: 50   # save checkpoint every N iterations
+
+# Optional: set seed for reproducibility (null = random)
+seed: 42
