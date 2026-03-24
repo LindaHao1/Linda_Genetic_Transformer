@@ -92,11 +92,11 @@ switch_model:
 # LAYOUT GEOMETRY — shared by all modes
 # ============================================================
 layout:
-  pixel_size: 35.0   # um — metal patch size (top layer); may be > grid_size for overlap
-  grid_size: 33.0    # um — pitch between pixel centres (pixelated_design_simple only)
+  pixel_size: 12.0   # um — metal patch size (top layer); may be > grid_size for overlap
+  grid_size: 10.0    # um — pitch between pixel centres (pixelated_design_simple only)
                      #      pixel_size > grid_size creates intentional pixel overlap
   gnd_layer: "M4"
-  pixel_layer: "M9"
+  pixel_layer: "AP"
   via_size: 3.8      # um — via stack area half-size (layout_pixel mode only)
   gnd_y_extension: 10.0  # um — ground plane extension beyond pixel grid in ±Y
                           #      (pixelated_design_simple only)
@@ -110,14 +110,14 @@ simulation:
 
   # EMX EM extraction sweep
   emx_freq_start: 0
-  emx_freq_stop: "40e9"
-  emx_freq_step: "100e6"
+  emx_freq_stop: "50e9"
+  emx_freq_step: "5e8"
   emx_parallel_threads: 8
 
   # Spectre SP analysis
   spectre_freq_start: "0G"
-  spectre_freq_stop: "40G"
-  spectre_freq_step: "100M"
+  spectre_freq_stop: "50G"
+  spectre_freq_step: "500M"
 
 # ============================================================
 # TUNABLE PARAMETERS — pixelated_design_simple mode
@@ -165,12 +165,25 @@ pixelated:
 
   # Feedline configuration
   feedline:
-    feedline_row: 1        # 0-indexed row where the feedline runs (middle row here)
-    feedline_width: 5.0    # um — metal width of the feedline trace
+    feedline_row: 1        # Deprecated, now controleld by matrix, 0-indexed row where the feedline runs (middle row here)
+    feedline_width: 10.2    # um — metal width of the feedline trace
     feedline_padding: 10.0 # um — extension beyond pixel-grid edge for port placement
 
-  # Inductor S-parameter file (hyperparameter: choose one of the available files)
-  # Available: 100nH, 200nH, 400nH, 800nH active inductance
+  # Global translation table: integer index → inductor s1p file path.
+  # Index 0 = 100nH, 1 = 200nH, 2 = 400nH, 3 = 800nH.
+  # Used by the SA optimiser to assign a distinct inductance value per inductor pixel.
+  inductor_translation_table:
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/100nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/400nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/800nH_active_inductance.s1p"
+
+  # Per-inductor value index (one entry per type-2 pixel, in row-first order).
+  # Each integer is an index into inductor_translation_table above.
+  # Length must equal the number of type-2 pixels in pixel_state_matrix.
+  inductor_values: [1]   # 1 = 200nH (matches the single type-2 pixel in the example matrix)
+
+  # Kept for single-inductor / legacy use.  Ignored when inductor_values is present.
   inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
 
 # ============================================================

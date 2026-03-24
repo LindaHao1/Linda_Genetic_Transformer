@@ -1,0 +1,97 @@
+# ===========================================================================
+# GA Configuration — Switchable Filter Optimiser
+#
+# Two-state switchable filter:
+#   State 0: passband at 40 GHz  (36–44 GHz)
+#   State 1: passband at 20 GHz  (18–22 GHz)
+#
+# The optimiser uses ParallelVirtuosoEngine to simulate the population.
+# Each design is a pixelated_design_simple run that produces one .s2p file
+# per filter state.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Path to the Virtuoso engine base config (shared physical/PDK settings).
+# ---------------------------------------------------------------------------
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+
+# Root directory for all GA outputs (progress log, best design, sim results)
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results"
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE
+# ---------------------------------------------------------------------------
+grid:
+  rows: 25              # number of pixel rows
+  cols: 27              # number of pixel columns (col 0 and col N-1 are feed columns)
+  n_switches: 4         # exact number of switch pixels (type 3) required
+  max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
+  n_states: 2           # number of filter states (= number of switch-state vectors)
+
+  # Switch series capacitance range (Farads)
+  cap_min: 200.0e-15    # 200 fF
+  cap_max: 1000.0e-15   # 1000 fF
+
+  # Number of discrete inductance choices in inductor_translation_table (config.yaml)
+  n_inductor_values: 4
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATIONS
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [36.0e9, 44.0e9]
+    passband_min_db: -3.0
+    stopband_regions:
+      - [33.0,    35.0e9]
+      - [45.0e9,  57.0e9]
+    stopband_max_db: -15.0
+    weight: 1.0
+    cross_stopband_regions:
+      - [18.0e9, 22.0e9]
+    cross_stopband_max_db: -10.0
+    cross_stopband_weight: 1.0
+
+  - state_index:     1
+    passband:        [18.0e9, 22.0e9]
+    passband_min_db: -3.0
+    stopband_regions:
+      - [15.0,     17.0e9]
+      - [23.0e9,  25.0e9]
+    stopband_max_db: -15.0
+    weight: 1.0
+    cross_stopband_regions:
+      - [36.0e9, 44.0e9]
+    cross_stopband_max_db: -10.0
+    cross_stopband_weight: 1.0
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS
+# ---------------------------------------------------------------------------
+ga:
+  # Population
+  pop_size: 20           # number of individuals per generation
+  n_gen:    200           # total number of generations
+  n_elite:  4            # elites carried over unchanged each generation
+
+  # Operators
+  p_crossover: 0.7       # probability of applying crossover (vs. cloning fitter parent)
+  p_mutation:  0.4       # probability of applying a mutation to each offspring
+
+  # Selection
+  selection:       "tournament"
+  tournament_size: 3
+
+  # Parallel simulation workers (one Virtuoso instance per worker)
+  n_parallel: 4
+
+  # Mutation action parameters (passed to random_action())
+  n_regular_flip: 8         # max pixels to flip per flip_01 action
+  cap_sigma:      50.0e-15   # Gaussian noise std for cap perturbation (50 fF)
+
+  # Per-action sampling weights (relative)
+  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value, perturb_caps, flip_switch_state]
+  action_weights: [2.0, 1.5, 1.0, 1.0, 2.0, 1.5]
+
+# Random seed (set to null for non-deterministic)
+seed: 42

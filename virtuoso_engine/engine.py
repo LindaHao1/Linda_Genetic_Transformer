@@ -667,16 +667,34 @@ class VirtuosoPixelEngine:
         sim = cfg["simulation"]
         p   = cfg["paths"]
 
-        # Validate inductor s1p path if there are inductor pixels
+        # Validate inductor s1p path(s) if there are inductor pixels
         matrix   = pd["pixel_state_matrix"]
         mat_info = analyze_matrix(matrix)
         if mat_info["num_ind"] > 0:
-            ind_s1p = pd.get("inductor_s1p", "")
-            if not Path(ind_s1p).exists():
-                raise FileNotFoundError(
-                    f"inductor_s1p not found: {ind_s1p!r}\n"
-                    "Check the 'pixelated.inductor_s1p' config key."
-                )
+            table: list = pd.get("inductor_translation_table", [])
+            ind_vals: list = pd.get("inductor_values", [])
+            if table and ind_vals:
+                # Per-inductor validation via translation table
+                for idx in ind_vals:
+                    if idx < 0 or idx >= len(table):
+                        raise ValueError(
+                            f"inductor_values entry {idx} is out of range for "
+                            f"inductor_translation_table (length {len(table)})."
+                        )
+                    s1p = table[idx]
+                    if not Path(s1p).exists():
+                        raise FileNotFoundError(
+                            f"inductor_translation_table[{idx}] not found: {s1p!r}\n"
+                            "Check the 'pixelated.inductor_translation_table' config key."
+                        )
+            else:
+                # Legacy single-file fallback
+                ind_s1p = pd.get("inductor_s1p", "")
+                if not Path(ind_s1p).exists():
+                    raise FileNotFoundError(
+                        f"inductor_s1p not found: {ind_s1p!r}\n"
+                        "Check the 'pixelated.inductor_s1p' config key."
+                    )
 
         template_text = (_TEMPLATES_DIR / "pixelated_design_simple/emx.il").read_text()
 

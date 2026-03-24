@@ -106,7 +106,7 @@ def generate_state_netlist(
     r_on: float,
     r_off: float,
     c_off: float,
-    inductor_s1p: str,
+    inductor_s1p_list: List[str],
     sim_cfg: dict,
     output_s2p: Path,
     netlist_dir: Path,
@@ -127,7 +127,8 @@ def generate_state_netlist(
         r_on                      Switch ON resistance (ohm).
         r_off                     Switch OFF resistance (ohm).
         c_off                     Switch OFF capacitance (F).
-        inductor_s1p              Path to the inductor 1-port S-parameter file.
+        inductor_s1p_list         Per-inductor s1p file paths, in IND_* port order.
+                                  Length must equal len(ind_indices_in_port_order).
         sim_cfg                   simulation config dict (spectre_freq_* keys).
         output_s2p                Path where Spectre should write the .s2p file.
         netlist_dir               Directory to write the .scs file into.
@@ -168,10 +169,11 @@ def generate_state_netlist(
     if ind_indices_in_port_order:
         lines.append("// Inductor connections (always connected)")
         for local_idx, port_idx in enumerate(ind_indices_in_port_order):
-            node = node_names[port_idx]
+            node   = node_names[port_idx]
+            s1p    = inductor_s1p_list[local_idx] if local_idx < len(inductor_s1p_list) else ""
             lines.append(
                 f"nport_ind{local_idx} ({node} 0) nport"
-                f" file=\"{inductor_s1p}\" N=1"
+                f" file=\"{s1p}\" N=1"
             )
         lines.append("")
 
@@ -271,7 +273,22 @@ def run_all_states(
     sw  = cfg.get("switch_model", {})
     sim = cfg["simulation"]
     pd  = cfg.get("pixelated", {})
-    inductor_s1p = pd.get("inductor_s1p", "")
+
+    # Build per-inductor s1p list from translation table + inductor_values indices.
+    # Falls back to the legacy single inductor_s1p for all inductors when the
+    # translation table or per-inductor indices are absent.
+    translation_table: List[str] = pd.get("inductor_translation_table", [])
+    inductor_value_indices: List[int] = pd.get("inductor_values", [])
+    fallback_s1p: str = pd.get("inductor_s1p", "")
+
+    if translation_table and inductor_value_indices:
+        inductor_s1p_list = [
+            translation_table[idx] for idx in inductor_value_indices
+        ]
+    else:
+        # Legacy: all inductors share the same file; list will be indexed by
+        # local_idx in generate_state_netlist — pad to len(ind_indices) lazily.
+        inductor_s1p_list = [fallback_s1p] * max(len(ind_indices), 1)
 
     s2p_paths: List[Optional[Path]] = []
 
@@ -294,7 +311,7 @@ def run_all_states(
             r_on                      = sw.get("r_on",  3),
             r_off                     = sw.get("r_off", 260),
             c_off                     = sw.get("c_off", "8e-14"),
-            inductor_s1p              = inductor_s1p,
+            inductor_s1p_list         = inductor_s1p_list,
             sim_cfg                   = sim,
             output_s2p                = output_s2p,
             netlist_dir               = emx_dir,

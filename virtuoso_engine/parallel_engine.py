@@ -41,16 +41,52 @@ Usage::
 
 from __future__ import annotations
 
+import io
 import queue
+import sys
 import threading
 from concurrent.futures import Future
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, TextIO
 
 import yaml
 
 from .engine import VirtuosoPixelEngine, RunResult
+
+
+# ---------------------------------------------------------------------------
+# Thread-safe tee stream — mirrors stdout to a log file
+# ---------------------------------------------------------------------------
+
+class _TeeStream:
+    """
+    Wraps an output stream so that every write goes to both the original
+    stream and a log file.  A lock makes it safe for concurrent threads.
+    """
+
+    def __init__(self, original: TextIO, log_file: TextIO) -> None:
+        self._original = original
+        self._log_file = log_file
+        self._lock     = threading.Lock()
+
+    def write(self, data: str) -> int:
+        with self._lock:
+            self._original.write(data)
+            self._original.flush()
+            self._log_file.write(data)
+            self._log_file.flush()
+        return len(data)
+
+    def flush(self) -> None:
+        with self._lock:
+            self._original.flush()
+            self._log_file.flush()
+
+    # Delegate everything else (e.g. .encoding, .fileno) to the original
+    def __getattr__(self, name: str):
+        return getattr(self._original, name)
 
 
 # ---------------------------------------------------------------------------
@@ -124,18 +160,26 @@ class ParallelVirtuosoEngine:
     num_workers:
         Number of concurrent Virtuoso workers.  Overrides the
         ``parallel.num_workers`` value in the config file when provided.
+    log_path:
+        Where to save the full console log for this run.  Defaults to
+        ``{parent_output_dir}/parallel_engine_{YYYYMMDD_HHMMSS}.log``.
+        Pass ``None`` to disable file logging.
     """
 
     def __init__(
         self,
         config_path: str | Path,
         num_workers: Optional[int] = None,
+        log_path: Optional[str | Path] = "auto",
     ) -> None:
         self.config_path  = Path(config_path)
         self._num_workers = num_workers
+        self._log_path    = log_path      # "auto", a Path, or None
         self._task_queue: queue.Queue[Optional[_Task]] = queue.Queue()
         self._workers: List[_WorkerThread] = []
-        self._started = False
+        self._started    = False
+        self._log_file: Optional[io.TextIOWrapper] = None
+        self._orig_stdout = None
 
     # ------------------------------------------------------------------
     # Context manager
@@ -161,6 +205,27 @@ class ParallelVirtuosoEngine:
             cfg = yaml.safe_load(f)
         n = self._num_workers or cfg.get("parallel", {}).get("num_workers", 1)
 
+        # --- Set up console logging ---
+        if self._log_path is not None:
+            if self._log_path == "auto":
+                parent_dir = Path(cfg["project"]["parent_output_dir"])
+                timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+                resolved_log = parent_dir / f"parallel_engine_{timestamp}.log"
+            else:
+                resolved_log = Path(self._log_path)
+            resolved_log.parent.mkdir(parents=True, exist_ok=True)
+            self._log_file   = resolved_log.open("w", buffering=1, encoding="utf-8")
+            self._orig_stdout = sys.stdout
+            sys.stdout        = _TeeStream(self._orig_stdout, self._log_file)
+            # Write header so the log is self-describing
+            sys.stdout.write(
+                f"# ParallelVirtuosoEngine log\n"
+                f"# Started : {datetime.now().isoformat(timespec='seconds')}\n"
+                f"# Config  : {self.config_path}\n"
+                f"# Workers : {n}\n"
+                f"# Log file: {resolved_log}\n\n"
+            )
+
         for worker_id in range(n):
             w = _WorkerThread(
                 worker_id=worker_id,
@@ -182,6 +247,17 @@ class ParallelVirtuosoEngine:
         self._workers.clear()
         self._started = False
         print("[ParallelEngine] All workers stopped.")
+
+        # --- Restore stdout and close log file ---
+        if self._orig_stdout is not None:
+            sys.stdout        = self._orig_stdout
+            self._orig_stdout = None
+        if self._log_file is not None:
+            self._log_file.write(
+                f"\n# Finished: {datetime.now().isoformat(timespec='seconds')}\n"
+            )
+            self._log_file.close()
+            self._log_file = None
 
     # ------------------------------------------------------------------
     # Public API
