@@ -26,9 +26,9 @@ from __future__ import annotations
 import json
 import random
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -36,16 +36,25 @@ import torch.optim as optim
 import yaml
 
 from virtuoso_optimization_SA.cost import specs_from_config, compute_total_cost
-from virtuoso_optimization_SA.feasibility import is_feasible
+from virtuoso_optimization_SA.feasibility import (
+    is_feasible, check_switch_states_distinct, generate_random_design,
+)
 
 from ..dataset.replay_buffer import ReplayBuffer, make_infeasible_sentinel
 from ..encoding.design_encoder import DesignEncoder, EncoderConfig
 from ..models.flow_matching import FlowMatchingModel
 from ..models.world_model import EnsembleWorldModel
-from ..training.warmup import run_warmup
+from ..training.warmup import run_warmup, reload_warmup_from_sim_folder
 from ..utils.s_param_utils import (
     build_target_s_param_tensor,
     result_to_s_param_tensor,
+)
+from ..utils.cost_utils import compute_cost_from_tensor, compute_score_tensor
+from ..utils.plot_utils import (
+    plot_iter_best,
+    plot_iter_worst,
+    plot_iter_best_sim,
+    plot_wm_vs_sim,
 )
 
 
@@ -58,7 +67,9 @@ class MLConfig:
     # Grid / design space
     rows:              int
     cols:              int
-    n_switches:        int
+    n_switches:        int      # nominal switch count (used by SA/GA; ML uses the range below)
+    n_switches_min:    int      # ML feasibility: minimum allowed switch count
+    n_switches_max:    int      # ML feasibility: maximum allowed switch count
     max_inductors:     int
     n_states:          int
     cap_min:           float
@@ -84,31 +95,34 @@ class MLConfig:
     gen_batch_size:     int
 
     # World model
-    wm_n_members:             int
-    wm_lr:                    float
-    wm_batch_size:            int
-    wm_std_scale:             float
-    wm_confidence_threshold:  float
-    wm_use_bagging:           bool
-    wm_correction_interval:   int
+    wm_n_members:                   int
+    wm_lr:                          float
+    wm_batch_size:                  int
+    wm_std_scale:                   float
+    wm_confidence_threshold:        float
+    wm_confidence_schedule_iters:   int    # iterations to ramp threshold 1.0 → target
+    wm_use_bagging:                 bool
+    wm_correction_interval:         int
 
     # Replay buffer
-    buf_max_size:           int
-    buf_alpha_recency:      float
-    buf_alpha_real:         float
-    buf_real_bonus:         float
-    buf_decay_rate:         float
-    buf_infeasible_weight:  float
+    buf_max_size:                   int
+    buf_alpha_recency:              float
+    buf_alpha_real:                 float
+    buf_real_bonus:                 float
+    buf_decay_rate:                 float
+    buf_infeasible_weight:          float
+    buf_infeasible_min_fraction:    float  # guaranteed infeasible fraction per gen batch
 
     # Training loop
-    warmup_n_designs:      int
-    n_iterations:          int
-    n_gen_samples:         int
-    n_sim_max:             int
-    gen_train_steps:       int
-    wm_train_steps:        int
-    wm_correction_n:       int
-    max_resample_attempts: int
+    warmup_n_designs:       int
+    n_iterations:           int
+    n_gen_samples:          int
+    n_sim_max:              int
+    gen_train_steps:        int
+    wm_train_steps:         int
+    wm_correction_n:        int
+    max_resample_attempts:  int
+    max_infeasible_per_iter: int  # max infeasible samples added to buffer per iteration
 
     # Paths
     virtuoso_config: str
@@ -119,7 +133,20 @@ class MLConfig:
 
     # Misc
     checkpoint_interval: int
-    seed:                Optional[int] = None
+
+    # Fields with defaults must come last
+    gen_constraint_weight: float = 0.0   # >0 enables differentiable constraint loss on x1_pred
+    seed:             Optional[int] = None
+    debug:            bool          = False   # print pixel-type counts for each generated design
+
+    # Guidance mode
+    guidance_mode:                     str   = "s_param"   # "s_param" or "score_based"
+    score_guidance_improvement_factor: float = 0.9         # target = best_scores × factor
+    n_score_components:                int   = 4
+
+    # Layout-only warmup pretraining (feasible designs, no simulation, no guidance)
+    warmup_n_random_feasible:           int  = 1000  # random feasible layouts, no simulation
+    warmup_random_feasible_train_steps: int  = 50    # gen model train steps on these layouts
 
     # Filter specs stored as raw dicts (parsed to FilterStateSpec on demand)
     filter_specs_raw: List[dict] = field(default_factory=list)
@@ -138,6 +165,8 @@ class MLConfig:
             rows              = int(g["rows"]),
             cols              = int(g["cols"]),
             n_switches        = int(g["n_switches"]),
+            n_switches_min    = int(g.get("n_switches_min", g["n_switches"])),
+            n_switches_max    = int(g.get("n_switches_max", g["n_switches"])),
             max_inductors     = int(g["max_inductors"]),
             n_states          = int(g["n_states"]),
             cap_min           = float(g["cap_min"]),
@@ -154,17 +183,19 @@ class MLConfig:
             gen_t_dim          = int(gm.get("t_dim",          128)),
             gen_base_channels  = int(gm.get("base_channels",   64)),
             gen_n_steps        = int(gm.get("n_steps",         50)),
-            gen_guidance_scale = float(gm.get("guidance_scale", 2.0)),
-            gen_p_uncond       = float(gm.get("p_uncond",       0.1)),
-            gen_lr             = float(gm.get("lr",             1e-4)),
-            gen_batch_size     = int(gm.get("batch_size",       32)),
+            gen_guidance_scale    = float(gm.get("guidance_scale",    2.0)),
+            gen_p_uncond          = float(gm.get("p_uncond",          0.1)),
+            gen_lr                = float(gm.get("lr",                1e-4)),
+            gen_batch_size        = int(gm.get("batch_size",          32)),
+            gen_constraint_weight = float(gm.get("constraint_weight", 0.0)),
 
             wm_n_members            = int(wm.get("n_members",            5)),
             wm_lr                   = float(wm.get("lr",                  1e-4)),
             wm_batch_size           = int(wm.get("batch_size",            32)),
             wm_std_scale            = float(wm.get("std_scale",           3.0)),
-            wm_confidence_threshold = float(wm.get("confidence_threshold",0.7)),
-            wm_use_bagging          = bool(wm.get("use_bagging",          True)),
+            wm_confidence_threshold       = float(wm.get("confidence_threshold",       0.7)),
+            wm_confidence_schedule_iters  = int(wm.get("confidence_schedule_iters",   200)),
+            wm_use_bagging                = bool(wm.get("use_bagging",                True)),
             wm_correction_interval  = int(wm.get("correction_interval",  10)),
 
             buf_max_size          = int(rb.get("max_size",           10000)),
@@ -172,7 +203,8 @@ class MLConfig:
             buf_alpha_real        = float(rb.get("alpha_real",         0.4)),
             buf_real_bonus        = float(rb.get("real_bonus",         2.0)),
             buf_decay_rate        = float(rb.get("decay_rate",         0.05)),
-            buf_infeasible_weight = float(rb.get("infeasible_weight",  0.1)),
+            buf_infeasible_weight        = float(rb.get("infeasible_weight",        0.1)),
+            buf_infeasible_min_fraction  = float(rb.get("infeasible_min_fraction",  0.15)),
 
             warmup_n_designs      = int(tr.get("warmup_n_designs",        100)),
             n_iterations          = int(tr.get("n_iterations",            500)),
@@ -181,7 +213,8 @@ class MLConfig:
             gen_train_steps       = int(tr.get("gen_train_steps",          10)),
             wm_train_steps        = int(tr.get("wm_train_steps",           10)),
             wm_correction_n       = int(tr.get("wm_correction_n",           5)),
-            max_resample_attempts = int(tr.get("max_resample_attempts",     5)),
+            max_resample_attempts    = int(tr.get("max_resample_attempts",      5)),
+            max_infeasible_per_iter  = int(tr.get("max_infeasible_per_iter",   5)),
 
             virtuoso_config      = str(d["virtuoso_config"]),
             output_dir           = str(d["output_dir"]),
@@ -190,6 +223,12 @@ class MLConfig:
             checkpoint_interval  = int(d.get("checkpoint_interval", 50)),
             seed                 = d.get("seed"),
             filter_specs_raw     = list(d.get("filter_specs", [])),
+            debug                = bool(d.get("debug", False)),
+            guidance_mode                     = str(d.get("guidance", {}).get("mode",               "s_param")),
+            score_guidance_improvement_factor = float(d.get("guidance", {}).get("improvement_factor", 0.9)),
+            n_score_components                = int(d.get("guidance", {}).get("n_score_components",    4)),
+            warmup_n_random_feasible          = int(tr.get("warmup_n_random_feasible",           1000)),
+            warmup_random_feasible_train_steps = int(tr.get("warmup_random_feasible_train_steps",  50)),
         )
 
     @classmethod
@@ -253,14 +292,16 @@ class OnlineMLTrainer:
 
         # Models
         self.gen_model = FlowMatchingModel(
-            n_states      = cfg.n_states,
-            n_freq        = cfg.s_param_n_freq,
-            img_h         = img_h,
-            img_w         = img_w,
-            cond_dim      = cfg.gen_cond_dim,
-            t_dim         = cfg.gen_t_dim,
-            base_channels = cfg.gen_base_channels,
-            p_uncond      = cfg.gen_p_uncond,
+            n_states           = cfg.n_states,
+            n_freq             = cfg.s_param_n_freq,
+            img_h              = img_h,
+            img_w              = img_w,
+            cond_dim           = cfg.gen_cond_dim,
+            t_dim              = cfg.gen_t_dim,
+            base_channels      = cfg.gen_base_channels,
+            p_uncond           = cfg.gen_p_uncond,
+            guidance_mode      = cfg.guidance_mode,
+            n_score_components = cfg.n_score_components,
         ).to(self.device)
 
         self.world_model = EnsembleWorldModel(
@@ -290,6 +331,30 @@ class OnlineMLTrainer:
             seed              = cfg.seed,
         )
 
+        # Differentiable constraint loss (optional — only built when weight > 0)
+        self._constraint_fn = None
+        if cfg.gen_constraint_weight > 0.0:
+            import functools
+            from ..utils.constraint_loss import combined_constraint_loss
+            self._constraint_fn = functools.partial(
+                combined_constraint_loss,
+                cols          = cfg.cols,
+                n_states      = cfg.n_states,
+                n_sw_min      = cfg.n_switches_min,
+                n_sw_max      = cfg.n_switches_max,
+                max_inductors = cfg.max_inductors,
+            )
+
+        # Simulation engine — started once, shared across warmup, iter sims, correction
+        from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine
+        self.engine = ParallelVirtuosoEngine(
+            config_path = cfg.virtuoso_config,
+            num_workers = cfg.parallel_num_workers,
+            log_path    = self.output_dir / "engine.log",
+            quiet       = True,
+        )
+        self.engine.start()
+
         # TensorBoard writer (optional)
         self._tb_writer = None
         try:
@@ -302,6 +367,16 @@ class OnlineMLTrainer:
         self._progress: List[dict] = []
         self._best_cost            = float("inf")
         self._best_design          = None
+        self._start_iter:  int  = 0    # set by load_checkpoint() to resume mid-run
+        self._skip_warmup: bool = False  # set by load_checkpoint() to avoid re-running
+
+        # Score-based guidance state: (n_states, 4) tensor of best seen sub-scores
+        # (element-wise minimum over all real simulations seen so far)
+        self._best_scores: Optional[torch.Tensor] = None
+
+        # Global step counters for per-step TensorBoard loss logging
+        self._global_gen_step: int = 0
+        self._global_wm_step:  int = 0
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -315,24 +390,85 @@ class OnlineMLTrainer:
               f"max_ind={cfg.max_inductors}, states={cfg.n_states}")
         print(f"[ML] Device: {self.device}")
         print(f"{'='*70}\n")
+        try:
+            self._run_loop()
+        finally:
+            self.engine.close()
+
+    def _run_loop(self) -> None:
+        """Inner training loop — called by run() inside a try/finally for engine cleanup."""
+        cfg = self.cfg
 
         # Step 0: Warmup
-        n_warm = run_warmup(
-            cfg         = cfg,
-            encoder     = self.encoder,
-            buffer      = self.buffer,
-            freq_points = self.freq_points,
-            rng         = self.rng,
-            output_dir  = self.output_dir,
-        )
-        if n_warm == 0:
-            print("[ML] WARNING: Warmup produced no real data — generative model "
-                  "will start from scratch.")
+        # Automatically skipped if a warmup checkpoint exists in output_dir,
+        # or if load_checkpoint() was called (mid-run resume).
+        warmup_ckpt    = self.output_dir / "checkpoints" / "warmup"
+        warmup_sim_dir = self.output_dir / "warmup_sims"
 
-        # Initial world model and generative model warm-up training
-        if n_warm > 0:
+        if self._skip_warmup:
+            print(f"[ML] Resuming from iteration {self._start_iter} — skipping warmup.")
+        elif cfg.guidance_mode == "score_based":
+            # Score-based mode: always rebuild the buffer from the sim folder so that
+            # any config changes (e.g. updated filter specs) are reflected.
+            print(f"[ML] Score-based guidance: reloading warmup buffer from sim folder ...")
+            n_warm = reload_warmup_from_sim_folder(
+                sim_dir     = warmup_sim_dir,
+                encoder     = self.encoder,
+                buffer      = self.buffer,
+                freq_points = self.freq_points,
+                specs       = self.specs,
+                n_states    = cfg.n_states,
+            )
+            if n_warm == 0:
+                # No existing sim folder — run fresh warmup
+                print("[ML] No existing warmup sims found — running fresh warmup ...")
+                n_warm = run_warmup(
+                    cfg         = cfg,
+                    encoder     = self.encoder,
+                    buffer      = self.buffer,
+                    freq_points = self.freq_points,
+                    rng         = self.rng,
+                    output_dir  = self.output_dir,
+                    engine      = self.engine,
+                    specs       = self.specs,
+                )
+                self._save_warmup_checkpoint(warmup_ckpt)
+            if n_warm == 0:
+                print("[ML] WARNING: Warmup produced no real data — generative model "
+                      "will start from scratch.")
+            # Initialise _best_scores from the best entry in the warmup buffer
+            self._init_best_scores_from_buffer()
+        elif warmup_ckpt.exists():
+            print(f"[ML] Warmup checkpoint found — loading buffer and models, skipping warmup.")
+            self._load_warmup_checkpoint(warmup_ckpt)
+        else:
+            n_warm = run_warmup(
+                cfg         = cfg,
+                encoder     = self.encoder,
+                buffer      = self.buffer,
+                freq_points = self.freq_points,
+                rng         = self.rng,
+                output_dir  = self.output_dir,
+                engine      = self.engine,
+                specs       = self.specs,
+            )
+            if n_warm == 0:
+                print("[ML] WARNING: Warmup produced no real data — generative model "
+                      "will start from scratch.")
+
+            # Save buffer immediately after data collection — before any training.
+            # Future runs with the same output_dir will load this and skip simulation.
+            self._save_warmup_checkpoint(warmup_ckpt)
+
+        # Pre-train generative model on random feasible layouts (no s-params, null guidance).
+        # Teaches the model the feasible design space structure before conditioning is applied.
+        if not self._skip_warmup:
+            self._pretrain_with_random_layouts()
+
+        # Pre-train on whatever is in the buffer (runs on both first run and resume)
+        if self.buffer.n_real() > 0:
             print("[ML] Pre-training world model on warmup data ...")
-            for _ in range(50):
+            for _ in range(20):
                 self._step4_train_world_model()
             print("[ML] Pre-training generative model on warmup data ...")
             for _ in range(50):
@@ -340,17 +476,17 @@ class OnlineMLTrainer:
 
         start_time = time.time()
 
-        for it in range(cfg.n_iterations):
+        for it in range(self._start_iter, cfg.n_iterations):
             iter_start = time.time()
 
             # Step 1: Sample designs from generative model
             feasible_designs, infeasible_images = self._step1_sample_designs(
-                n=cfg.n_gen_samples, current_iter=it
+                n=cfg.n_gen_samples
             )
 
-            # Add infeasible designs to buffer with sentinel label
+            # Add infeasible designs to buffer with sentinel label (capped per iteration)
             sentinel = make_infeasible_sentinel(cfg.n_states, cfg.s_param_n_freq)
-            for img in infeasible_images:
+            for img in infeasible_images[:cfg.max_infeasible_per_iter]:
                 self.buffer.add(
                     image       = img,
                     s_params    = sentinel,
@@ -361,7 +497,7 @@ class OnlineMLTrainer:
                 )
 
             # Step 2: World model confidence split + simulation
-            n_sim = self._step2_evaluate(feasible_designs, it)
+            n_sim, avg_wm_conf, best_wm_cost = self._step2_evaluate(feasible_designs, it)
 
             # Step 3: Train generative model
             gen_loss = self._step3_train_generative(it)
@@ -380,24 +516,33 @@ class OnlineMLTrainer:
 
             elapsed = time.time() - iter_start
             total   = time.time() - start_time
+            best_sim_cost_val = (
+                None if self._best_cost == float("inf") else self._best_cost
+            )
             info = {
-                "iteration":   it,
-                "gen_loss":    gen_loss,
-                "wm_loss":     wm_loss,
-                "n_feasible":  len(feasible_designs),
-                "n_infeasible": len(infeasible_images),
-                "n_sim":       n_sim,
-                "n_corrected": n_corrected,
-                "buf_size":    len(self.buffer),
-                "buf_real":    self.buffer.n_real(),
-                "elapsed_s":   elapsed,
-                "total_s":     total,
+                "iteration":      it,
+                "gen_loss":       gen_loss,
+                "wm_loss":        wm_loss,
+                "n_feasible":     len(feasible_designs),
+                "n_infeasible":   len(infeasible_images),
+                "avg_wm_conf":    avg_wm_conf,
+                "best_wm_cost":   best_wm_cost,
+                "best_sim_cost":  best_sim_cost_val,
+                "n_sim":          n_sim,
+                "n_corrected":    n_corrected,
+                "buf_size":       len(self.buffer),
+                "buf_real":       self.buffer.n_real(),
+                "elapsed_s":      elapsed,
+                "total_s":        total,
             }
             self._log_iteration(it, info)
 
+            best_wm_str  = f"{best_wm_cost:.4f}" if best_wm_cost is not None else "n/a"
+            best_sim_str = f"{best_sim_cost_val:.4f}" if best_sim_cost_val is not None else "n/a"
             print(
                 f"[ML] iter {it:4d}/{cfg.n_iterations}  "
                 f"gen_loss={gen_loss:.4f}  wm_loss={wm_loss:.4f}  "
+                f"wm_conf={avg_wm_conf:.3f}  best_wm={best_wm_str}  best_sim={best_sim_str}  "
                 f"feasible={len(feasible_designs)}  sim={n_sim}  "
                 f"buf={len(self.buffer)}(real={self.buffer.n_real()})  "
                 f"{elapsed:.1f}s"
@@ -410,70 +555,140 @@ class OnlineMLTrainer:
             self._tb_writer.close()
 
     # ------------------------------------------------------------------
+    # Confidence threshold schedule
+    # ------------------------------------------------------------------
+
+    def _current_confidence_threshold(self, it: int) -> float:
+        """
+        Linear schedule: confidence threshold starts at 1.0 (iter 0) and
+        decreases to ``wm_confidence_threshold`` over
+        ``wm_confidence_schedule_iters`` iterations, then stays constant.
+
+        Starting at 1.0 means no design is ever treated as high-confidence
+        early in training, forcing more real simulations and better
+        initialisation of the world model before it is trusted.
+        """
+        target       = self.cfg.wm_confidence_threshold
+        sched_iters  = self.cfg.wm_confidence_schedule_iters
+        if sched_iters <= 0 or it >= sched_iters:
+            return target
+        frac = it / sched_iters           # 0 → 1 over the schedule window
+        return 1.0 - frac * (1.0 - target)  # 1.0 → target
+
+    # ------------------------------------------------------------------
     # Step 1: Sample designs from generative model
     # ------------------------------------------------------------------
 
-    def _step1_sample_designs(
-        self, n: int, current_iter: int
-    ) -> Tuple[List, List]:
+    def _step1_sample_designs(self, n: int) -> Tuple[List, List]:
         """
         Sample n designs from the flow matching model.
 
+        Generates n * max_resample_attempts images in a single batch inference,
+        then collects the first n feasible decoded designs.  Any remaining images
+        (including those that could not be decoded as feasible) become the
+        infeasible_images list.  If fewer than n feasible designs are found, the
+        shortfall is filled with infeasible images so callers always receive n
+        total entries across both lists.
+
         Returns
         -------
-        feasible_designs : list of (DesignState, image_tensor) — feasible
+        feasible_designs : list of (DesignState, image_tensor) — up to n feasible
         infeasible_images: list of image tensors — could not be made feasible
         """
         cfg = self.cfg
-        target_s = self.target_s.unsqueeze(0).expand(n, -1, -1)  # (n, S, F)
+        n_total    = n * cfg.max_resample_attempts
+        cond_input = self._get_guidance_cond(n_total)
 
-        # Generate raw images
+        # Single batch inference — no mode switching inside the loop
         self.gen_model.eval()
         with torch.no_grad():
             raw_imgs = self.gen_model.sample(
-                target_s        = target_s,
+                cond_input      = cond_input,
                 n_steps         = cfg.gen_n_steps,
                 guidance_scale  = cfg.gen_guidance_scale,
-            )  # (n, 1, H, W)
+            )  # (n_total, 1, H, W)
         self.gen_model.train()
 
         feasible_designs: List = []
         infeasible_images: List = []
 
-        for i in range(n):
-            img = raw_imgs[i]     # (1, H, W)
-            design = None
-
-            # Try re-sampling to get a feasible decode
-            for attempt in range(cfg.max_resample_attempts):
+        for i in range(n_total):
+            img = raw_imgs[i]   # (1, H, W)
+            if len(feasible_designs) < n:
+                # Still looking for feasible designs
+                design = None
                 try:
                     candidate = self.encoder.decode(img)
-                    if is_feasible(
-                        candidate,
-                        n_switches    = cfg.n_switches,
-                        max_inductors = cfg.max_inductors,
+                    if (
+                        is_feasible(
+                            candidate.matrix,
+                            cfg.n_switches,
+                            cfg.max_inductors,
+                            min_switches = cfg.n_switches_min,
+                            max_switches = cfg.n_switches_max,
+                        )
+                        and check_switch_states_distinct(candidate.switch_states)
                     ):
                         design = candidate
-                        break
                 except Exception:
                     pass
 
-                # Resample if still infeasible
-                if attempt < cfg.max_resample_attempts - 1:
-                    with torch.no_grad():
-                        new_img = self.gen_model.sample(
-                            target_s       = self.target_s.unsqueeze(0),
-                            n_steps        = cfg.gen_n_steps,
-                            guidance_scale = cfg.gen_guidance_scale,
-                        )  # (1, 1, H, W)
-                    img = new_img[0]
-
-            if design is not None:
-                feasible_designs.append((design, img.cpu()))
+                if design is not None:
+                    snapped_img = self.encoder.encode(design)
+                    if cfg.debug:
+                        self._debug_pixel_counts(i, design, feasible=True)
+                    feasible_designs.append((design, snapped_img))
+                else:
+                    if cfg.debug:
+                        self._debug_pixel_counts_raw(i, img)
+                    infeasible_images.append(img.cpu())
             else:
+                # We have enough feasible designs; remaining images go to infeasible
                 infeasible_images.append(img.cpu())
 
         return feasible_designs, infeasible_images
+
+    # ------------------------------------------------------------------
+    # Debug helpers
+    # ------------------------------------------------------------------
+
+    def _debug_pixel_counts(
+        self,
+        idx: int,
+        design,
+        feasible: bool,
+        score: Optional[float] = None,
+    ) -> None:
+        """Print pixel-type counts, switch states, and optional score for a DesignState."""
+        flat    = [v for row in design.matrix for v in row]
+        n_gnd   = flat.count(0)
+        n_metal = flat.count(1)
+        n_ind   = flat.count(2)
+        n_sw    = flat.count(3)
+        total   = len(flat)
+        status  = "FEASIBLE" if feasible else "INFEASIBLE"
+        score_s = f"  score={score:.4f}" if score is not None else ""
+        # Format each state's switch vector, e.g. "s0:[1,0,1]  s1:[0,1,0]"
+        sw_s = "  ".join(
+            f"s{s}:{list(design.switch_states[s])}"
+            for s in range(len(design.switch_states))
+        ) if design.switch_states else "none"
+        print(
+            f"  [DBG] design {idx:3d} {status}: "
+            f"gnd={n_gnd}({n_gnd/total:.1%})  "
+            f"metal={n_metal}({n_metal/total:.1%})  "
+            f"inductor={n_ind}  switch={n_sw}{score_s}\n"
+            f"         switch_states: {sw_s}"
+        )
+
+    def _debug_pixel_counts_raw(self, idx: int, img: torch.Tensor) -> None:
+        """Print pixel-type counts for a raw (un-decodable / infeasible) image
+        by doing a best-effort decode without feasibility enforcement."""
+        try:
+            design = self.encoder.decode(img)
+            self._debug_pixel_counts(idx, design, feasible=False)
+        except Exception:
+            print(f"  [DBG] design {idx:3d} INFEASIBLE: decode failed")
 
     # ------------------------------------------------------------------
     # Step 2: World model evaluation + simulation
@@ -483,16 +698,21 @@ class OnlineMLTrainer:
         self,
         feasible_designs: List,
         current_iter: int,
-    ) -> int:
+    ) -> Tuple[int, float, Optional[float]]:
         """
         Run world model confidence split.  High-confidence designs are
         relabeled and added to buffer.  Low-confidence designs are sent to
         the real simulator (up to n_sim_max per iteration).
 
-        Returns number of real simulations run.
+        Returns
+        -------
+        (n_sim, avg_wm_conf, best_wm_cost)
+          n_sim        : number of real simulations run.
+          avg_wm_conf  : mean world-model confidence over all feasible designs (0.0 if none).
+          best_wm_cost : lowest WM-predicted cost this iteration (None if no feasible designs).
         """
         if not feasible_designs:
-            return 0
+            return 0, 0.0, None
 
         cfg    = self.cfg
         images = torch.stack([img for _, img in feasible_designs], dim=0).to(self.device)
@@ -501,15 +721,58 @@ class OnlineMLTrainer:
         mean_pred, conf_score = self.world_model.confidence(images)
         self.world_model.train()
 
+        # Proxy costs from WM predictions (used for logging and per-iter plot)
+        wm_costs = [
+            compute_cost_from_tensor(mean_pred[i], self.freq_points, self.specs)
+            for i in range(len(feasible_designs))
+        ]
+
+        if cfg.debug:
+            for i in range(len(feasible_designs)):
+                conf_label = (
+                    "HIGH" if conf_score[i].item() >= cfg.wm_confidence_threshold
+                    else "low"
+                )
+                print(
+                    f"  [DBG] design {i:3d} WM_cost≈{wm_costs[i]:.4f}  "
+                    f"conf={conf_score[i].item():.3f}({conf_label})"
+                )
+
+        # Save S-param plots for the best and worst WM-predicted designs this iteration
+        plot_iter_best(
+            feasible_designs = feasible_designs,
+            mean_pred        = mean_pred,
+            wm_costs         = wm_costs,
+            current_iter     = current_iter,
+            freq_points      = self.freq_points,
+            target_s         = self.target_s,
+            output_dir       = self.output_dir,
+            tb_writer        = self._tb_writer,
+            debug            = cfg.debug,
+        )
+        plot_iter_worst(
+            feasible_designs = feasible_designs,
+            mean_pred        = mean_pred,
+            wm_costs         = wm_costs,
+            current_iter     = current_iter,
+            freq_points      = self.freq_points,
+            target_s         = self.target_s,
+            output_dir       = self.output_dir,
+            tb_writer        = self._tb_writer,
+            debug            = cfg.debug,
+        )
+
+        conf_threshold = self._current_confidence_threshold(current_iter)
+
         high_conf_idx = []
         low_conf_idx  = []
         for i, conf in enumerate(conf_score.tolist()):
-            if conf >= cfg.wm_confidence_threshold:
+            if conf >= conf_threshold:
                 high_conf_idx.append(i)
             else:
                 low_conf_idx.append(i)
 
-        # High-confidence → add to buffer with world model label
+        # High-confidence → add to buffer with world model label + WM predicted cost
         for i in high_conf_idx:
             _, img = feasible_designs[i]
             self.buffer.add(
@@ -519,24 +782,50 @@ class OnlineMLTrainer:
                 is_feasible = True,
                 iteration   = current_iter,
                 confidence  = conf_score[i].item(),
+                score       = wm_costs[i],
             )
 
         # Low-confidence → simulate (up to n_sim_max)
         to_simulate = [feasible_designs[i] for i in low_conf_idx[:cfg.n_sim_max]]
-        n_sim = self._simulate_and_add(to_simulate, current_iter, tag=f"iter{current_iter}")
-        return n_sim
+        n_sim, best_sim_s_params, best_sim_cost = self._simulate_and_add(
+            to_simulate, current_iter, tag=f"iter{current_iter}"
+        )
+
+        # Plot best simulated design if any simulation succeeded
+        if best_sim_s_params is not None:
+            plot_iter_best_sim(
+                s_params     = best_sim_s_params,
+                current_iter = current_iter,
+                freq_points  = self.freq_points,
+                target_s     = self.target_s,
+                output_dir   = self.output_dir,
+                cost         = best_sim_cost,
+                tb_writer    = self._tb_writer,
+                debug        = cfg.debug,
+            )
+
+        avg_wm_conf  = conf_score.mean().item()
+        best_wm_cost = min(wm_costs) if wm_costs else None
+        return n_sim, avg_wm_conf, best_wm_cost
 
     def _simulate_and_add(
         self,
         design_img_pairs: List,
         current_iter: int,
         tag: str,
-    ) -> int:
-        """Simulate a batch of designs and add real results to buffer."""
-        if not design_img_pairs:
-            return 0
+    ) -> Tuple[int, Optional[torch.Tensor], Optional[float]]:
+        """
+        Simulate a batch of designs and add real results to buffer.
 
-        from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine  # deferred
+        Returns
+        -------
+        n_ok              : number of successful simulations.
+        best_sim_s_params : (n_states, n_freq) S-param tensor for the best design,
+                            or None if no simulation succeeded.
+        best_sim_cost     : cost of the best design, or None if no simulation succeeded.
+        """
+        if not design_img_pairs:
+            return 0, None, None
 
         sim_dir   = self.output_dir / "iter_sims" / tag
         overrides = []
@@ -547,25 +836,38 @@ class OnlineMLTrainer:
                 "project":   {"parent_output_dir": str(sim_dir / f"cand{i:04d}")},
             })
 
-        with ParallelVirtuosoEngine(
-            config_path = self.cfg.virtuoso_config,
-            num_workers = self.cfg.parallel_num_workers,
-            log_path    = self.output_dir / "iter_engine.log",
-        ) as engine:
-            results = engine.run_batch(overrides)
+        n_total = len(overrides)
+        print(f"  [ML] Sending {n_total} sample(s) to simulation ...")
+        results = self.engine.run_batch(overrides)
 
-        n_ok = 0
+        n_ok              = 0
+        best_sim_s_params = None
+        best_sim_cost     = None
+
         for (design, img), result in zip(design_img_pairs, results):
             s_params = result_to_s_param_tensor(result, self.freq_points, self.cfg.n_states)
             if s_params is None:
                 continue
 
-            # Track best cost
+            # Track best cost across all iterations
             cost = compute_total_cost(result.s_param_files, self.specs)
             if cost < self._best_cost:
+                prev_best = self._best_cost
                 self._best_cost   = cost
                 self._best_design = design
                 self._save_best(design, cost, current_iter)
+                print(
+                    f"  [ML] *** NEW BEST DESIGN ***  cost {prev_best:.4f} → {cost:.4f}"
+                    f"  (iter {current_iter}, tag={tag})"
+                )
+
+            # Update per-region best scores for score-based guidance
+            self._update_best_scores(s_params)
+
+            # Track best design in this simulation batch
+            if best_sim_cost is None or cost < best_sim_cost:
+                best_sim_cost     = cost
+                best_sim_s_params = s_params
 
             self.buffer.add(
                 image       = img,
@@ -574,10 +876,12 @@ class OnlineMLTrainer:
                 is_feasible = True,
                 iteration   = current_iter,
                 confidence  = 0.0,
+                score       = cost,
             )
             n_ok += 1
 
-        return n_ok
+        print(f"  [ML] Simulation done. {n_ok}/{n_total} succeeded.")
+        return n_ok, best_sim_s_params, best_sim_cost
 
     # ------------------------------------------------------------------
     # Step 3: Train generative model
@@ -585,28 +889,88 @@ class OnlineMLTrainer:
 
     def _step3_train_generative(self, current_iter: int) -> float:
         cfg = self.cfg
-        total_loss = 0.0
+        loss_accum = 0.0
         n_steps    = 0
 
         self.gen_model.train()
         for _ in range(cfg.gen_train_steps):
-            entries = self.buffer.sample_for_generative(cfg.gen_batch_size, current_iter)
+            entries = self.buffer.sample_for_generative(
+                cfg.gen_batch_size,
+                current_iter,
+                min_infeasible_fraction=cfg.buf_infeasible_min_fraction,
+            )
             if not entries:
                 break
+
+            # Count sample types for diagnostics
+            n_real_samples       = sum(1 for e in entries if e.is_real and e.is_feasible)
+            n_wm_samples         = sum(1 for e in entries if not e.is_real and e.is_feasible)
+            n_infeasible_samples = sum(1 for e in entries if not e.is_feasible)
+            print(
+                f"  [DBG] gen step: real={n_real_samples}  "
+                f"wm={n_wm_samples}  infeasible={n_infeasible_samples}"
+            )
 
             images   = torch.stack([e.image    for e in entries]).to(self.device)
             s_params = torch.stack([e.s_params for e in entries]).to(self.device)
 
+            # Conditioning: use score tensors in score_based mode, s_params otherwise
+            if cfg.guidance_mode == "score_based":
+                cond_input = self._get_score_cond_from_entries(entries).to(self.device)
+            else:
+                cond_input = s_params
+
+            # --- Score-weighted loss ---
+            # Feasible entries with a known cost: weight = 1/cost (lower cost → higher weight).
+            # Feasible entries without a finite cost, and infeasible entries: weight = 1.0.
+            # Weights for scored feasible entries are normalised so their mean = 1.0,
+            # keeping the overall gradient magnitude comparable across steps.
+            raw_w = []
+            for e in entries:
+                if e.is_feasible and e.score < float("inf"):
+                    raw_w.append(1.0 / max(e.score, 1e-6))
+                else:
+                    raw_w.append(1.0)
+
+            scored_w = [w for e, w in zip(entries, raw_w)
+                        if e.is_feasible and e.score < float("inf")]
+            if scored_w:
+                mean_w = sum(scored_w) / len(scored_w)
+                raw_w  = [
+                    w / mean_w if e.is_feasible and e.score < float("inf") else w
+                    for e, w in zip(entries, raw_w)
+                ]
+            weights = torch.tensor(raw_w, dtype=torch.float32)
+
             self.gen_opt.zero_grad()
-            loss = self.gen_model.train_step(images, s_params)
-            loss.backward()
+            total_loss, fm_loss, c_loss = self.gen_model.train_step(
+                images, cond_input,
+                weights           = weights,
+                constraint_fn     = self._constraint_fn,
+                constraint_weight = cfg.gen_constraint_weight,
+            )
+            total_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.gen_model.parameters(), 1.0)
             self.gen_opt.step()
 
-            total_loss += loss.item()
+            # Per-step TensorBoard logging
+            if self._tb_writer is not None:
+                self._tb_writer.add_scalar(
+                    "loss/gen_model_step", total_loss.item(), self._global_gen_step
+                )
+                self._tb_writer.add_scalar(
+                    "loss/gen_fm_step", fm_loss.item(), self._global_gen_step
+                )
+                if cfg.gen_constraint_weight > 0.0:
+                    self._tb_writer.add_scalar(
+                        "loss/gen_constraint_step", c_loss.item(), self._global_gen_step
+                    )
+            self._global_gen_step += 1
+
+            loss_accum += total_loss.item()
             n_steps    += 1
 
-        return total_loss / max(n_steps, 1)
+        return loss_accum / max(n_steps, 1)
 
     # ------------------------------------------------------------------
     # Step 4: Train world model
@@ -632,6 +996,13 @@ class OnlineMLTrainer:
             torch.nn.utils.clip_grad_norm_(self.world_model.parameters(), 1.0)
             self.wm_opt.step()
 
+            # Per-step TensorBoard logging
+            if self._tb_writer is not None:
+                self._tb_writer.add_scalar(
+                    "loss/world_model_step", loss.item(), self._global_wm_step
+                )
+            self._global_wm_step += 1
+
             total_loss += loss.item()
             n_steps    += 1
 
@@ -643,14 +1014,26 @@ class OnlineMLTrainer:
 
     def _step5_correction(self, current_iter: int) -> int:
         cfg = self.cfg
-        entries = self.buffer.sample_high_confidence_real(
+        entries = self.buffer.sample_for_correction(
             n                    = cfg.wm_correction_n,
-            confidence_threshold = cfg.wm_confidence_threshold,
+            confidence_threshold = self._current_confidence_threshold(current_iter),
         )
         if not entries:
             return 0
 
-        from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine  # deferred
+        # Get WM predictions for selected entries BEFORE re-simulation
+        self.world_model.eval()
+        wm_preds_before: List[torch.Tensor] = []
+        with torch.no_grad():
+            try:
+                entry_images = torch.stack([e.image for e in entries]).to(self.device)
+                mean_before, _ = self.world_model.confidence(entry_images)
+                # mean_before: (n_entries, n_states, n_freq)
+                for k in range(mean_before.shape[0]):
+                    wm_preds_before.append(mean_before[k].cpu())
+            except Exception:
+                wm_preds_before = [e.s_params for e in entries]  # fallback: stored WM label
+        self.world_model.train()
 
         sim_dir   = self.output_dir / "correction" / f"iter{current_iter}"
         overrides = []
@@ -674,16 +1057,17 @@ class OnlineMLTrainer:
             return 0
 
         sim_overrides = [o[2] for o in overrides]
-        with ParallelVirtuosoEngine(
-            config_path = cfg.virtuoso_config,
-            num_workers = cfg.parallel_num_workers,
-            log_path    = self.output_dir / "correction_engine.log",
-        ) as engine:
-            results = engine.run_batch(sim_overrides)
+        n_correction_total = len(sim_overrides)
+        print(f"  [ML] Sending {n_correction_total} sample(s) to simulation (correction) ...")
+        results = self.engine.run_batch(sim_overrides)
 
         # Fine-tune world model on corrected data
         correction_images   = []
         correction_s_params = []
+        # Collect (wm_pred_before, sim_s_params, entry_id) for plotting
+        plot_wm_list:  List[torch.Tensor] = []
+        plot_sim_list: List[torch.Tensor] = []
+        plot_eids:     List[int]          = []
         n_corrected = 0
 
         for (i, entry_id, _), result in zip(overrides, results):
@@ -691,30 +1075,215 @@ class OnlineMLTrainer:
             if s_params is None:
                 continue
 
-            # Update buffer entry
+            # Compute real cost and update buffer entry (label + score)
+            cost = compute_total_cost(result.s_param_files, self.specs)
             self.buffer.update_entry(
                 entry_id   = entry_id,
                 s_params   = s_params,
                 is_real    = True,
                 confidence = 0.0,
+                score      = cost,
             )
 
             correction_images.append(entries[i].image)
             correction_s_params.append(s_params)
+
+            # Collect for WM-vs-sim plot
+            if i < len(wm_preds_before):
+                plot_wm_list.append(wm_preds_before[i])
+                plot_sim_list.append(s_params)
+                plot_eids.append(entry_id)
+
             n_corrected += 1
 
-        # Fine-tune world model on corrected entries
+        print(f"  [ML] Simulation done. {n_corrected}/{n_correction_total} succeeded (correction).")
+
+        # Plot WM predictions vs real simulation for corrected entries
+        if plot_wm_list:
+            plot_wm_vs_sim(
+                wm_preds     = plot_wm_list,
+                sim_preds    = plot_sim_list,
+                entry_ids    = plot_eids,
+                current_iter = current_iter,
+                freq_points  = self.freq_points,
+                target_s     = self.target_s,
+                output_dir   = self.output_dir,
+                tb_writer    = self._tb_writer,
+                debug        = cfg.debug,
+            )
+
+        # Include best known real designs so the world model does not forget
+        # high-performing designs that were scored by the real simulator.
+        best_real_entries = self.buffer.sample_best_real(n=cfg.wm_correction_n)
+        for entry in best_real_entries:
+            correction_images.append(entry.image)
+            correction_s_params.append(entry.s_params)
+
+        # Fine-tune world model on corrected + best-real entries
         if correction_images:
-            imgs   = torch.stack(correction_images).to(self.device)
+            imgs    = torch.stack(correction_images).to(self.device)
             sparams = torch.stack(correction_s_params).to(self.device)
             self.world_model.train()
-            for _ in range(5):
+            for _ in range(2):
                 self.wm_opt.zero_grad()
                 loss = self.world_model.train_step(imgs, sparams)
                 loss.backward()
                 self.wm_opt.step()
 
         return n_corrected
+
+    # ------------------------------------------------------------------
+    # Layout-only warmup pretraining (no simulation required)
+    # ------------------------------------------------------------------
+
+    def _pretrain_with_random_layouts(self) -> None:
+        """
+        Generate ``warmup_n_random_feasible`` random feasible designs and pre-train
+        the generative model on them **unconditionally** (null guidance).
+
+        These designs have no S-parameter data, so they are trained with
+        ``force_uncond=True``, teaching the model the feasible design space
+        before any conditioning signal is introduced.  They are never added
+        to the replay buffer and are discarded after this call.
+        """
+        cfg = self.cfg
+        n   = cfg.warmup_n_random_feasible
+        if n <= 0:
+            return
+
+        print(f"[ML] Generating {n} random feasible layouts for unconditional pretraining ...")
+        designs = []
+        attempts = 0
+        max_attempts = n * 50
+        while len(designs) < n and attempts < max_attempts:
+            attempts += 1
+            d = generate_random_design(
+                rows              = cfg.rows,
+                cols              = cfg.cols,
+                n_switches        = cfg.n_switches,
+                max_inductors     = cfg.max_inductors,
+                n_states          = cfg.n_states,
+                cap_min           = cfg.cap_min,
+                cap_max           = cfg.cap_max,
+                rng               = self.rng,
+                n_inductor_values = cfg.n_inductor_values,
+            )
+            if d is not None:
+                designs.append(d)
+
+        if not designs:
+            print("[ML] WARNING: Could not generate any random feasible layouts.")
+            return
+
+        print(f"[ML] Generated {len(designs)} layouts.  "
+              f"Pre-training generative model unconditionally "
+              f"({cfg.warmup_random_feasible_train_steps} steps) ...")
+
+        all_images = torch.stack(
+            [self.encoder.encode(d) for d in designs]
+        ).to(self.device)   # (n, 1, H, W)
+
+        # Dummy conditioning tensor — bypassed by force_uncond=True
+        n_cond = cfg.n_score_components if cfg.guidance_mode == "score_based" else cfg.s_param_n_freq
+        dummy_cond = torch.zeros(
+            cfg.gen_batch_size, cfg.n_states, n_cond, device=self.device,
+        )
+
+        self.gen_model.train()
+        for _ in range(cfg.warmup_random_feasible_train_steps):
+            idx   = torch.randperm(len(all_images), device=self.device)[:cfg.gen_batch_size]
+            batch = all_images[idx]
+            B     = batch.shape[0]
+            self.gen_opt.zero_grad()
+            total_loss, _, _ = self.gen_model.train_step(
+                batch, dummy_cond[:B], force_uncond=True,
+            )
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.gen_model.parameters(), 1.0)
+            self.gen_opt.step()
+
+        print(f"[ML] Layout-only pretraining done.")
+
+    # ------------------------------------------------------------------
+    # Score-based guidance helpers
+    # ------------------------------------------------------------------
+
+    def _update_best_scores(self, s_params: torch.Tensor) -> None:
+        """
+        Update ``_best_scores`` element-wise with a new real simulation result.
+
+        Parameters
+        ----------
+        s_params : (n_states, n_freq) S21 tensor from a real simulation.
+        """
+        if self.cfg.guidance_mode != "score_based":
+            return
+        new_scores = compute_score_tensor(s_params, self.freq_points, self.specs)
+        if self._best_scores is None:
+            self._best_scores = new_scores.clone()
+        else:
+            self._best_scores = torch.minimum(self._best_scores, new_scores)
+
+    def _init_best_scores_from_buffer(self) -> None:
+        """
+        Initialise ``_best_scores`` from the best real entry in the warmup buffer.
+        Called once after the warmup phase when in score_based mode.
+        """
+        if self.cfg.guidance_mode != "score_based":
+            return
+        best_entries = self.buffer.sample_best_real(n=1)
+        if not best_entries:
+            return
+        s_params = best_entries[0].s_params.to(self.device)
+        self._best_scores = compute_score_tensor(
+            s_params, self.freq_points, self.specs
+        )
+        print(f"[ML] Initialised score guidance from best warmup entry: "
+              f"{self._best_scores.tolist()}")
+
+    def _get_guidance_cond(self, batch_size: int) -> torch.Tensor:
+        """
+        Return the conditioning tensor for flow matching model sampling.
+
+        In 's_param' mode    : returns (B, n_states, n_freq) — the ideal target S-params.
+        In 'score_based' mode: returns (B, n_states, 4)      — gradual score target.
+        """
+        cfg = self.cfg
+        if cfg.guidance_mode == "score_based":
+            if self._best_scores is None:
+                # No real data yet — use all-zeros (perfect score) as placeholder
+                target = torch.zeros(
+                    cfg.n_states, cfg.n_score_components, device=self.device
+                )
+            else:
+                # Guide toward a slightly better score than the current best
+                target = self._best_scores.to(self.device) * cfg.score_guidance_improvement_factor
+            return target.unsqueeze(0).expand(batch_size, -1, -1)
+        else:
+            return self.target_s.unsqueeze(0).expand(batch_size, -1, -1)
+
+    def _get_score_cond_from_entries(self, entries) -> torch.Tensor:
+        """
+        Compute score-based conditioning tensors from a list of buffer entries.
+
+        Feasible entries get their per-region score tensor computed from s_params.
+        Infeasible entries get a fixed large "infeasible" label (all components = 100)
+        that is clearly distinct from any physically realizable design's scores.
+
+        Returns (B, n_states, 4).
+        Used in ``_step3_train_generative`` when ``guidance_mode == 'score_based'``.
+        """
+        cfg = self.cfg
+        infeasible_score = torch.full(
+            (cfg.n_states, cfg.n_score_components), 100.0, dtype=torch.float32
+        )
+        rows = []
+        for e in entries:
+            if e.is_feasible:
+                rows.append(compute_score_tensor(e.s_params, self.freq_points, self.specs))
+            else:
+                rows.append(infeasible_score)
+        return torch.stack(rows, dim=0)   # (B, n_states, 4)
 
     # ------------------------------------------------------------------
     # Logging + checkpointing
@@ -731,6 +1300,19 @@ class OnlineMLTrainer:
                 if isinstance(v, (int, float)):
                     self._tb_writer.add_scalar(f"ml/{k}", v, it)
 
+    def _save_warmup_checkpoint(self, ckpt_dir: Path) -> None:
+        """Save buffer immediately after warmup data collection (no model weights)."""
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        self.buffer.save(ckpt_dir / "buffer.pkl")
+        print(f"  [ML] Warmup buffer saved → {ckpt_dir}  "
+              f"({len(self.buffer)} entries, {self.buffer.n_real()} real)")
+
+    def _load_warmup_checkpoint(self, ckpt_dir: Path) -> None:
+        """Restore buffer from warmup checkpoint; models start from random weights."""
+        self.buffer = ReplayBuffer.load(ckpt_dir / "buffer.pkl")
+        print(f"  [ML] Warmup buffer loaded  "
+              f"({len(self.buffer)} entries, {self.buffer.n_real()} real)")
+
     def _checkpoint(self, it: int) -> None:
         ckpt_dir = self.output_dir / "checkpoints" / f"iter{it:05d}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -740,6 +1322,8 @@ class OnlineMLTrainer:
         torch.save(self.gen_opt.state_dict(),     ckpt_dir / "gen_opt.pt")
         torch.save(self.wm_opt.state_dict(),      ckpt_dir / "wm_opt.pt")
         self.buffer.save(ckpt_dir / "buffer.pkl")
+        # Save iteration so resume knows where to continue from
+        (ckpt_dir / "iter.json").write_text(json.dumps({"iteration": it}))
         print(f"  [ML] Checkpoint saved → {ckpt_dir}")
 
     def _save_best(self, design, cost: float, it: int) -> None:
@@ -762,6 +1346,9 @@ class OnlineMLTrainer:
     def load_checkpoint(self, checkpoint_dir: str | Path) -> None:
         """
         Resume training from a saved checkpoint directory.
+
+        Restores model weights, optimizer states, and the replay buffer.
+        Warmup is skipped and the training loop resumes from the saved iteration.
         """
         ckpt = Path(checkpoint_dir)
         self.gen_model.load_state_dict(
@@ -777,4 +1364,15 @@ class OnlineMLTrainer:
             torch.load(ckpt / "wm_opt.pt",      map_location=self.device)
         )
         self.buffer = ReplayBuffer.load(ckpt / "buffer.pkl")
-        print(f"[ML] Resumed from checkpoint {ckpt}")
+
+        # Restore iteration counter; fall back to 0 if iter.json is absent
+        # (for backward compatibility with checkpoints saved before this change)
+        iter_file = ckpt / "iter.json"
+        if iter_file.exists():
+            saved_it = json.loads(iter_file.read_text())["iteration"]
+            self._start_iter = saved_it + 1   # resume on the NEXT iteration
+        else:
+            self._start_iter = 0
+
+        self._skip_warmup = True
+        print(f"[ML] Resumed from checkpoint {ckpt}  (starting at iter {self._start_iter})")

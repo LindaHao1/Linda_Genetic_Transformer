@@ -45,6 +45,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from .s_param_encoder import SParamEncoder
+from .score_encoder import ScoreEncoder
 
 
 # ---------------------------------------------------------------------------
@@ -200,65 +201,74 @@ class ConditionalVectorField(nn.Module):
 
         self.time_emb = TimeEmbedding(t_dim)
 
-        # --- Encoder ---
-        self.enc_in  = nn.Conv2d(1, C, 3, padding=1)
-
-        self.enc1 = AdaGNResBlock(C,     C,     tc)
-        self.enc2 = AdaGNResBlock(C,     C * 2, tc, stride=2)
-        self.enc3 = AdaGNResBlock(C * 2, C * 4, tc, stride=2)
+        # --- Encoder: 3 stride-2 stages → input must be padded to multiple of 8 ---
+        # enc_in: no stride, lifts to C channels
+        # enc1/enc2/enc3: each halves spatial dims
+        # Skip connections saved: h0 (C), h1 (C), h2 (2C)
+        self.enc_in = nn.Conv2d(1, C, 3, padding=1)
+        self.enc1   = AdaGNResBlock(C,     C,     tc, stride=2)
+        self.enc2   = AdaGNResBlock(C,     C * 2, tc, stride=2)
+        self.enc3   = AdaGNResBlock(C * 2, C * 4, tc, stride=2)
 
         # --- Bottleneck ---
         self.bot1 = AdaGNResBlock(C * 4, C * 4, tc)
         self.attn = SelfAttention2D(C * 4)
         self.bot2 = AdaGNResBlock(C * 4, C * 4, tc)
 
-        # --- Decoder ---
-        self.dec3 = AdaGNResBlock(C * 4 + C * 4, C * 2, tc)
-        self.dec2 = AdaGNResBlock(C * 2 + C * 2, C,     tc)
-        self.dec1 = AdaGNResBlock(C + C,          C,     tc)
+        # --- Decoder: 3 up stages, skips from enc2/enc1/enc_in outputs ---
+        # dec3: up from H/8 → H/4, cat with h2 (2C) → in: 4C+2C=6C, out: 2C
+        # dec2: up from H/4 → H/2, cat with h1 (C)  → in: 2C+C=3C,  out: C
+        # dec1: up from H/2 → H,   cat with h0 (C)  → in: C+C=2C,   out: C
+        self.dec3 = AdaGNResBlock(C * 4 + C * 2, C * 2, tc)
+        self.dec2 = AdaGNResBlock(C * 2 + C,     C,     tc)
+        self.dec1 = AdaGNResBlock(C + C,         C,     tc)
 
         self.out_conv = nn.Conv2d(C, 1, kernel_size=1)
-
-        # Upsample helpers
-        self._up = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
 
     def forward(self, x_t: Tensor, t: Tensor, c: Tensor) -> Tensor:
         """
         Parameters
         ----------
-        x_t : (B, 1, H, W)
+        x_t : (B, 1, H, W)   — any H, W; padded internally to multiple of 8
         t   : (B,)            scalar time in [0, 1]
         c   : (B, cond_dim)   conditioning vector
 
         Returns
         -------
-        (B, 1, H, W)  — predicted vector field
+        (B, 1, H, W)  — predicted vector field, same spatial size as input
         """
+        B, _, H, W = x_t.shape
         t_emb = self.time_emb(t)              # (B, t_dim)
-        cond  = torch.cat([t_emb, c], dim=-1) # (B, t_dim + cond_dim)
+        cond  = torch.cat([t_emb, c], dim=-1) # (B, tc)
 
-        # Encoder
-        h0 = self.enc_in(x_t)                # (B, C, H, W)
-        h1 = self.enc1(h0, cond)             # (B, C, H, W)
-        h2 = self.enc2(h1, cond)             # (B, 2C, H/2, W/2)
-        h3 = self.enc3(h2, cond)             # (B, 4C, H/4, W/4)
+        # Pad to the nearest multiple of 8 (3 stride-2 stages → divisible by 8)
+        pad_h = (8 - H % 8) % 8
+        pad_w = (8 - W % 8) % 8
+        x = F.pad(x_t, (0, pad_w, 0, pad_h))  # pad right / bottom only
+
+        # Encoder — save outputs as skip connections
+        h0 = self.enc_in(x)        # (B, C,   H',   W')
+        h1 = self.enc1(h0, cond)   # (B, C,   H'/2, W'/2)
+        h2 = self.enc2(h1, cond)   # (B, 2C,  H'/4, W'/4)
+        h3 = self.enc3(h2, cond)   # (B, 4C,  H'/8, W'/8)
 
         # Bottleneck
-        h  = self.bot1(h3, cond)
-        h  = self.attn(h)
-        h  = self.bot2(h, cond)
+        h = self.bot1(h3, cond)
+        h = self.attn(h)
+        h = self.bot2(h, cond)     # (B, 4C, H'/8, W'/8)
 
-        # Decoder with skip connections
-        h = self._up(h)
-        h = self.dec3(torch.cat([h, h3], dim=1), cond)  # (B, 2C, H/4, W/4)
+        # Decoder — upsample to exact skip size to handle any padding remainder
+        h = F.interpolate(h, size=h2.shape[2:], mode="bilinear", align_corners=False)
+        h = self.dec3(torch.cat([h, h2], dim=1), cond)  # (B, 2C, H'/4, W'/4)
 
-        h = self._up(h)
-        h = self.dec2(torch.cat([h, h2], dim=1), cond)  # (B, C, H/2, W/2)
+        h = F.interpolate(h, size=h1.shape[2:], mode="bilinear", align_corners=False)
+        h = self.dec2(torch.cat([h, h1], dim=1), cond)  # (B, C, H'/2, W'/2)
 
-        h = self._up(h)
-        h = self.dec1(torch.cat([h, h1], dim=1), cond)  # (B, C, H, W)
+        h = F.interpolate(h, size=h0.shape[2:], mode="bilinear", align_corners=False)
+        h = self.dec1(torch.cat([h, h0], dim=1), cond)  # (B, C, H', W')
 
-        return self.out_conv(h)                          # (B, 1, H, W)
+        out = self.out_conv(h)     # (B, 1, H', W')
+        return out[:, :, :H, :W]   # crop padding back to original size
 
 
 # ---------------------------------------------------------------------------
@@ -274,33 +284,40 @@ class FlowMatchingModel(nn.Module):
 
     Parameters
     ----------
-    n_states      : number of filter states.
-    n_freq        : number of canonical frequency points.
-    img_h         : image height.
-    img_w         : image width (cols + n_states).
-    cond_dim      : S-param conditioning dimension.
-    t_dim         : time embedding dimension.
-    base_channels : U-Net base channel count.
-    p_uncond      : CFG null-conditioning drop probability during training.
+    n_states         : number of filter states.
+    n_freq           : number of canonical frequency points.
+    img_h            : image height.
+    img_w            : image width (cols + n_states).
+    cond_dim         : conditioning vector dimension.
+    t_dim            : time embedding dimension.
+    base_channels    : U-Net base channel count.
+    p_uncond         : CFG null-conditioning drop probability during training.
+    guidance_mode    : "s_param" (default) or "score_based".
+    n_score_components: number of score components per state (used when score_based).
     """
 
     def __init__(
         self,
-        n_states:      int   = 2,
-        n_freq:        int   = 201,
-        img_h:         int   = 25,
-        img_w:         int   = 29,
-        cond_dim:      int   = 256,
-        t_dim:         int   = 128,
-        base_channels: int   = 64,
-        p_uncond:      float = 0.1,
+        n_states:          int   = 2,
+        n_freq:            int   = 201,
+        img_h:             int   = 25,
+        img_w:             int   = 29,
+        cond_dim:          int   = 256,
+        t_dim:             int   = 128,
+        base_channels:     int   = 64,
+        p_uncond:          float = 0.1,
+        guidance_mode:     str   = "s_param",
+        n_score_components: int  = 4,
     ) -> None:
         super().__init__()
-        self.p_uncond = p_uncond
-        self.img_h    = img_h
-        self.img_w    = img_w
+        self.p_uncond      = p_uncond
+        self.img_h         = img_h
+        self.img_w         = img_w
+        self.guidance_mode = guidance_mode
 
-        self.s_encoder  = SParamEncoder(n_states, n_freq, cond_dim)
+        self.s_encoder = SParamEncoder(n_states, n_freq, cond_dim)
+        if guidance_mode == "score_based":
+            self.score_encoder = ScoreEncoder(n_states, n_score_components, cond_dim)
         self.vector_field = ConditionalVectorField(
             img_h, img_w, cond_dim, t_dim, base_channels
         )
@@ -309,27 +326,58 @@ class FlowMatchingModel(nn.Module):
         self.null_emb = nn.Parameter(torch.zeros(cond_dim))
         nn.init.normal_(self.null_emb, std=0.02)
 
+    def _encode_cond(self, cond_input: Tensor) -> Tensor:
+        """
+        Encode conditioning input into a (B, cond_dim) vector.
+
+        In 's_param' mode   : cond_input is (B, n_states, n_freq)  → SParamEncoder
+        In 'score_based' mode: cond_input is (B, n_states, 4)      → ScoreEncoder
+        """
+        if self.guidance_mode == "score_based":
+            return self.score_encoder(cond_input)
+        return self.s_encoder(cond_input)
+
     def train_step(
         self,
-        x_1:      Tensor,    # (B, 1, H, W)  real encoded design image
-        target_s: Tensor,    # (B, n_states, n_freq)  target S-params (conditioning)
-    ) -> Tensor:
+        x_1:               Tensor,                   # (B, 1, H, W)  real encoded design image
+        cond_input:        Tensor,                   # (B, n_states, n_freq) or (B, n_states, 4)
+        weights:           Optional[Tensor] = None,  # (B,)  per-sample loss weights
+        constraint_fn=None,                          # callable(x1_pred) -> (loss, dict) | None
+        constraint_weight: float = 0.0,
+        force_uncond:      bool  = False,            # bypass encoder; use null_emb for all
+    ) -> tuple[Tensor, Tensor, Tensor]:
         """
         One flow matching training step.
 
-        1. Encode target S-params → conditioning vector c.
+        1. Encode conditioning input → conditioning vector c.
+           When force_uncond=True all samples use the null embedding (layout-only warmup).
         2. With probability p_uncond, replace c with the null embedding (CFG).
         3. Sample x_0 ~ N(0, I), t ~ Uniform(0, 1).
         4. Compute x_t = (1 - t) * x_0 + t * x_1.
-        5. Predict vector field; compute MSE against target u_t = x_1 - x_0.
+        5. Predict vector field; compute (weighted) MSE against u_t = x_1 - x_0.
+        6. Optionally add a differentiable constraint loss on x1_pred = x_t + (1-t)*v_pred.
 
-        Returns scalar loss.
+        Parameters
+        ----------
+        cond_input        : (B, n_states, n_freq) in s_param mode;
+                            (B, n_states, n_components) in score_based mode.
+        weights           : optional (B,) per-sample loss weights (pre-normalised).
+        constraint_fn     : callable(x1_pred) -> (scalar Tensor, dict) or None.
+        constraint_weight : scalar multiplier for the constraint term.
+        force_uncond      : if True, bypass encoder and use null_emb for all samples.
+
+        Returns
+        -------
+        (total_loss, fm_loss, c_loss) — all scalar Tensors.
         """
         B      = x_1.shape[0]
         device = x_1.device
 
         # Conditioning
-        c = self.s_encoder(target_s)           # (B, cond_dim)
+        if force_uncond:
+            c = self.null_emb[None].expand(B, -1)          # (B, cond_dim)
+        else:
+            c = self._encode_cond(cond_input)               # (B, cond_dim)
 
         # CFG dropout: replace conditioning with null embedding
         if self.training and self.p_uncond > 0:
@@ -351,12 +399,30 @@ class FlowMatchingModel(nn.Module):
         # Predict
         v_pred = self.vector_field(x_t, t, c)
 
-        return F.mse_loss(v_pred, u_t)
+        # Per-sample flow matching MSE, then optional weighting
+        per_sample = F.mse_loss(v_pred, u_t, reduction="none").mean(dim=[1, 2, 3])  # (B,)
+        if weights is not None:
+            fm_loss = (per_sample * weights.to(device)).mean()
+        else:
+            fm_loss = per_sample.mean()
+
+        # Differentiable constraint loss on predicted endpoint
+        # x1_pred = x_t + (1-t) * v_pred  (exact at convergence, free to compute)
+        c_loss = x_1.new_zeros(1).squeeze()
+        if constraint_fn is not None and constraint_weight > 0.0:
+            x1_pred  = x_t + (1.0 - t4) * v_pred
+            # Suppress constraint signal at high-noise timesteps (small t → x_t ≈ noise)
+            t_weight = t.clamp(min=0.2).mean()
+            raw_c, _ = constraint_fn(x1_pred)
+            c_loss   = t_weight * raw_c
+
+        total_loss = fm_loss + constraint_weight * c_loss
+        return total_loss, fm_loss, c_loss
 
     @torch.no_grad()
     def sample(
         self,
-        target_s:       Tensor,       # (B, n_states, n_freq)
+        cond_input:     Tensor,       # (B, n_states, n_freq) or (B, n_states, n_components)
         n_steps:        int   = 50,
         guidance_scale: float = 1.0,
     ) -> Tensor:
@@ -368,7 +434,8 @@ class FlowMatchingModel(nn.Module):
 
         Parameters
         ----------
-        target_s        : (B, n_states, n_freq)
+        cond_input      : (B, n_states, n_freq) in s_param mode;
+                          (B, n_states, n_components) in score_based mode.
         n_steps         : Euler integration steps.
         guidance_scale  : CFG scale.  1.0 = no guidance.
 
@@ -376,10 +443,10 @@ class FlowMatchingModel(nn.Module):
         -------
         (B, 1, H, W)  generated images in [0, 1] (approximately).
         """
-        B      = target_s.shape[0]
-        device = target_s.device
+        B      = cond_input.shape[0]
+        device = cond_input.device
 
-        c_cond  = self.s_encoder(target_s)                          # (B, cond_dim)
+        c_cond   = self._encode_cond(cond_input)                    # (B, cond_dim)
         c_uncond = self.null_emb[None].expand(B, -1)               # (B, cond_dim)
 
         x = torch.randn(B, 1, self.img_h, self.img_w, device=device)

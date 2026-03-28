@@ -2,7 +2,8 @@
 warmup.py — Step 0 of the online ML training loop.
 
 Generates ~cfg.warmup_n_designs random feasible designs, simulates them all
-via ParallelVirtuosoEngine, and populates the replay buffer with real data.
+via the shared ParallelVirtuosoEngine, and populates the replay buffer with
+real data.
 
 This data is used to warm up both the generative model and the world model
 before the iterative online loop begins.
@@ -15,12 +16,16 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
+import yaml
 
 from virtuoso_optimization_SA.feasibility import generate_random_design
+from virtuoso_optimization_SA.cost import compute_total_cost
+from virtuoso_optimization_SA.design import DesignState
 
 from ..dataset.replay_buffer import ReplayBuffer, make_infeasible_sentinel
 from ..encoding.design_encoder import DesignEncoder
-from ..utils.s_param_utils import result_to_s_param_tensor
+from ..utils.s_param_utils import result_to_s_param_tensor, load_and_interpolate_s21
+from ..utils.cost_utils import compute_cost_from_tensor
 
 
 def run_warmup(
@@ -30,10 +35,12 @@ def run_warmup(
     freq_points: np.ndarray,
     rng: random.Random,
     output_dir: Path,
+    engine,                     # ParallelVirtuosoEngine — already started by trainer
+    specs=None,                 # list[FilterStateSpec] for computing design score
 ) -> int:
     """
-    Run the warm-up phase: generate random feasible designs, simulate them,
-    and add results to the replay buffer as real data.
+    Run the warm-up phase: generate random feasible designs, simulate them
+    using the shared engine, and add results to the replay buffer as real data.
 
     Parameters
     ----------
@@ -43,16 +50,16 @@ def run_warmup(
     freq_points : canonical frequency grid (n_freq,).
     rng         : random.Random for reproducible design generation.
     output_dir  : base directory for simulation outputs.
+    engine      : running ParallelVirtuosoEngine shared with the trainer.
+    specs       : filter specs for computing design cost (score). When None,
+                  scores are stored as inf.
 
     Returns
     -------
     Number of successfully simulated designs added to buffer.
     """
-    from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine  # deferred
-
-    n_target  = cfg.warmup_n_designs
-    n_workers = cfg.parallel_num_workers
-    sim_dir   = output_dir / "warmup_sims"
+    n_target = cfg.warmup_n_designs
+    sim_dir  = output_dir / "warmup_sims"
 
     print(f"\n[Warmup] Generating {n_target} random feasible designs ...")
 
@@ -94,13 +101,8 @@ def run_warmup(
         overrides.append(override)
 
     # --- Run simulations in parallel ---
-    print(f"[Warmup] Simulating {len(designs)} designs with {n_workers} workers ...")
-    with ParallelVirtuosoEngine(
-        config_path = cfg.virtuoso_config,
-        num_workers = n_workers,
-        log_path    = output_dir / "warmup_engine.log",
-    ) as engine:
-        results = engine.run_batch(overrides)
+    print(f"[Warmup] Simulating {len(designs)} designs ...")
+    results = engine.run_batch(overrides)
 
     # --- Add to buffer ---
     n_success = 0
@@ -114,6 +116,13 @@ def run_warmup(
             print(f"[Warmup] Design {i}: simulation failed, skipping.")
             continue
 
+        cost = float("inf")
+        if specs is not None:
+            try:
+                cost = compute_total_cost(result.s_param_files, specs)
+            except Exception:
+                pass
+
         buffer.add(
             image       = image,
             s_params    = s_params,
@@ -121,8 +130,133 @@ def run_warmup(
             is_feasible = True,
             iteration   = 0,
             confidence  = 0.0,
+            score       = cost,
         )
         n_success += 1
 
     print(f"[Warmup] Buffer populated with {n_success}/{len(designs)} real designs.")
+    return n_success
+
+
+def reload_warmup_from_sim_folder(
+    sim_dir: Path,
+    encoder: DesignEncoder,
+    buffer: ReplayBuffer,
+    freq_points: np.ndarray,
+    specs=None,      # List[FilterStateSpec] — used to compute cost
+    n_states: int = 2,
+) -> int:
+    """
+    Reload warmup buffer from an existing simulation folder.
+
+    Scans ``sim_dir`` for ``warmup_{i:04d}/`` subdirectories.  For each one it:
+      1. Reads the ``config.yaml`` saved by the simulator to reconstruct a DesignState.
+      2. Re-encodes the image using the current encoder configuration.
+      3. Loads the ``.s2p`` files (one per state) from ``emx_results/``.
+      4. Computes the cost with the **current** filter specs.
+      5. Adds the entry to the buffer as real data.
+
+    This is used by the score-based guidance mode so that config changes (e.g. new
+    filter specs) are reflected in the warmup dataset without re-running simulations.
+
+    Parameters
+    ----------
+    sim_dir     : path to the ``warmup_sims/`` directory.
+    encoder     : DesignEncoder for converting DesignState → image tensor.
+    buffer      : ReplayBuffer to populate.
+    freq_points : canonical frequency grid (n_freq,).
+    specs       : filter specs for computing design cost. When None, scores stored as inf.
+    n_states    : number of filter states.
+
+    Returns
+    -------
+    Number of successfully loaded designs added to buffer.
+    """
+    sim_dir = Path(sim_dir)
+    if not sim_dir.exists():
+        print(f"[Warmup] Sim folder not found: {sim_dir} — cannot reload.")
+        return 0
+
+    # Collect all warmup subdirectories in sorted order
+    warmup_dirs = sorted(sim_dir.glob("warmup_*/"))
+    if not warmup_dirs:
+        print(f"[Warmup] No warmup_* subdirectories found in {sim_dir}.")
+        return 0
+
+    print(f"[Warmup] Reloading warmup data from {sim_dir}  ({len(warmup_dirs)} dirs found) ...")
+
+    n_success = 0
+    for warmup_dir in warmup_dirs:
+        # --- Find config.yaml across any worker_N subdirectory ---
+        config_paths = sorted(warmup_dir.glob("worker_*/*/config.yaml"))
+        if not config_paths:
+            continue
+        config_path = config_paths[0]
+
+        try:
+            cfg_data = yaml.safe_load(config_path.read_text())
+            px = cfg_data.get("pixelated", {})
+            design = DesignState(
+                matrix          = px["pixel_state_matrix"],
+                switch_states   = px["state_list"],
+                cap_values      = px["cap_values"],
+                inductor_values = px.get("inductor_values", []),
+            )
+        except Exception as e:
+            print(f"[Warmup] {warmup_dir.name}: failed to parse config ({e}) — skipping.")
+            continue
+
+        # --- Re-encode image ---
+        try:
+            image = encoder.encode(design)
+        except Exception as e:
+            print(f"[Warmup] {warmup_dir.name}: encode failed ({e}) — skipping.")
+            continue
+
+        # --- Load .s2p files (one per state) across any worker ---
+        sim_subdir = config_path.parent
+        emx_dir = sim_subdir / "emx_results"
+        s_param_rows = []
+        ok = True
+        for s in range(n_states):
+            s2p_files = list(emx_dir.glob(f"*_state{s}.s2p"))
+            if not s2p_files:
+                s2p_files = sorted(warmup_dir.glob(f"worker_*/*/emx_results/*_state{s}.s2p"))
+            if not s2p_files:
+                ok = False
+                break
+            try:
+                s_row = load_and_interpolate_s21(s2p_files[0], freq_points)
+                s_param_rows.append(s_row)
+            except Exception as e:
+                print(f"[Warmup] {warmup_dir.name}: s2p load failed state{s} ({e}) — skipping.")
+                ok = False
+                break
+
+        if not ok or len(s_param_rows) != n_states:
+            continue
+
+        import torch
+        s_params = torch.stack(s_param_rows, dim=0)   # (n_states, n_freq)
+
+        # --- Compute cost ---
+        cost = float("inf")
+        if specs is not None:
+            try:
+                cost = compute_cost_from_tensor(s_params, freq_points, specs)
+            except Exception:
+                pass
+
+        buffer.add(
+            image       = image,
+            s_params    = s_params,
+            is_real     = True,
+            is_feasible = True,
+            iteration   = 0,
+            confidence  = 0.0,
+            score       = cost,
+        )
+        n_success += 1
+
+    print(f"[Warmup] Reloaded {n_success}/{len(warmup_dirs)} designs from sim folder.")
     return n_success

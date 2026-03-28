@@ -3,17 +3,19 @@
 # =============================================================================
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
-output_dir:      "/disk/mcao53/Sim_engine_results/ml_filter_results"
+output_dir:      "/disk/mcao53/Sim_engine_results/ml_filter_results_try_3"
 
 # -----------------------------------------------------------------------------
 # GRID / DESIGN SPACE
 # Mirrors the SA/GA config structure.
 # -----------------------------------------------------------------------------
 grid:
-  rows:              25
-  cols:              27
+  rows:              20
+  cols:              22
   n_switches:        4
-  max_inductors:     10
+  n_switches_min:    2    # ML feasibility: minimum allowed switch count
+  n_switches_max:    6    # ML feasibility: maximum allowed switch count
+  max_inductors:     15
   n_states:          2
   cap_min:           200.0e-15   # 200 fF
   cap_max:           1000.0e-15  # 1 pF
@@ -29,24 +31,24 @@ filter_specs:
     passband: [36.0e9, 44.0e9]
     passband_min_db: -3.0
     stopband_regions:
-      - [3.0e9, 35.0e9]
-      - [45.0e9, 50.0e9]
-    stopband_max_db: -15.0
+      - [32.0e9, 36.0e9]
+      - [44.0e9, 48.0e9]
+    stopband_max_db: -25.0
     cross_stopband_regions:
       - [18.0e9, 22.0e9]
-    cross_stopband_max_db: -15.0
+    cross_stopband_max_db: -25.0
     weight: 1.0
 
   - state_index: 1
     passband: [18.0e9, 22.0e9]
     passband_min_db: -3.0
     stopband_regions:
-      - [3.0e9, 17.0e9]
-      - [23.0e9, 50.0e9]
-    stopband_max_db: -15.0
+      - [15.0e9, 17.0e9]
+      - [23.0e9, 25.0e9]
+    stopband_max_db: -25.0
     cross_stopband_regions:
       - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -15.0
+    cross_stopband_max_db: -25.0
     weight: 1.0
 
 # -----------------------------------------------------------------------------
@@ -72,11 +74,12 @@ generative_model:
   cond_dim:       256     # S-param conditioning vector dimension
   t_dim:          128     # time embedding dimension
   base_channels:  64      # U-Net first-stage channel count
-  n_steps:        50      # Euler integration steps at inference
+  n_steps:        100      # Euler integration steps at inference
   guidance_scale: 2.0     # classifier-free guidance scale (1.0 = no guidance)
   p_uncond:       0.1     # CFG null-conditioning dropout probability
-  lr:             1.0e-4
+  lr:             5.0e-4
   batch_size:     32
+  constraint_weight: 0.00   # >0 enables differentiable constraint loss; try 0.05–0.1
 
 # -----------------------------------------------------------------------------
 # WORLD MODEL (ensemble surrogate)
@@ -86,9 +89,10 @@ world_model:
   lr:                   1.0e-4
   batch_size:           32
   std_scale:            3.0     # dB — calibration for confidence score
-  confidence_threshold: 0.7     # above this → relabel; below → simulate
-  use_bagging:          true    # each member trains on random 80% of batch
-  correction_interval:  10      # run Step 5 every N iterations
+  confidence_threshold:      0.75   # final threshold after schedule (above → relabel)
+  confidence_schedule_iters: 200  # iters to ramp from 1.0 → confidence_threshold
+  use_bagging:               true  # each member trains on random 80% of batch
+  correction_interval:  500      # run Step 5 every N iterations
 
 # -----------------------------------------------------------------------------
 # REPLAY BUFFER
@@ -99,26 +103,44 @@ replay_buffer:
   alpha_real:         0.4       # weight for real-data bonus term
   real_bonus:         2.0       # additive bonus for real simulation entries
   decay_rate:         0.05      # exponential decay rate for recency
-  infeasible_weight:  0.1       # priority multiplier for infeasible entries
+  infeasible_weight:        0.1   # priority multiplier for infeasible entries
+  infeasible_min_fraction:  0.1  # guaranteed infeasible fraction per gen training batch
+
+# -----------------------------------------------------------------------------
+# GUIDANCE MODE
+# "s_param"    : condition on ideal target S-parameters (original mode)
+# "score_based": condition on per-region penalty scores derived from real sims
+#                Requires reload of warmup sim folder; avoids instability from
+#                ideal (unreachable) S-param targets.
+# -----------------------------------------------------------------------------
+guidance:
+  mode:               score_based   # "s_param" or "score_based"
+  improvement_factor: 0.9       # score target = best_seen_scores × this factor
+  n_score_components: 4         # lower_reject / passband / higher_reject / cross_band
 
 # -----------------------------------------------------------------------------
 # TRAINING LOOP
 # -----------------------------------------------------------------------------
 training:
-  warmup_n_designs:      100    # number of random designs to simulate at warmup
-  n_iterations:          500    # total online training iterations
+  warmup_n_designs:      200    # number of random designs to simulate at warmup
+  n_iterations:          1000    # total online training iterations
   n_gen_samples:         20     # designs sampled from gen model per iteration
-  n_sim_max:             8      # max new real simulations per iteration
-  gen_train_steps:       10     # Adam steps for generative model per iteration
-  wm_train_steps:        10     # Adam steps for world model per iteration
-  wm_correction_n:       5      # high-confidence entries to re-simulate in Step 5
-  max_resample_attempts: 5      # retries to get feasible decoded design
+  n_sim_max:             10      # max new real simulations per iteration
+  gen_train_steps:          5   # Adam steps for generative model per iteration
+  wm_train_steps:           5   # Adam steps for world model per iteration
+  wm_correction_n:           5   # high-confidence entries to re-simulate in Step 5
+  max_resample_attempts:    10   # retries to get feasible decoded design
+  max_infeasible_per_iter:   10   # max infeasible samples added to buffer per iteration
+  # Layout-only warmup: N random feasible designs, no simulation, no guidance (null cond.)
+  # Teaches the flow model the feasible topology space before conditioning is introduced.
+  warmup_n_random_feasible:           2000   # set to 0 to disable
+  warmup_random_feasible_train_steps: 500
 
 # -----------------------------------------------------------------------------
 # PARALLEL SIMULATION
 # -----------------------------------------------------------------------------
 parallel:
-  num_workers: 4
+  num_workers: 5
 
 # -----------------------------------------------------------------------------
 # CHECKPOINTING
@@ -127,3 +149,6 @@ checkpoint_interval: 50   # save checkpoint every N iterations
 
 # Optional: set seed for reproducibility (null = random)
 seed: 42
+
+# Debug: print pixel-type counts for every generated design in Step 1
+debug: true

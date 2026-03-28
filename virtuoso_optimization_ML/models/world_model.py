@@ -9,7 +9,7 @@ Steps :
   Conv2d(1→64, 3×3) → GroupNorm → GELU
   ResBlock(64→128,  stride=2)
   ResBlock(128→256, stride=2)
-  ResBlock(256→256, stride=2)
+  ResBlock(256→256, stride=1)   ← no 3rd downsample; keeps spatial dims ≥ 4×4
   AdaptiveAvgPool2d(4, 4) → flatten → Linear(4096, 512) → GELU
   Linear(512, n_states * n_freq)  → reshape to (B, n_states, n_freq)
 
@@ -105,7 +105,7 @@ class WorldModelMember(nn.Module):
         self.encoder = nn.Sequential(
             _ResBlock(64,  128, stride=2),
             _ResBlock(128, 256, stride=2),
-            _ResBlock(256, 256, stride=2),
+            _ResBlock(256, 256, stride=1),  # stride=1: keeps spatial detail for small grids
         )
         self.pool = nn.AdaptiveAvgPool2d((4, 4))
 

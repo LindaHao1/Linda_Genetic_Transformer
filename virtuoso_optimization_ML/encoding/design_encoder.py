@@ -8,21 +8,28 @@ Shape: (1, rows, cols + n_states)
 
 The first `cols` columns contain the pixel matrix encoded into [0, 1]:
 
-  Pixel type 0 (ground)   → region [0.00, 0.15],  center 0.05  (constant)
-  Pixel type 1 (metal)    → region [0.20, 0.35],  center 0.25  (constant)
-  Pixel type 2 (inductor) → region [0.45, 0.60],  value interpolated over
-                             [0.45, 0.60] by discrete inductor_index / (n-1)
-  Pixel type 3 (switch)   → region [0.70, 0.85],  value interpolated over
-                             [0.70, 0.85] by (cap - cap_min) / (cap_max - cap_min)
+  Pixel type 0 (ground)   → region [0.00, 0.10],  center 0.05  (constant)
+  Pixel type 1 (metal)    → region [0.15, 0.25],  center 0.20  (constant)
+  Pixel type 2 (inductor) → region [0.30, 0.50],  value interpolated over
+                             [0.30, 0.50] by discrete inductor_index / (n-1)
+  Pixel type 3 (switch)   → region [0.60, 0.90],  value interpolated over
+                             [0.60, 0.90] by (cap - cap_min) / (cap_max - cap_min)
 
-The 0.05 gaps between regions prevent smooth transitions and make the four
-types clearly separable in the pixel value histogram.
+Region boundaries for decoding are determined by manually defined dividing
+points (midpoints of the gaps between adjacent regions):
+  _BOUND_01 = 0.125  — splits ground  / metal
+  _BOUND_12 = 0.275  — splits metal   / inductor
+  _BOUND_23 = 0.550  — splits inductor / switch
+
+Once the region is identified, the raw value is clipped to [R_LO, R_HI]
+before recovering the inductor index or cap value.  This gives region-specific
+snapping rather than nearest-centre ambiguity.
 
 The last `n_states` columns encode switch states:
   column (cols + s) = 1.0 at the row of each switch that is ON in state s,
                       0.0 elsewhere.
 The decoder identifies state columns by position (last n_states cols), not by
-value, so there is no ambiguity with pixel type 1 (metal, value 0.25).
+value, so there is no ambiguity with pixel type 1 (metal, value 0.20).
 
 Inductor / switch positions are tracked in row-first scan order, matching
 the order used by DesignState.inductor_values and cap_values.
@@ -41,18 +48,22 @@ import torch
 # Region boundaries (all in [0, 1])
 # ---------------------------------------------------------------------------
 
-_R0_LO, _R0_HI = 0.00, 0.15   # ground
-_R1_LO, _R1_HI = 0.20, 0.35   # metal
-_R2_LO, _R2_HI = 0.45, 0.60   # inductor
-_R3_LO, _R3_HI = 0.70, 0.85   # switch
+_R0_LO, _R0_HI = 0.00, 0.10  # ground
+_R1_LO, _R1_HI = 0.15, 0.25  # metal
+_R2_LO, _R2_HI = 0.30, 0.50  # inductor
+_R3_LO, _R3_HI = 0.60, 0.90  # switch
 
 _R0_CTR = 0.05
-_R1_CTR = 0.275
-_R2_CTR = 0.525   # mid of inductor range (for unknown/fallback)
-_R3_CTR = 0.775   # mid of switch range
+_R1_CTR = 0.20
+_R2_CTR = 0.40   # mid of inductor range (for unknown/fallback)
+_R3_CTR = 0.75   # mid of switch range
 
-# Snap threshold: value → nearest region centre
-_REGION_CENTERS = np.array([_R0_CTR, _R1_CTR, _R2_CTR, _R3_CTR])
+# Manually defined dividing points between adjacent regions.
+# A float value is classified into the region whose interval it falls in,
+# removing the nearest-centre ambiguity that occurs near region gaps.
+_BOUND_01 = (_R0_HI + _R1_LO) / 2   # 0.125  — ground  / metal
+_BOUND_12 = (_R1_HI + _R2_LO) / 2   # 0.275  — metal   / inductor
+_BOUND_23 = (_R2_HI + _R3_LO) / 2   # 0.550  — inductor / switch
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +223,14 @@ class DesignEncoder:
             for c in range(cols):
                 ptype_grid[r, c] = self._float_to_ptype(arr[r, c])
 
+        # Enforce feed column constraint: col 0 and col N-1 must have exactly
+        # one non-zero pixel (type 1 / metal).  Keep the row with the highest
+        # raw value; set all others to 0 (ground).
+        for feed_col in (0, cols - 1):
+            best_row = int(np.argmax(arr[:, feed_col]))
+            for r in range(rows):
+                ptype_grid[r, feed_col] = 1 if r == best_row else 0
+
         # Second pass: build output lists in row-first order
         ind_count = 0
         sw_count  = 0
@@ -220,22 +239,21 @@ class DesignEncoder:
         for r in range(rows):
             row_out: List[int] = []
             for c in range(cols):
-                pt = ptype_grid[r, c]
+                pt = int(ptype_grid[r, c])
                 row_out.append(pt)
                 if pt == 2:
-                    # Recover discrete inductor index from float value
-                    val = arr[r, c]
+                    # Clip to inductor region then recover discrete index
+                    val = float(np.clip(arr[r, c], _R2_LO, _R2_HI))
                     n   = max(cfg.n_inductor_values - 1, 1)
-                    t   = (val - _R2_LO) / (_R2_HI - _R2_LO + 1e-9)
+                    t   = (val - _R2_LO) / (_R2_HI - _R2_LO)
                     idx = int(round(t * n))
                     idx = max(0, min(idx, cfg.n_inductor_values - 1))
                     inductor_values_list.append(idx)
                     ind_count += 1
                 elif pt == 3:
-                    # Recover continuous cap value from float value
-                    val = arr[r, c]
-                    t   = (val - _R3_LO) / (_R3_HI - _R3_LO + 1e-9)
-                    t   = max(0.0, min(t, 1.0))
+                    # Clip to switch region then recover continuous cap value
+                    val = float(np.clip(arr[r, c], _R3_LO, _R3_HI))
+                    t   = (val - _R3_LO) / (_R3_HI - _R3_LO)
                     cap = cfg.cap_min + t * (cfg.cap_max - cfg.cap_min)
                     cap_values_list.append(cap)
                     sw_positions.append((r, c))
@@ -254,25 +272,23 @@ class DesignEncoder:
                 state_row.append(1 if val >= 0.5 else 0)
             switch_states.append(state_row)
 
-        # Pad cap_values / inductor_values if shorter than expected
-        # (can happen if decoded design has fewer switches/inductors than config)
-        while len(cap_values_list) < cfg.n_switches:
-            cap_values_list.append(cfg.cap_min)
-        while len(switch_states) > 0 and len(switch_states[0]) < cfg.n_switches:
-            for s in range(n_s):
-                switch_states[s].append(0)
-
         return DesignState(
             matrix          = matrix,
             switch_states   = switch_states,
-            cap_values      = cap_values_list[:cfg.n_switches],
+            cap_values      = cap_values_list,
             inductor_values = inductor_values_list,
         )
 
     def _float_to_ptype(self, val: float) -> int:
-        """Snap a float in [0,1] to the nearest pixel type region."""
-        dists = np.abs(_REGION_CENTERS - val)
-        return int(np.argmin(dists))
+        """Classify a float in [0,1] to a pixel type using explicit region dividers."""
+        if val < _BOUND_01:
+            return 0
+        elif val < _BOUND_12:
+            return 1
+        elif val < _BOUND_23:
+            return 2
+        else:
+            return 3
 
     # ------------------------------------------------------------------
     # Image dimensions helper

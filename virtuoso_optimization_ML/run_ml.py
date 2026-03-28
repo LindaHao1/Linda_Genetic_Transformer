@@ -19,6 +19,11 @@ import argparse
 import sys
 from pathlib import Path
 
+# Make the parent package importable when run directly as a script
+_HERE = Path(__file__).resolve().parent
+if str(_HERE.parent) not in sys.path:
+    sys.path.insert(0, str(_HERE.parent))
+
 
 def run_ml(config_path: str, resume_from: str | None = None) -> None:
     from virtuoso_optimization_ML.training.online_trainer import OnlineMLTrainer

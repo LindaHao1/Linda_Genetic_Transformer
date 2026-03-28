@@ -73,4 +73,4 @@ Create  a configuration of detials. (e.g. how many points are there in toal, pix
 
 We will label the infeasible design with some mark (like some impossible values liek all 1 s parameters to let the network know it is not feasible). These designs will bypass world model and simulation. During sampling, give low priority to infeasible design. 
 
-We don't want the infeasible design to dominate, 
+We don't want the infeasible design to dominate, so we will regenerate for some iteration, and then if there is none feasible. we will label infeasible and put into dataa.
