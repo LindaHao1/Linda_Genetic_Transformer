@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 if TYPE_CHECKING:
-    from virtuoso_optimization_SA.cost import FilterStateSpec
+    from ..cost import FilterStateSpec
 
 
 def compute_cost_from_tensor(

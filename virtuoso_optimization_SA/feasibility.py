@@ -40,14 +40,29 @@ def _neighbours_8(r: int, c: int, rows: int, cols: int) -> List[Tuple[int, int]]
     return result
 
 
+def _neighbours_4(r: int, c: int, rows: int, cols: int) -> List[Tuple[int, int]]:
+    """Return all valid (row, col) 4-neighbours (up/down/left/right) of (r, c)."""
+    result = []
+    for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        nr, nc = r + dr, c + dc
+        if 0 <= nr < rows and 0 <= nc < cols:
+            result.append((nr, nc))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Individual rule checks
 # ---------------------------------------------------------------------------
 
-def check_connectivity(matrix: List[List[int]]) -> bool:
+def check_connectivity(matrix: List[List[int]], four_connected: bool = False) -> bool:
     """
     Rule a: BFS from the feed pixel in col 0 to the feed pixel in col N-1,
-    traversing only cells with value != 0 via 8-connectivity.
+    traversing only cells with value != 0.
+
+    When ``four_connected=False`` (default) 8-connectivity is used, but
+    diagonal steps are suppressed at the feed columns.
+    When ``four_connected=True`` strict 4-connectivity (up/down/left/right
+    only) is enforced throughout the entire grid.
     """
     rows = len(matrix)
     cols = len(matrix[0])
@@ -70,17 +85,29 @@ def check_connectivity(matrix: List[List[int]]) -> bool:
         r, c = q.popleft()
         if r == right_row and c == cols - 1:
             return True
-        for nr, nc in _neighbours_8(r, c, rows, cols):
+        if four_connected:
+            neighbours = _neighbours_4(r, c, rows, cols)
+        else:
+            neighbours = _neighbours_8(r, c, rows, cols)
             # Diagonal steps are not allowed when either endpoint is in a feed column
-            is_diagonal = (nr != r) and (nc != c)
-            in_feed_col = (c == 0 or c == cols - 1 or nc == 0 or nc == cols - 1)
-            if is_diagonal and in_feed_col:
-                continue
+            neighbours = [
+                (nr, nc) for nr, nc in neighbours
+                if not (
+                    (nr != r) and (nc != c)
+                    and (c == 0 or c == cols - 1 or nc == 0 or nc == cols - 1)
+                )
+            ]
+        for nr, nc in neighbours:
             if not visited[nr][nc] and matrix[nr][nc] != 0:
                 visited[nr][nc] = True
                 q.append((nr, nc))
 
     return False
+
+
+def check_connectivity_4way(matrix: List[List[int]]) -> bool:
+    """Convenience wrapper: 4-connected path from left to right feed pixel."""
+    return check_connectivity(matrix, four_connected=True)
 
 
 def check_spacing(matrix: List[List[int]], pixel_type: int) -> bool:
@@ -121,6 +148,26 @@ def check_switch_count(matrix: List[List[int]], n_switches_required: int) -> boo
     return n == n_switches_required
 
 
+def check_switch_count_range(matrix: List[List[int]], min_sw: int, max_sw: int) -> bool:
+    """Rule e (relaxed): total type-3 pixels in [min_sw, max_sw]."""
+    n = sum(v == 3 for row in matrix for v in row)
+    return min_sw <= n <= max_sw
+
+
+def check_switch_states_distinct(switch_states: List[List[int]]) -> bool:
+    """Check that no two switch state vectors are identical.
+
+    Ensures each filter state has a unique switch configuration so the two
+    states are genuinely different operating points.
+    """
+    n = len(switch_states)
+    for i in range(n):
+        for j in range(i + 1, n):
+            if switch_states[i] == switch_states[j]:
+                return False
+    return True
+
+
 def check_feed_columns(matrix: List[List[int]]) -> bool:
     """Rule f: exactly one non-zero pixel in col 0 and col N-1."""
     rows = len(matrix)
@@ -134,26 +181,48 @@ def is_feasible(
     matrix: List[List[int]],
     n_switches_required: int,
     max_inductors: int,
+    *,
+    min_switches: Optional[int] = None,
+    max_switches: Optional[int] = None,
+    four_connected: bool = False,
 ) -> bool:
-    """Full feasibility check (all rules a–f)."""
+    """Full feasibility check (all rules a–f).
+
+    When ``min_switches`` / ``max_switches`` are provided the switch count is
+    checked against [min_switches, max_switches] instead of the exact value
+    ``n_switches_required``.  SA and GA callers omit these keyword arguments
+    and get the original strict-count behaviour unchanged.
+
+    When ``four_connected=True`` the connectivity rule uses 4-way (Manhattan)
+    connectivity instead of the default 8-way.
+    """
+    if min_switches is not None or max_switches is not None:
+        lo = min_switches if min_switches is not None else n_switches_required
+        hi = max_switches if max_switches is not None else n_switches_required
+        sw_ok = check_switch_count_range(matrix, lo, hi)
+    else:
+        sw_ok = check_switch_count(matrix, n_switches_required)
+
     return (
         check_feed_columns(matrix)
-        and check_connectivity(matrix)
+        and check_connectivity(matrix, four_connected=four_connected)
         and check_switch_spacing(matrix)
         and check_inductor_spacing(matrix)
         and check_inductor_count(matrix, max_inductors)
-        and check_switch_count(matrix, n_switches_required)
+        and sw_ok
     )
 
 
 def is_feasible_no_switch_count(
     matrix: List[List[int]],
     max_inductors: int,
+    *,
+    four_connected: bool = False,
 ) -> bool:
     """Feasibility check excluding the exact switch count rule (used during generation)."""
     return (
         check_feed_columns(matrix)
-        and check_connectivity(matrix)
+        and check_connectivity(matrix, four_connected=four_connected)
         and check_inductor_spacing(matrix)
         and check_inductor_count(matrix, max_inductors)
     )
@@ -217,10 +286,11 @@ def generate_random_design(
     cap_max: float,
     rng: random.Random,
     n_inductor_values: int = 4,
-    p0: float = 0.38,   # probability of type 0 (ground) for interior cells
+    p0: float = 0.399,   # probability of type 0 (ground) for interior cells
     p1: float = 0.60,   # probability of type 1 (metal)
-    p2: float = 0.02,   # probability of type 2 (inductor)
+    p2: float = 0.001,   # probability of type 2 (inductor)
     max_attempts: int = 10_000,
+    require_4_connected: bool = False,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -261,7 +331,7 @@ def generate_random_design(
                 matrix[r][c] = rng.choices(types, weights=weights)[0]
 
         # --- Step 3: connectivity + inductor count check ---
-        if not check_connectivity(matrix):
+        if not check_connectivity(matrix, four_connected=require_4_connected):
             continue
         if not check_inductor_count(matrix, max_inductors):
             continue
@@ -294,14 +364,31 @@ def generate_random_design(
             continue
 
         # --- Final feasibility check ---
-        if not is_feasible(matrix, n_switches, max_inductors):
+        if not is_feasible(matrix, n_switches, max_inductors,
+                           four_connected=require_4_connected):
             continue
 
         # --- Step 5: generate switch states, cap values, and inductor values ---
-        switch_states = [
-            [rng.randint(0, 1) for _ in range(n_switches)]
-            for _ in range(n_states)
-        ]
+        # Retry until every pair of states differs by at least 1 switch bit.
+        switch_states: Optional[List[List[int]]] = None
+        for _ in range(1_000):
+            candidate_states = [
+                [rng.randint(0, 1) for _ in range(n_switches)]
+                for _ in range(n_states)
+            ]
+            # Check all pairs are distinct by at least one element
+            all_distinct = all(
+                any(a != b for a, b in zip(candidate_states[i], candidate_states[j]))
+                for i in range(n_states)
+                for j in range(i + 1, n_states)
+            )
+            if all_distinct:
+                switch_states = candidate_states
+                break
+
+        if switch_states is None:
+            continue  # couldn't find distinct states — retry the whole matrix
+
         cap_values = [
             rng.uniform(cap_min, cap_max)
             for _ in range(n_switches)

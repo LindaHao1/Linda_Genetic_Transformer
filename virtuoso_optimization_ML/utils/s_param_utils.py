@@ -29,7 +29,7 @@ except ImportError as exc:
 
 if TYPE_CHECKING:
     from virtuoso_engine.engine import RunResult
-    from virtuoso_optimization_SA.cost import FilterStateSpec
+    from ..cost import FilterStateSpec
 
 
 # ---------------------------------------------------------------------------

@@ -18,15 +18,15 @@
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
 
 # Root directory for all SA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/sa_filter_results_new_inductor_2"
+output_dir: "/disk/mcao53/Sim_engine_results/sa_filter_results_700u_2_seed10"
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE
 # ---------------------------------------------------------------------------
 grid:
-  rows: 25              # number of pixel rows
-  cols: 27             # number of pixel columns (col 0 and col N-1 are feed columns)
-  n_switches: 4        # exact number of switch pixels (type 3) required
+  rows: 35              # number of pixel rows
+  cols: 37             # number of pixel columns (col 0 and col N-1 are feed columns)
+  n_switches: 3        # exact number of switch pixels (type 3) required
   max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
   n_states: 2          # number of filter states (= number of switch-state vectors)
 
@@ -58,31 +58,31 @@ filter_specs:
   #   stopband_max_db: -15.0                # > -15 dB in stopband is penalised
   #   weight: 1.0
   - state_index:     0
-    passband:        [36.0e9, 44.0e9]       # 40 GHz centre, ±4 GHz bandwidth
+    passband:        [6.0e9, 8.0e9]       # 7 GHz centre, ±1 GHz bandwidth
     passband_min_db: -0.0                   # < -3 dB in passband is penalised
     stopband_regions:
-      - [30.0,    36.0e9]                   # below passband
-      - [44.0e9,  50.0e9]                   # above passband
+      - [4.0e9,    6.0e9]                   # below passband
+      - [8.0e9,  10.0e9]                   # above passband
     stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
     weight: 2.0
     # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
     cross_stopband_regions:
-      - [18.0e9, 22.0e9]
-    cross_stopband_max_db: -20.0
+      - [36.0e9, 44.0e9]
+    cross_stopband_max_db: -10.0
     cross_stopband_weight: 1.0
 
   - state_index:     1
-    passband:        [18.0e9, 22.0e9]       # 20 GHz centre, ±2 GHz bandwidth
+    passband:        [36.0e9, 44.0e9]       # 20 GHz centre, ±2 GHz bandwidth
     passband_min_db: -0.0
     stopband_regions:
-      - [15.0,     18.0e9]
-      - [22.0e9,  25.0e9]
+      - [32.0e9,  36.0e9]
+      - [44.0e9,  48.0e9]
     stopband_max_db: -20.0
     weight: 2.0
     # Decoupling: state 1 must also attenuate at state 0's passband (40 GHz)
     cross_stopband_regions:
-      - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -20.0
+      - [6.0e9, 8.0e9]
+    cross_stopband_max_db: -10.0
     cross_stopband_weight: 1.0
 
 # ---------------------------------------------------------------------------
@@ -93,19 +93,25 @@ sa:
   T_start:  100.0    # initial temperature (cost units: dB^2)
   T_end:    0.1      # final temperature
   n_iter:   1000        # total number of SA iterations
-  cooling:  "geometric"  # "geometric" or "linear"
+  cooling:  "linear"  # "geometric" or "linear"
 
   # Parallel candidates per step
   # Each candidate is simulated on its own Virtuoso worker simultaneously.
   n_parallel: 4
 
   # Action parameters
-  n_regular_flip: 10         # max pixels to flip per flip_01 action
+  n_regular_flip: 25         # max pixels to flip per flip_01 action
   cap_sigma:      50.0e-15  # Gaussian noise std for cap perturbation (50 fF)
 
   # Per-action sampling weights (relative, not required to sum to 1)
   # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value, perturb_caps, flip_switch_state]
-  action_weights: [2.0, 1.5, 1.0, 1.0, 2.0, 1.5]
+  action_weights: [8.0, 4.0, 4.0, 4.0, 4.0, 4.0]
 
 # Random seed (set to null for non-deterministic)
-seed: 42
+seed: 10
+
+# If true, the initial random design is regenerated until the pixel path from
+# the left feed column to the right feed column is fully 4-connected
+# (Manhattan / up-down-left-right only, no diagonals).  This produces a
+# physically cleaner starting point at the cost of more generation attempts.
+require_4_connected: true

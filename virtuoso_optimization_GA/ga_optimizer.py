@@ -40,7 +40,7 @@ import yaml
 from virtuoso_optimization_SA.actions import random_action
 from virtuoso_optimization_SA.cost import compute_total_cost, specs_from_config, FilterStateSpec
 from virtuoso_optimization_SA.design import DesignState
-from virtuoso_optimization_SA.feasibility import generate_random_design
+from virtuoso_optimization_SA.feasibility import generate_random_design, is_feasible
 
 from .crossover import crossover_zig_zag
 
@@ -70,6 +70,8 @@ class GAConfig:
     pop_size:        int
     n_gen:           int
     n_elite:         int
+    n_immigrants:    int   # fresh random designs per generation
+    n_keep_bad:      int   # worst non-elites preserved per generation
     p_crossover:     float
     p_mutation:      float
     selection:       str    # "tournament"
@@ -103,6 +105,8 @@ class GAConfig:
             pop_size        = int(ga["pop_size"]),
             n_gen           = int(ga["n_gen"]),
             n_elite         = int(ga.get("n_elite", 2)),
+            n_immigrants    = int(ga.get("n_immigrants", 0)),
+            n_keep_bad      = int(ga.get("n_keep_bad", 0)),
             p_crossover     = float(ga.get("p_crossover", 0.7)),
             p_mutation      = float(ga.get("p_mutation", 0.4)),
             selection       = str(ga.get("selection", "tournament")),
@@ -212,7 +216,8 @@ class SwitchableFilterGA:
         print(f"[GA] Grid: {cfg.rows}x{cfg.cols}, switches={cfg.n_switches}, "
               f"max_ind={cfg.max_inductors}, states={cfg.n_states}")
         print(f"[GA] pop={cfg.pop_size}, n_gen={cfg.n_gen}, "
-              f"elite={cfg.n_elite}, p_cross={cfg.p_crossover}, p_mut={cfg.p_mutation}")
+              f"elite={cfg.n_elite}, immigrants={cfg.n_immigrants}, keep_bad={cfg.n_keep_bad}, "
+              f"p_cross={cfg.p_crossover}, p_mut={cfg.p_mutation}")
         print(f"{'='*70}\n")
 
         start_time = time.time()
@@ -234,17 +239,31 @@ class SwitchableFilterGA:
 
             # --- Generational loop ---
             for gen in range(cfg.n_gen):
-                # Elite preservation
+                # Sort population by cost (ascending = best first)
                 sorted_indices = sorted(range(len(costs)), key=lambda i: costs[i])
+
+                # 1. Elite preservation
                 elites      = [population[i].copy() for i in sorted_indices[:cfg.n_elite]]
                 elite_costs = [costs[i]             for i in sorted_indices[:cfg.n_elite]]
 
-                # Produce offspring
+                # 2. Keep-bad: randomly sample from the bottom 50% of non-elites
+                kept_bad: List[DesignState] = []
+                kept_bad_costs: List[float] = []
+                if cfg.n_keep_bad > 0:
+                    non_elite   = sorted_indices[cfg.n_elite:]
+                    bottom_half = non_elite[len(non_elite) // 2:]
+                    if bottom_half:
+                        chosen         = self.rng.sample(bottom_half, min(cfg.n_keep_bad, len(bottom_half)))
+                        kept_bad       = [population[i].copy() for i in chosen]
+                        kept_bad_costs = [costs[i]             for i in chosen]
+
+                # 3. Produce regular offspring via crossover + mutation
                 offspring: List[DesignState] = []
-                n_offspring = cfg.pop_size - cfg.n_elite
+                n_offspring = cfg.pop_size - cfg.n_elite - len(kept_bad)
+                n_regular   = n_offspring - cfg.n_immigrants
                 max_tries   = n_offspring * 10
                 attempts    = 0
-                while len(offspring) < n_offspring and attempts < max_tries:
+                while len(offspring) < n_regular and attempts < max_tries:
                     attempts += 1
                     p1 = _tournament_select(population, costs, cfg.tournament_size, self.rng)
                     p2 = _tournament_select(population, costs, cfg.tournament_size, self.rng)
@@ -253,13 +272,13 @@ class SwitchableFilterGA:
                     if self.rng.random() < cfg.p_crossover:
                         child = crossover_zig_zag(
                             p1, p2,
-                            rng                = self.rng,
+                            rng                 = self.rng,
                             n_switches_required = cfg.n_switches,
-                            max_inductors      = cfg.max_inductors,
-                            n_states           = cfg.n_states,
-                            cap_min            = cfg.cap_min,
-                            cap_max            = cfg.cap_max,
-                            n_inductor_values  = cfg.n_inductor_values,
+                            max_inductors       = cfg.max_inductors,
+                            n_states            = cfg.n_states,
+                            cap_min             = cfg.cap_min,
+                            cap_max             = cfg.cap_max,
+                            n_inductor_values   = cfg.n_inductor_values,
                         )
                         if child is None:
                             continue   # crossover failed — retry
@@ -271,28 +290,51 @@ class SwitchableFilterGA:
 
                     # Mutation
                     if self.rng.random() < cfg.p_mutation:
-                        mutated = random_action(
-                            state              = child,
-                            n_regular_flip     = cfg.n_regular_flip,
-                            max_inductors      = cfg.max_inductors,
-                            cap_min            = cfg.cap_min,
-                            cap_max            = cfg.cap_max,
-                            cap_sigma          = cfg.cap_sigma,
-                            rng                = self.rng,
-                            n_inductor_values  = cfg.n_inductor_values,
-                            action_weights     = cfg.action_weights,
+                        mutated, _ = random_action(
+                            state             = child,
+                            n_regular_flip    = cfg.n_regular_flip,
+                            max_inductors     = cfg.max_inductors,
+                            cap_min           = cfg.cap_min,
+                            cap_max           = cfg.cap_max,
+                            cap_sigma         = cfg.cap_sigma,
+                            rng               = self.rng,
+                            n_inductor_values = cfg.n_inductor_values,
+                            action_weights    = cfg.action_weights,
                         )
                         if mutated is not None:
                             child = mutated
 
+                    if not is_feasible(child.matrix, cfg.n_switches, cfg.max_inductors):
+                        continue
+
                     offspring.append(child)
 
-                # Evaluate offspring
-                offspring_costs = self._evaluate_batch(engine, offspring, gen_idx=gen)
+                # 4. Random immigrants
+                immigrants: List[DesignState] = []
+                for _ in range(cfg.n_immigrants):
+                    immigrant = generate_random_design(
+                        rows              = cfg.rows,
+                        cols              = cfg.cols,
+                        n_switches        = cfg.n_switches,
+                        max_inductors     = cfg.max_inductors,
+                        n_states          = cfg.n_states,
+                        cap_min           = cfg.cap_min,
+                        cap_max           = cfg.cap_max,
+                        rng               = self.rng,
+                        n_inductor_values = cfg.n_inductor_values,
+                    )
+                    if immigrant is not None:
+                        immigrants.append(immigrant)
 
-                # New population = elites + offspring
-                population = elites + offspring
-                costs      = elite_costs + offspring_costs
+                # 5. Evaluate all new individuals in one batch
+                to_evaluate     = offspring + immigrants
+                new_costs       = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
+                offspring_costs = new_costs[:len(offspring)]
+                immigrant_costs = new_costs[len(offspring):]
+
+                # 6. Assemble new population: elites | kept_bad | offspring | immigrants
+                population = elites + kept_bad + offspring + immigrants
+                costs      = elite_costs + kept_bad_costs + offspring_costs + immigrant_costs
 
                 # Track global best
                 gen_best_idx = min(range(len(costs)), key=lambda i: costs[i])
@@ -394,7 +436,10 @@ class SwitchableFilterGA:
             for i, d in enumerate(individuals)
         ]
         results = engine.run_batch(overrides)
-        return [self._cost_from_result(r) for r in results]
+        costs = [self._cost_from_result(r) for r in results]
+        for r, cost in zip(results, costs):
+            (r.run_dir / "cost.txt").write_text(f"{cost}\n")
+        return costs
 
     def _cost_from_result(self, result: "RunResult") -> float:
         if not result.success:

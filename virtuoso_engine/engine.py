@@ -298,6 +298,7 @@ class VirtuosoPixelEngine:
                 s_param_files=s_param_files,
                 labels=run_labels,
                 plot_dir=plot_dir,
+                cfg=cfg,
             )
         else:
             print(f"{self._lp}[run] No S-parameter files found — skipping plots.")
@@ -864,13 +865,18 @@ def _make_plots(
     s_param_files: List[Path],
     labels: list,
     plot_dir: Path,
+    cfg: Optional[Dict[str, Any]] = None,
 ) -> dict:
     """Dispatch to the appropriate plotter based on mode."""
     if mode == "pixelated_design_simple":
+        matrix = None
+        if cfg is not None:
+            matrix = cfg.get("pixelated", {}).get("pixel_state_matrix")
         return plot_s2p_results(
             s2p_files=s_param_files,
             state_labels=labels,
             output_dir=plot_dir,
+            pixel_matrix=matrix,
         )
     return plot_s11_results(
         s1p_files=s_param_files,

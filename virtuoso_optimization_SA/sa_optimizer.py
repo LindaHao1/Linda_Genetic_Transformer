@@ -36,7 +36,7 @@ import yaml
 from .actions import random_action
 from .cost import compute_total_cost, specs_from_config, FilterStateSpec
 from .design import DesignState
-from .feasibility import generate_random_design
+from .feasibility import generate_random_design, is_feasible
 
 # RunResult type hint only — the heavy virtuoso_engine import is deferred to
 # _make_engine() so that importing this module does not require scikit-rf.
@@ -81,6 +81,9 @@ class SAConfig:
     # Random seed
     seed: Optional[int]
 
+    # Connectivity mode for initial design generation
+    require_4_connected: bool = False
+
     @classmethod
     def from_dict(cls, d: dict) -> "SAConfig":
         sa   = d["sa"]
@@ -108,7 +111,8 @@ class SAConfig:
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
 
-            seed = d.get("seed"),
+            seed                = d.get("seed"),
+            require_4_connected = bool(d.get("require_4_connected", False)),
         )
 
 
@@ -205,7 +209,7 @@ class SwitchableFilterSA:
 
                 # Pick best candidate
                 best_cand_idx  = min(range(len(costs)), key=lambda i: costs[i])
-                best_cand      = candidates[best_cand_idx]
+                best_cand, _   = candidates[best_cand_idx]
                 best_cand_cost = costs[best_cand_idx]
 
                 # Metropolis acceptance
@@ -263,15 +267,16 @@ class SwitchableFilterSA:
     def _generate_initial_design(self) -> DesignState:
         cfg = self.cfg
         design = generate_random_design(
-            rows               = cfg.rows,
-            cols               = cfg.cols,
-            n_switches         = cfg.n_switches,
-            max_inductors      = cfg.max_inductors,
-            n_states           = cfg.n_states,
-            cap_min            = cfg.cap_min,
-            cap_max            = cfg.cap_max,
-            rng                = self.rng,
-            n_inductor_values  = cfg.n_inductor_values,
+            rows                = cfg.rows,
+            cols                = cfg.cols,
+            n_switches          = cfg.n_switches,
+            max_inductors       = cfg.max_inductors,
+            n_states            = cfg.n_states,
+            cap_min             = cfg.cap_min,
+            cap_max             = cfg.cap_max,
+            rng                 = self.rng,
+            n_inductor_values   = cfg.n_inductor_values,
+            require_4_connected = cfg.require_4_connected,
         )
         if design is None:
             raise RuntimeError(
@@ -284,17 +289,20 @@ class SwitchableFilterSA:
     # Candidate generation
     # ------------------------------------------------------------------
 
-    def _generate_candidates(self, current: DesignState) -> List[DesignState]:
-        """Generate up to N_parallel mutated candidates from the current design."""
+    def _generate_candidates(self, current: DesignState) -> List[Tuple[DesignState, dict]]:
+        """Generate up to N_parallel mutated candidates from the current design.
+
+        Returns a list of (DesignState, action_info) tuples.
+        """
         cfg = self.cfg
-        candidates: List[DesignState] = []
+        candidates: List[Tuple[DesignState, dict]] = []
         seen: set = set()
 
-        max_tries = cfg.n_parallel * 20
+        max_tries = cfg.n_parallel * 40
         for _ in range(max_tries):
             if len(candidates) >= cfg.n_parallel:
                 break
-            candidate = random_action(
+            candidate, action_info = random_action(
                 state              = current,
                 n_regular_flip     = cfg.n_regular_flip,
                 max_inductors      = cfg.max_inductors,
@@ -307,6 +315,8 @@ class SwitchableFilterSA:
             )
             if candidate is None:
                 continue
+            if not is_feasible(candidate.matrix, cfg.n_switches, cfg.max_inductors):
+                continue
             # Deduplicate by matrix + inductor_values fingerprint
             key = (
                 tuple(v for row in candidate.matrix for v in row)
@@ -314,7 +324,7 @@ class SwitchableFilterSA:
             )
             if key not in seen:
                 seen.add(key)
-                candidates.append(candidate)
+                candidates.append((candidate, action_info))
 
         return candidates
 
@@ -360,14 +370,21 @@ class SwitchableFilterSA:
     def _evaluate_batch(
         self,
         engine: ParallelVirtuosoEngine,
-        candidates: List[DesignState],
+        candidates: List[Tuple[DesignState, dict]],
         iter_idx: int,
     ) -> List[float]:
         """Simulate all candidates in parallel and return their costs."""
-        overrides = [
-            self._build_override(d, iter_idx, i)
-            for i, d in enumerate(candidates)
-        ]
+        overrides = []
+        for i, (d, action_info) in enumerate(candidates):
+            override = self._build_override(d, iter_idx, i)
+            overrides.append(override)
+            # Write action summary to the candidate's output directory
+            cand_dir = Path(override["project"]["parent_output_dir"])
+            cand_dir.mkdir(parents=True, exist_ok=True)
+            summary = dict(action_info)
+            summary["iteration"] = iter_idx
+            summary["candidate_index"] = i
+            (cand_dir / "action_summary.json").write_text(json.dumps(summary, indent=2))
         results = engine.run_batch(overrides)
         return [self._cost_from_result(r) for r in results]
 

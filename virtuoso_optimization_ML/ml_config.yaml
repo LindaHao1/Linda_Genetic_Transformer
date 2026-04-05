@@ -3,7 +3,7 @@
 # =============================================================================
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
-output_dir:      "/disk/mcao53/Sim_engine_results/ml_filter_results_try_3"
+output_dir:      "/disk/mcao53/Sim_engine_results/ml_filter_results_try_7"
 
 # -----------------------------------------------------------------------------
 # GRID / DESIGN SPACE
@@ -35,8 +35,8 @@ filter_specs:
       - [44.0e9, 48.0e9]
     stopband_max_db: -25.0
     cross_stopband_regions:
-      - [18.0e9, 22.0e9]
-    cross_stopband_max_db: -25.0
+      - [10.0e9, 25.0e9]
+    cross_stopband_max_db: -15.0
     weight: 1.0
 
   - state_index: 1
@@ -47,8 +47,8 @@ filter_specs:
       - [23.0e9, 25.0e9]
     stopband_max_db: -25.0
     cross_stopband_regions:
-      - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -25.0
+      - [25.0e9, 45.0e9]
+    cross_stopband_max_db: -15.0
     weight: 1.0
 
 # -----------------------------------------------------------------------------
@@ -71,40 +71,80 @@ encoding:
 # GENERATIVE MODEL (conditional flow matching)
 # -----------------------------------------------------------------------------
 generative_model:
-  cond_dim:       256     # S-param conditioning vector dimension
+  cond_dim:       256     # S-param conditioning vector dimension (legacy AdaGN mode)
   t_dim:          128     # time embedding dimension
   base_channels:  64      # U-Net first-stage channel count
-  n_steps:        100      # Euler integration steps at inference
+  n_steps:        100     # Euler integration steps at inference
   guidance_scale: 2.0     # classifier-free guidance scale (1.0 = no guidance)
   p_uncond:       0.1     # CFG null-conditioning dropout probability
   lr:             5.0e-4
   batch_size:     32
-  constraint_weight: 0.00   # >0 enables differentiable constraint loss; try 0.05–0.1
+  fm_grad_clip:   1.0     # gradient clip budget for flow-matching loss (separate backward pass)
+  clf_grad_clip:  0.1     # gradient clip budget for classifier loss (separate, tighter)
+  # constraint_weight removed — feasibility is now handled by FeasibilityClassifier
+
+  # Cross-attention conditioning (set use_cross_attn: true to enable)
+  # Replaces AdaGN spec conditioning with spatial cross-attention:
+  #   s_param mode    → spec tokens (B, n_states*32, seq_d_model); each CNN freq-bin is a token
+  #   score_based mode → spec tokens (B, n_states,   seq_d_model); each filter state is a token
+  # Time conditioning remains in AdaGN; cond_dim is ignored when use_cross_attn is true.
+  use_cross_attn: true   # set true to enable cross-attention spec conditioning
+  seq_d_model:    128     # token embedding dimension for cross-attention encoders
+  ca_n_heads:     4       # number of attention heads in cross-attention blocks
 
 # -----------------------------------------------------------------------------
-# WORLD MODEL (ensemble surrogate)
+# WORLD MODEL (single heteroscedastic surrogate + RND)
 # -----------------------------------------------------------------------------
 world_model:
-  n_members:            5
-  lr:                   1.0e-4
-  batch_size:           32
-  std_scale:            3.0     # dB — calibration for confidence score
-  confidence_threshold:      0.75   # final threshold after schedule (above → relabel)
-  confidence_schedule_iters: 200  # iters to ramp from 1.0 → confidence_threshold
-  use_bagging:               true  # each member trains on random 80% of batch
-  correction_interval:  500      # run Step 5 every N iterations
+  lr:                  1.0e-4
+  batch_size:          32
+  std_scale:           3.0      # calibration for variance-based confidence metric
+  var_threshold:       0.01     # trigger real simulation if mean(variance) > this
+  correction_interval: 500      # run Step 5 every N iterations
+
+  # Random Network Distillation (OOD detection)
+  use_rnd:         false
+  rnd_threshold:   0.1          # trigger real simulation if rnd_score > this
+  rnd_lr:          1.0e-4
 
 # -----------------------------------------------------------------------------
-# REPLAY BUFFER
+# FEASIBILITY CHECKS
+# Toggle individual design-rule checks applied during ML sampling.
+# Disabling a check relaxes that constraint — useful for exploration or when
+# the generative model + classifier are trusted to handle it implicitly.
+# -----------------------------------------------------------------------------
+feasibility_checks:
+  check_connectivity:           false   # rule a: 8-connected path left→right feed
+  check_switch_spacing:         true   # rule b: switches isolated from switches/inductors
+  check_inductor_spacing:       true   # rule c: inductors isolated from inductors/switches
+  check_inductor_count:         true   # rule d: total inductors <= max_inductors
+  check_switch_count:           true   # rule e: switch count in [n_switches_min, n_switches_max]
+  check_feed_columns:           true   # rule f: exactly one non-zero pixel per feed column
+  check_switch_states_distinct: true   # rule g: all switch state vectors are distinct
+
+# -----------------------------------------------------------------------------
+# FEASIBILITY CLASSIFIER
+# -----------------------------------------------------------------------------
+feasibility_classifier:
+  enabled:                  true
+  guidance_weight:          0.0    # weight of clf loss in flow-matching train_step
+  sample_guidance_weight:   0    # weight of clf gradient guidance during ODE sampling (increased from 0.5)
+  warmup_iters:             100    # ramp clf guidance weight from 0 → full over this many iters
+  train_every_n_iters:      1
+  n_train_steps:            32
+  lr:                       1.0e-4
+  min_infeasible_store_size: 50    # minimum infeasible images before classifier trains
+  max_infeasible_store_size: 5000   # rolling store capacity
+
+# -----------------------------------------------------------------------------
+# REPLAY BUFFER  (feasible designs only)
 # -----------------------------------------------------------------------------
 replay_buffer:
-  max_size:           10000
-  alpha_recency:      0.6       # weight for recency term in priority
-  alpha_real:         0.4       # weight for real-data bonus term
-  real_bonus:         2.0       # additive bonus for real simulation entries
-  decay_rate:         0.05      # exponential decay rate for recency
-  infeasible_weight:        0.1   # priority multiplier for infeasible entries
-  infeasible_min_fraction:  0.1  # guaranteed infeasible fraction per gen training batch
+  max_size:      10000
+  alpha_perf:    0.6       # weight for performance-rank term (high-score real-sim designs)
+  alpha_real:    0.4       # weight for real-data bonus term
+  real_bonus:    2.0       # additive bonus for real simulation entries
+  alpha_random:  0.5       # uniform exploration floor (all entries stay reachable)
 
 # -----------------------------------------------------------------------------
 # GUIDANCE MODE
@@ -126,15 +166,29 @@ training:
   n_iterations:          1000    # total online training iterations
   n_gen_samples:         20     # designs sampled from gen model per iteration
   n_sim_max:             10      # max new real simulations per iteration
-  gen_train_steps:          5   # Adam steps for generative model per iteration
-  wm_train_steps:           5   # Adam steps for world model per iteration
-  wm_correction_n:           5   # high-confidence entries to re-simulate in Step 5
-  max_resample_attempts:    10   # retries to get feasible decoded design
-  max_infeasible_per_iter:   10   # max infeasible samples added to buffer per iteration
+  gen_train_steps:          8   # Adam steps for generative model per iteration
+  wm_train_steps:           8   # Adam steps for world model per iteration
+  wm_correction_n:          5   # WM-labeled entries to re-simulate in Step 5
+  max_resample_attempts:    10  # retries to get feasible decoded design
+  # max_infeasible_per_iter removed — infeasible images go to classifier store, not buffer
   # Layout-only warmup: N random feasible designs, no simulation, no guidance (null cond.)
   # Teaches the flow model the feasible topology space before conditioning is introduced.
   warmup_n_random_feasible:           2000   # set to 0 to disable
   warmup_random_feasible_train_steps: 500
+
+# -----------------------------------------------------------------------------
+# WORLD MODEL ROLLOUT TRAINING FOR GENERATIVE MODEL
+# The gen model generates a pool of samples; the world model labels them with
+# predicted S-params (or scores). Infeasible samples receive large penalty
+# labels. Multiple gradient steps are done on this pool without any real
+# simulation. Runs more steps than gen_train_steps to exploit the fast WM.
+# -----------------------------------------------------------------------------
+gen_wm_rollout:
+  enabled:            true
+  n_rollout_steps:    32       # gradient steps per iteration (> gen_train_steps)
+  pool_size:          128      # samples generated once per iteration for rollout
+  infeasible_penalty: 100.0   # penalty score (score_based) or dB penalty (s_param)
+  grad_clip:          1.0
 
 # -----------------------------------------------------------------------------
 # PARALLEL SIMULATION

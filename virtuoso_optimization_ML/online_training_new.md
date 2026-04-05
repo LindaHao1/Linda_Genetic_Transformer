@@ -23,3 +23,5 @@ The training script for machine learning is generally in a good shape, I want to
 Construct warmup dataset directly from warmupsims folder. Currently the warmup dataset is check pointed. However, there might be some changes in coding after each run. So When we detect the warmup simulation folder, we directly recalculate from the sim all the parameters, and add them to the replay buffer.
 
 New guidance mode: We want the guidance (condition to be injected to the generation model) 
+
+## 

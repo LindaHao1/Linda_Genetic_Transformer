@@ -18,9 +18,9 @@ from typing import List
 import numpy as np
 import yaml
 
-from virtuoso_optimization_SA.feasibility import generate_random_design
-from virtuoso_optimization_SA.cost import compute_total_cost
-from virtuoso_optimization_SA.design import DesignState
+from ..feasibility import generate_random_design
+from ..cost import compute_total_cost
+from ..design import DesignState
 
 from ..dataset.replay_buffer import ReplayBuffer, make_infeasible_sentinel
 from ..encoding.design_encoder import DesignEncoder

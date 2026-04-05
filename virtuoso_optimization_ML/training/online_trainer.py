@@ -6,17 +6,21 @@ Algorithm
 Step 0 (warmup)  : simulate ~100 random feasible designs; populate buffer.
 
 Repeat for n_iterations:
+  Collect: Gather simulation results submitted in the previous iteration.
+           - Step-2 results → add real data to buffer, update best design.
+           - Correction results → update buffer labels, fine-tune world model.
   Step 1: Sample n_gen_samples designs from the flow matching model.
           - Try up to max_resample_attempts to get feasible decoded designs.
           - Remaining infeasible designs → add to buffer with sentinel label.
   Step 2: World model predicts S-params + confidence for feasible designs.
           - High confidence → relabel + add to buffer (no simulation).
-          - Low confidence  → simulate with Virtuoso; add as real data.
+          - Low confidence  → SUBMIT to Virtuoso (non-blocking); continue.
   Step 3: Train generative model with priority-sampled buffer data.
+          (Simulations run in background during Steps 3–5.)
   Step 4: Train world model on real + feasible buffer data.
   Step 5: (every wm_correction_interval iters)
-          Re-simulate high-confidence world-model-labeled entries;
-          update buffer labels; fine-tune world model on corrected data.
+          SUBMIT re-simulation of high-confidence WM-labeled entries (non-blocking).
+          Results are collected at the start of the next iteration.
 
 Logging via TensorBoard; checkpoints saved every checkpoint_interval iters.
 """
@@ -35,15 +39,18 @@ import torch
 import torch.optim as optim
 import yaml
 
-from virtuoso_optimization_SA.cost import specs_from_config, compute_total_cost
-from virtuoso_optimization_SA.feasibility import (
-    is_feasible, check_switch_states_distinct, generate_random_design,
+from ..cost import specs_from_config, compute_total_cost
+from ..feasibility import (
+    generate_random_design,
+    check_design_feasibility,
+    FeasibilityCheckConfig,
 )
 
-from ..dataset.replay_buffer import ReplayBuffer, make_infeasible_sentinel
+from ..dataset.replay_buffer import ReplayBuffer
 from ..encoding.design_encoder import DesignEncoder, EncoderConfig
 from ..models.flow_matching import FlowMatchingModel
-from ..models.world_model import EnsembleWorldModel
+from ..models.world_model import WorldModel, RNDNetwork
+from ..models.feasibility_classifier import FeasibilityClassifier
 from ..training.warmup import run_warmup, reload_warmup_from_sim_folder
 from ..utils.s_param_utils import (
     build_target_s_param_tensor,
@@ -95,23 +102,32 @@ class MLConfig:
     gen_batch_size:     int
 
     # World model
-    wm_n_members:                   int
-    wm_lr:                          float
-    wm_batch_size:                  int
-    wm_std_scale:                   float
-    wm_confidence_threshold:        float
-    wm_confidence_schedule_iters:   int    # iterations to ramp threshold 1.0 → target
-    wm_use_bagging:                 bool
-    wm_correction_interval:         int
+    wm_lr:               float
+    wm_batch_size:       int
+    wm_std_scale:        float
+    wm_var_threshold:    float   # variance trigger for simulation
+    wm_correction_interval: int
+    # RND
+    wm_use_rnd:          bool
+    wm_rnd_threshold:    float   # RND score trigger for simulation
+    wm_rnd_lr:           float
+
+    # Feasibility classifier
+    clf_enabled:                  bool
+    clf_guidance_weight:          float   # weight in flow-matching loss
+    clf_sample_guidance_weight:   float   # weight during ODE sampling
+    clf_train_every_n_iters:      int
+    clf_n_train_steps:            int
+    clf_lr:                       float
+    clf_min_store_size:           int     # min infeasible_image_store size before training
+    clf_max_store_size:           int     # max infeasible images kept in rolling store
 
     # Replay buffer
-    buf_max_size:                   int
-    buf_alpha_recency:              float
-    buf_alpha_real:                 float
-    buf_real_bonus:                 float
-    buf_decay_rate:                 float
-    buf_infeasible_weight:          float
-    buf_infeasible_min_fraction:    float  # guaranteed infeasible fraction per gen batch
+    buf_max_size:     int
+    buf_alpha_perf:   float
+    buf_alpha_real:   float
+    buf_real_bonus:   float
+    buf_alpha_random: float
 
     # Training loop
     warmup_n_designs:       int
@@ -135,9 +151,11 @@ class MLConfig:
     checkpoint_interval: int
 
     # Fields with defaults must come last
-    gen_constraint_weight: float = 0.0   # >0 enables differentiable constraint loss on x1_pred
     seed:             Optional[int] = None
     debug:            bool          = False   # print pixel-type counts for each generated design
+
+    # Feasibility check flags (which rules to enforce during ML sampling)
+    feas_cfg: FeasibilityCheckConfig = field(default_factory=FeasibilityCheckConfig)
 
     # Guidance mode
     guidance_mode:                     str   = "s_param"   # "s_param" or "score_based"
@@ -147,6 +165,27 @@ class MLConfig:
     # Layout-only warmup pretraining (feasible designs, no simulation, no guidance)
     warmup_n_random_feasible:           int  = 1000  # random feasible layouts, no simulation
     warmup_random_feasible_train_steps: int  = 50    # gen model train steps on these layouts
+
+    # World model rollout training for the generative model
+    # The gen model generates a pool; WM labels each sample (no real simulation).
+    # Infeasible samples receive a large penalty label.
+    # Runs n_rollout_steps gradient steps per iteration (designed to be > gen_train_steps).
+    gen_wm_rollout_enabled:            bool  = True
+    gen_wm_rollout_n_steps:            int   = 32     # gradient steps per iteration
+    gen_wm_rollout_pool_size:          int   = 128    # samples generated once per iteration
+    gen_wm_rollout_infeasible_penalty: float = 100.0  # penalty for infeasible designs
+    gen_wm_rollout_grad_clip:          float = 1.0
+
+    # Two-phase generative model gradient clipping (separate budgets per loss component)
+    gen_fm_grad_clip:  float = 1.0  # clip budget for flow-matching loss
+    gen_clf_grad_clip: float = 0.1  # clip budget for classifier guidance loss (tighter)
+
+    # Cross-attention spec conditioning (alternative to AdaGN)
+    gen_use_cross_attn: bool = False  # enable cross-attention conditioning
+    gen_seq_d_model:    int  = 128    # token embedding dimension
+    gen_ca_n_heads:     int  = 4      # attention heads in cross-attention blocks
+    # Classifier guidance warmup: ramp weight from 0 → clf_guidance_weight over N iters
+    clf_warmup_iters:  int   = 0
 
     # Filter specs stored as raw dicts (parsed to FilterStateSpec on demand)
     filter_specs_raw: List[dict] = field(default_factory=list)
@@ -183,28 +222,41 @@ class MLConfig:
             gen_t_dim          = int(gm.get("t_dim",          128)),
             gen_base_channels  = int(gm.get("base_channels",   64)),
             gen_n_steps        = int(gm.get("n_steps",         50)),
-            gen_guidance_scale    = float(gm.get("guidance_scale",    2.0)),
-            gen_p_uncond          = float(gm.get("p_uncond",          0.1)),
-            gen_lr                = float(gm.get("lr",                1e-4)),
-            gen_batch_size        = int(gm.get("batch_size",          32)),
-            gen_constraint_weight = float(gm.get("constraint_weight", 0.0)),
+            gen_guidance_scale = float(gm.get("guidance_scale", 2.0)),
+            gen_p_uncond       = float(gm.get("p_uncond",       0.1)),
+            gen_lr             = float(gm.get("lr",             1e-4)),
+            gen_batch_size     = int(gm.get("batch_size",       32)),
+            gen_fm_grad_clip   = float(gm.get("fm_grad_clip",   1.0)),
+            gen_clf_grad_clip  = float(gm.get("clf_grad_clip",  0.1)),
 
-            wm_n_members            = int(wm.get("n_members",            5)),
-            wm_lr                   = float(wm.get("lr",                  1e-4)),
-            wm_batch_size           = int(wm.get("batch_size",            32)),
-            wm_std_scale            = float(wm.get("std_scale",           3.0)),
-            wm_confidence_threshold       = float(wm.get("confidence_threshold",       0.7)),
-            wm_confidence_schedule_iters  = int(wm.get("confidence_schedule_iters",   200)),
-            wm_use_bagging                = bool(wm.get("use_bagging",                True)),
-            wm_correction_interval  = int(wm.get("correction_interval",  10)),
+            gen_use_cross_attn = bool(gm.get("use_cross_attn", False)),
+            gen_seq_d_model    = int(gm.get("seq_d_model",    128)),
+            gen_ca_n_heads     = int(gm.get("ca_n_heads",       4)),
 
-            buf_max_size          = int(rb.get("max_size",           10000)),
-            buf_alpha_recency     = float(rb.get("alpha_recency",      0.6)),
-            buf_alpha_real        = float(rb.get("alpha_real",         0.4)),
-            buf_real_bonus        = float(rb.get("real_bonus",         2.0)),
-            buf_decay_rate        = float(rb.get("decay_rate",         0.05)),
-            buf_infeasible_weight        = float(rb.get("infeasible_weight",        0.1)),
-            buf_infeasible_min_fraction  = float(rb.get("infeasible_min_fraction",  0.15)),
+            wm_lr                  = float(wm.get("lr",               1e-4)),
+            wm_batch_size          = int(wm.get("batch_size",          32)),
+            wm_std_scale           = float(wm.get("std_scale",         3.0)),
+            wm_var_threshold       = float(wm.get("var_threshold",     0.01)),
+            wm_correction_interval = int(wm.get("correction_interval", 10)),
+            wm_use_rnd             = bool(wm.get("use_rnd",            True)),
+            wm_rnd_threshold       = float(wm.get("rnd_threshold",     0.1)),
+            wm_rnd_lr              = float(wm.get("rnd_lr",            1e-4)),
+
+            clf_enabled                = bool(d.get("feasibility_classifier", {}).get("enabled",                True)),
+            clf_guidance_weight        = float(d.get("feasibility_classifier", {}).get("guidance_weight",        0.5)),
+            clf_sample_guidance_weight = float(d.get("feasibility_classifier", {}).get("sample_guidance_weight", 0.1)),
+            clf_train_every_n_iters    = int(d.get("feasibility_classifier", {}).get("train_every_n_iters",      5)),
+            clf_n_train_steps          = int(d.get("feasibility_classifier", {}).get("n_train_steps",            10)),
+            clf_lr                     = float(d.get("feasibility_classifier", {}).get("lr",                     1e-4)),
+            clf_min_store_size         = int(d.get("feasibility_classifier", {}).get("min_infeasible_store_size", 50)),
+            clf_max_store_size         = int(d.get("feasibility_classifier", {}).get("max_infeasible_store_size", 500)),
+            clf_warmup_iters           = int(d.get("feasibility_classifier", {}).get("warmup_iters",             0)),
+
+            buf_max_size     = int(rb.get("max_size",      10000)),
+            buf_alpha_perf   = float(rb.get("alpha_perf",   0.6)),
+            buf_alpha_real   = float(rb.get("alpha_real",   0.4)),
+            buf_real_bonus   = float(rb.get("real_bonus",   2.0)),
+            buf_alpha_random = float(rb.get("alpha_random", 0.2)),
 
             warmup_n_designs      = int(tr.get("warmup_n_designs",        100)),
             n_iterations          = int(tr.get("n_iterations",            500)),
@@ -229,6 +281,13 @@ class MLConfig:
             n_score_components                = int(d.get("guidance", {}).get("n_score_components",    4)),
             warmup_n_random_feasible          = int(tr.get("warmup_n_random_feasible",           1000)),
             warmup_random_feasible_train_steps = int(tr.get("warmup_random_feasible_train_steps",  50)),
+            feas_cfg = FeasibilityCheckConfig.from_dict(d.get("feasibility_checks", {})),
+
+            gen_wm_rollout_enabled            = bool(d.get("gen_wm_rollout", {}).get("enabled",             True)),
+            gen_wm_rollout_n_steps            = int(d.get("gen_wm_rollout", {}).get("n_rollout_steps",       32)),
+            gen_wm_rollout_pool_size          = int(d.get("gen_wm_rollout", {}).get("pool_size",            128)),
+            gen_wm_rollout_infeasible_penalty = float(d.get("gen_wm_rollout", {}).get("infeasible_penalty", 100.0)),
+            gen_wm_rollout_grad_clip          = float(d.get("gen_wm_rollout", {}).get("grad_clip",            1.0)),
         )
 
     @classmethod
@@ -302,48 +361,54 @@ class OnlineMLTrainer:
             p_uncond           = cfg.gen_p_uncond,
             guidance_mode      = cfg.guidance_mode,
             n_score_components = cfg.n_score_components,
+            use_cross_attn     = cfg.gen_use_cross_attn,
+            seq_d_model        = cfg.gen_seq_d_model,
+            ca_n_heads         = cfg.gen_ca_n_heads,
         ).to(self.device)
 
-        self.world_model = EnsembleWorldModel(
-            n_members   = cfg.wm_n_members,
-            img_h       = img_h,
-            img_w_total = img_w,
-            n_states    = cfg.n_states,
-            n_freq      = cfg.s_param_n_freq,
-            std_scale   = cfg.wm_std_scale,
-            use_bagging = cfg.wm_use_bagging,
+        self.world_model = WorldModel(
+            n_states  = cfg.n_states,
+            n_freq    = cfg.s_param_n_freq,
+            std_scale = cfg.wm_std_scale,
         ).to(self.device)
+
+        self.rnd_network = RNDNetwork().to(self.device) if cfg.wm_use_rnd else None
+
+        self.clf_model = (
+            FeasibilityClassifier().to(self.device)
+            if cfg.clf_enabled else None
+        )
 
         # Optimisers
         self.gen_opt = optim.Adam(self.gen_model.parameters(), lr=cfg.gen_lr)
         self.wm_opt  = optim.Adam(self.world_model.parameters(), lr=cfg.wm_lr)
-
-        # Replay buffer
-        self.buffer = ReplayBuffer(
-            max_size          = cfg.buf_max_size,
-            alpha_recency     = cfg.buf_alpha_recency,
-            alpha_real        = cfg.buf_alpha_real,
-            real_bonus        = cfg.buf_real_bonus,
-            decay_rate        = cfg.buf_decay_rate,
-            infeasible_weight = cfg.buf_infeasible_weight,
-            n_states          = cfg.n_states,
-            n_freq            = cfg.s_param_n_freq,
-            seed              = cfg.seed,
+        self.rnd_opt = (
+            optim.Adam(
+                [p for p in self.rnd_network.parameters() if p.requires_grad],
+                lr=cfg.wm_rnd_lr,
+            )
+            if self.rnd_network is not None else None
+        )
+        self.clf_opt = (
+            optim.Adam(self.clf_model.parameters(), lr=cfg.clf_lr)
+            if self.clf_model is not None else None
         )
 
-        # Differentiable constraint loss (optional — only built when weight > 0)
-        self._constraint_fn = None
-        if cfg.gen_constraint_weight > 0.0:
-            import functools
-            from ..utils.constraint_loss import combined_constraint_loss
-            self._constraint_fn = functools.partial(
-                combined_constraint_loss,
-                cols          = cfg.cols,
-                n_states      = cfg.n_states,
-                n_sw_min      = cfg.n_switches_min,
-                n_sw_max      = cfg.n_switches_max,
-                max_inductors = cfg.max_inductors,
-            )
+        # Replay buffer (feasible entries only)
+        self.buffer = ReplayBuffer(
+            max_size     = cfg.buf_max_size,
+            alpha_perf   = cfg.buf_alpha_perf,
+            alpha_real   = cfg.buf_alpha_real,
+            real_bonus   = cfg.buf_real_bonus,
+            alpha_random = cfg.buf_alpha_random,
+            n_states     = cfg.n_states,
+            n_freq       = cfg.s_param_n_freq,
+            seed         = cfg.seed,
+        )
+
+        # Rolling store for infeasible images (used by FeasibilityClassifier)
+        from collections import deque
+        self._infeasible_store: deque = deque(maxlen=cfg.clf_max_store_size)
 
         # Simulation engine — started once, shared across warmup, iter sims, correction
         from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine
@@ -377,6 +442,10 @@ class OnlineMLTrainer:
         # Global step counters for per-step TensorBoard loss logging
         self._global_gen_step: int = 0
         self._global_wm_step:  int = 0
+
+        # Pending async simulation state (submit now, collect next iteration)
+        self._pending_step2: Optional[dict] = None
+        self._pending_correction: Optional[dict] = None
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -441,6 +510,37 @@ class OnlineMLTrainer:
         elif warmup_ckpt.exists():
             print(f"[ML] Warmup checkpoint found — loading buffer and models, skipping warmup.")
             self._load_warmup_checkpoint(warmup_ckpt)
+        elif warmup_sim_dir.exists():
+            # No buffer checkpoint, but a warmup_sims folder exists — reload from it
+            # so we don't re-simulate designs we already have results for.
+            print(f"[ML] No warmup checkpoint but warmup_sims folder found — "
+                  f"reloading buffer from {warmup_sim_dir} ...")
+            n_warm = reload_warmup_from_sim_folder(
+                sim_dir     = warmup_sim_dir,
+                encoder     = self.encoder,
+                buffer      = self.buffer,
+                freq_points = self.freq_points,
+                specs       = self.specs,
+                n_states    = cfg.n_states,
+            )
+            if n_warm == 0:
+                print("[ML] No usable sims found in warmup_sims — running fresh warmup ...")
+                n_warm = run_warmup(
+                    cfg         = cfg,
+                    encoder     = self.encoder,
+                    buffer      = self.buffer,
+                    freq_points = self.freq_points,
+                    rng         = self.rng,
+                    output_dir  = self.output_dir,
+                    engine      = self.engine,
+                    specs       = self.specs,
+                )
+            else:
+                print(f"[ML] Loaded {n_warm} real designs from warmup_sims folder.")
+            if n_warm == 0:
+                print("[ML] WARNING: Warmup produced no real data — generative model "
+                      "will start from scratch.")
+            self._save_warmup_checkpoint(warmup_ckpt)
         else:
             n_warm = run_warmup(
                 cfg         = cfg,
@@ -479,36 +579,42 @@ class OnlineMLTrainer:
         for it in range(self._start_iter, cfg.n_iterations):
             iter_start = time.time()
 
-            # Step 1: Sample designs from generative model
+            # Collect simulation results submitted in the previous iteration.
+            # These calls block only if futures are not yet done (should be rare).
+            self._collect_step2_sims()
+            n_corrected = self._collect_correction_sims()
+
+            # Step 1: Sample designs; infeasible images go to classifier store
             feasible_designs, infeasible_images = self._step1_sample_designs(
                 n=cfg.n_gen_samples
             )
 
-            # Add infeasible designs to buffer with sentinel label (capped per iteration)
-            sentinel = make_infeasible_sentinel(cfg.n_states, cfg.s_param_n_freq)
-            for img in infeasible_images[:cfg.max_infeasible_per_iter]:
-                self.buffer.add(
-                    image       = img,
-                    s_params    = sentinel,
-                    is_real     = False,
-                    is_feasible = False,
-                    iteration   = it,
-                    confidence  = 0.0,
-                )
+            # Step 2: World model variance + RND split + SUBMIT sims (non-blocking)
+            n_sim, avg_variance, best_wm_cost = self._step2_evaluate(feasible_designs, it)
 
-            # Step 2: World model confidence split + simulation
-            n_sim, avg_wm_conf, best_wm_cost = self._step2_evaluate(feasible_designs, it)
-
-            # Step 3: Train generative model
+            # Step 3: Train generative model on real replay buffer data.
+            # Simulations run in background during Steps 3–5.
             gen_loss = self._step3_train_generative(it)
 
-            # Step 4: Train world model
+            # Step 3b: Train generative model via world model rollout.
+            # Generates a fresh sample pool, labels with WM (no real simulation),
+            # and runs more gradient steps than Step 3 to exploit cheap WM feedback.
+            gen_wm_loss = self._step3b_train_gen_wm_rollout(it)
+
+            # Step 4: Train world model + RND predictor
             wm_loss = self._step4_train_world_model()
 
-            # Step 5: Periodic correction
-            n_corrected = 0
+            # Classifier training (every N iters)
+            if (
+                self.clf_model is not None
+                and it % cfg.clf_train_every_n_iters == 0
+            ):
+                self._step_train_classifier()
+
+            # Step 5: Periodic correction — SUBMIT sims non-blockingly;
+            # results are collected at the start of the next iteration.
             if it > 0 and it % cfg.wm_correction_interval == 0:
-                n_corrected = self._step5_correction(it)
+                self._submit_correction_sims(it)
 
             # Checkpoint
             if it % cfg.checkpoint_interval == 0:
@@ -522,10 +628,11 @@ class OnlineMLTrainer:
             info = {
                 "iteration":      it,
                 "gen_loss":       gen_loss,
+                "gen_wm_loss":    gen_wm_loss,
                 "wm_loss":        wm_loss,
                 "n_feasible":     len(feasible_designs),
                 "n_infeasible":   len(infeasible_images),
-                "avg_wm_conf":    avg_wm_conf,
+                "avg_variance":   avg_variance,
                 "best_wm_cost":   best_wm_cost,
                 "best_sim_cost":  best_sim_cost_val,
                 "n_sim":          n_sim,
@@ -541,39 +648,23 @@ class OnlineMLTrainer:
             best_sim_str = f"{best_sim_cost_val:.4f}" if best_sim_cost_val is not None else "n/a"
             print(
                 f"[ML] iter {it:4d}/{cfg.n_iterations}  "
-                f"gen_loss={gen_loss:.4f}  wm_loss={wm_loss:.4f}  "
-                f"wm_conf={avg_wm_conf:.3f}  best_wm={best_wm_str}  best_sim={best_sim_str}  "
+                f"gen_loss={gen_loss:.4f}  gen_wm_loss={gen_wm_loss:.4f}  wm_loss={wm_loss:.4f}  "
+                f"var={avg_variance:.4f}  best_wm={best_wm_str}  best_sim={best_sim_str}  "
                 f"feasible={len(feasible_designs)}  sim={n_sim}  "
                 f"buf={len(self.buffer)}(real={self.buffer.n_real()})  "
                 f"{elapsed:.1f}s"
             )
+
+        # Drain any remaining pending simulations submitted in the last iteration
+        print("[ML] Draining pending simulations from final iteration ...")
+        self._collect_step2_sims()
+        self._collect_correction_sims()
 
         # Final checkpoint
         self._checkpoint(cfg.n_iterations)
         print(f"\n[ML] Training complete.  Best cost: {self._best_cost:.4f}")
         if self._tb_writer:
             self._tb_writer.close()
-
-    # ------------------------------------------------------------------
-    # Confidence threshold schedule
-    # ------------------------------------------------------------------
-
-    def _current_confidence_threshold(self, it: int) -> float:
-        """
-        Linear schedule: confidence threshold starts at 1.0 (iter 0) and
-        decreases to ``wm_confidence_threshold`` over
-        ``wm_confidence_schedule_iters`` iterations, then stays constant.
-
-        Starting at 1.0 means no design is ever treated as high-confidence
-        early in training, forcing more real simulations and better
-        initialisation of the world model before it is trusted.
-        """
-        target       = self.cfg.wm_confidence_threshold
-        sched_iters  = self.cfg.wm_confidence_schedule_iters
-        if sched_iters <= 0 or it >= sched_iters:
-            return target
-        frac = it / sched_iters           # 0 → 1 over the schedule window
-        return 1.0 - frac * (1.0 - target)  # 1.0 → target
 
     # ------------------------------------------------------------------
     # Step 1: Sample designs from generative model
@@ -601,16 +692,21 @@ class OnlineMLTrainer:
 
         # Single batch inference — no mode switching inside the loop
         self.gen_model.eval()
-        with torch.no_grad():
-            raw_imgs = self.gen_model.sample(
-                cond_input      = cond_input,
-                n_steps         = cfg.gen_n_steps,
-                guidance_scale  = cfg.gen_guidance_scale,
-            )  # (n_total, 1, H, W)
+        raw_imgs = self.gen_model.sample(
+            cond_input                 = cond_input,
+            n_steps                    = cfg.gen_n_steps,
+            guidance_scale             = cfg.gen_guidance_scale,
+            classifier                 = self.clf_model,
+            classifier_guidance_weight = cfg.clf_sample_guidance_weight if self.clf_model is not None else 0.0,
+        )  # (n_total, 1, H, W)
         self.gen_model.train()
 
         feasible_designs: List = []
         infeasible_images: List = []
+
+        # Diagnostic 1: per-type infeasibility counters
+        _fail = {"decode_error": 0, "switch_count": 0, "inductor_count": 0,
+                 "spacing": 0, "connectivity": 0, "state_distinct": 0, "other": 0}
 
         for i in range(n_total):
             img = raw_imgs[i]   # (1, H, W)
@@ -619,19 +715,20 @@ class OnlineMLTrainer:
                 design = None
                 try:
                     candidate = self.encoder.decode(img)
-                    if (
-                        is_feasible(
-                            candidate.matrix,
-                            cfg.n_switches,
-                            cfg.max_inductors,
-                            min_switches = cfg.n_switches_min,
-                            max_switches = cfg.n_switches_max,
-                        )
-                        and check_switch_states_distinct(candidate.switch_states)
-                    ):
+                    feasible, reason = check_design_feasibility(
+                        matrix         = candidate.matrix,
+                        switch_states  = candidate.switch_states,
+                        n_switches_min = cfg.n_switches_min,
+                        n_switches_max = cfg.n_switches_max,
+                        max_inductors  = cfg.max_inductors,
+                        feas_cfg       = cfg.feas_cfg,
+                    )
+                    if feasible:
                         design = candidate
+                    else:
+                        _fail[reason if reason in _fail else "other"] += 1
                 except Exception:
-                    pass
+                    _fail["decode_error"] += 1
 
                 if design is not None:
                     snapped_img = self.encoder.encode(design)
@@ -642,9 +739,24 @@ class OnlineMLTrainer:
                     if cfg.debug:
                         self._debug_pixel_counts_raw(i, img)
                     infeasible_images.append(img.cpu())
+                    self._infeasible_store.append(img.cpu())
             else:
-                # We have enough feasible designs; remaining images go to infeasible
-                infeasible_images.append(img.cpu())
+                # We have enough feasible designs; remaining images go to infeasible store
+                # infeasible_images.append(img.cpu())
+                # self._infeasible_store.append(img.cpu())
+                break
+
+        # Always log feasibility breakdown
+        n_fail = sum(_fail.values())
+        feas_pct = 100.0 * len(feasible_designs) / n_total if n_total else 0.0
+        print(
+            f"  [DBG-FEAS] n_gen={n_total}  feasible={len(feasible_designs)}"
+            f"({feas_pct:.0f}%)  "
+            f"sw={_fail['switch_count']}  ind={_fail['inductor_count']}  "
+            f"spacing={_fail['spacing']}  conn={_fail['connectivity']}  "
+            f"states={_fail['state_distinct']}  decode_err={_fail['decode_error']}  "
+            f"other={_fail['other']}"
+        )
 
         return feasible_designs, infeasible_images
 
@@ -700,16 +812,17 @@ class OnlineMLTrainer:
         current_iter: int,
     ) -> Tuple[int, float, Optional[float]]:
         """
-        Run world model confidence split.  High-confidence designs are
-        relabeled and added to buffer.  Low-confidence designs are sent to
-        the real simulator (up to n_sim_max per iteration).
+        Variance + RND split.
+
+        A design is sent to real simulation when:
+          mean(variance) > var_threshold  OR  rnd_score > rnd_threshold
+
+        All other feasible designs are relabeled with the world model prediction
+        and added to the replay buffer.
 
         Returns
         -------
-        (n_sim, avg_wm_conf, best_wm_cost)
-          n_sim        : number of real simulations run.
-          avg_wm_conf  : mean world-model confidence over all feasible designs (0.0 if none).
-          best_wm_cost : lowest WM-predicted cost this iteration (None if no feasible designs).
+        (n_sim, avg_variance, best_wm_cost)
         """
         if not feasible_designs:
             return 0, 0.0, None
@@ -718,10 +831,26 @@ class OnlineMLTrainer:
         images = torch.stack([img for _, img in feasible_designs], dim=0).to(self.device)
 
         self.world_model.eval()
-        mean_pred, conf_score = self.world_model.confidence(images)
+        with torch.no_grad():
+            mean_pred, variance = self.world_model.predict(images)
         self.world_model.train()
 
-        # Proxy costs from WM predictions (used for logging and per-iter plot)
+        # Per-design mean variance (scalar per sample)
+        mean_var = variance.mean(dim=(-1, -2))   # (N,)
+
+        # RND OOD scores
+        rnd_scores = torch.zeros(len(feasible_designs), device=self.device)
+        if self.rnd_network is not None:
+            with torch.no_grad():
+                rnd_scores = self.rnd_network.rnd_score(images)
+
+        # Trigger mask: needs simulation if variance OR rnd exceeds threshold
+        needs_sim = (
+            (mean_var > cfg.wm_var_threshold) |
+            (rnd_scores > cfg.wm_rnd_threshold)
+        )
+
+        # Proxy costs from WM predictions
         wm_costs = [
             compute_cost_from_tensor(mean_pred[i], self.freq_points, self.specs)
             for i in range(len(feasible_designs))
@@ -729,16 +858,13 @@ class OnlineMLTrainer:
 
         if cfg.debug:
             for i in range(len(feasible_designs)):
-                conf_label = (
-                    "HIGH" if conf_score[i].item() >= cfg.wm_confidence_threshold
-                    else "low"
-                )
+                trigger = "SIM" if needs_sim[i].item() else "WM"
                 print(
                     f"  [DBG] design {i:3d} WM_cost≈{wm_costs[i]:.4f}  "
-                    f"conf={conf_score[i].item():.3f}({conf_label})"
+                    f"var={mean_var[i].item():.5f}  rnd={rnd_scores[i].item():.5f}  [{trigger}]"
                 )
 
-        # Save S-param plots for the best and worst WM-predicted designs this iteration
+        # S-param plots for best and worst WM-predicted designs
         plot_iter_best(
             feasible_designs = feasible_designs,
             mean_pred        = mean_pred,
@@ -762,70 +888,62 @@ class OnlineMLTrainer:
             debug            = cfg.debug,
         )
 
-        conf_threshold = self._current_confidence_threshold(current_iter)
-
-        high_conf_idx = []
-        low_conf_idx  = []
-        for i, conf in enumerate(conf_score.tolist()):
-            if conf >= conf_threshold:
-                high_conf_idx.append(i)
-            else:
-                low_conf_idx.append(i)
-
-        # High-confidence → add to buffer with world model label + WM predicted cost
-        for i in high_conf_idx:
-            _, img = feasible_designs[i]
-            self.buffer.add(
-                image       = img,
-                s_params    = mean_pred[i].cpu(),
-                is_real     = False,
-                is_feasible = True,
-                iteration   = current_iter,
-                confidence  = conf_score[i].item(),
-                score       = wm_costs[i],
-            )
-
-        # Low-confidence → simulate (up to n_sim_max)
-        to_simulate = [feasible_designs[i] for i in low_conf_idx[:cfg.n_sim_max]]
-        n_sim, best_sim_s_params, best_sim_cost = self._simulate_and_add(
-            to_simulate, current_iter, tag=f"iter{current_iter}"
+        # Uncertainty plot (variance + RND per design)
+        from ..utils.plot_utils import plot_uncertainty_summary
+        plot_uncertainty_summary(
+            variance_per_design = mean_var.tolist(),
+            rnd_score_per_design = rnd_scores.tolist(),
+            sim_mask            = needs_sim.tolist(),
+            var_threshold       = cfg.wm_var_threshold,
+            rnd_threshold       = cfg.wm_rnd_threshold,
+            iteration           = current_iter,
+            output_dir          = self.output_dir,
+            writer              = self._tb_writer,
         )
 
-        # Plot best simulated design if any simulation succeeded
-        if best_sim_s_params is not None:
-            plot_iter_best_sim(
-                s_params     = best_sim_s_params,
-                current_iter = current_iter,
-                freq_points  = self.freq_points,
-                target_s     = self.target_s,
-                output_dir   = self.output_dir,
-                cost         = best_sim_cost,
-                tb_writer    = self._tb_writer,
-                debug        = cfg.debug,
-            )
+        to_simulate_idx = needs_sim.nonzero(as_tuple=True)[0].tolist()
 
-        avg_wm_conf  = conf_score.mean().item()
+        # WM-labeled designs (low uncertainty) are no longer stored in the buffer.
+        # World model feedback is instead used in _step3b_train_gen_wm_rollout, which
+        # generates a fresh batch each iteration and trains the gen model directly
+        # without polluting the buffer with imaginary (is_real=False) data.
+
+        # Simulation-triggered designs (cap at n_sim_max) — submitted non-blockingly;
+        # results are collected at the start of the next iteration.
+        to_simulate = [feasible_designs[i] for i in to_simulate_idx[:cfg.n_sim_max]]
+        n_sim = self._submit_step2_sims(to_simulate, current_iter, tag=f"iter{current_iter}")
+
+        # TensorBoard uncertainty scalars
+        if self._tb_writer is not None:
+            self._tb_writer.add_scalar("uncertainty/mean_variance",   mean_var.mean().item(),    current_iter)
+            self._tb_writer.add_scalar("uncertainty/max_variance",    mean_var.max().item(),     current_iter)
+            self._tb_writer.add_scalar("uncertainty/mean_rnd_score",  rnd_scores.mean().item(),  current_iter)
+            self._tb_writer.add_scalar("uncertainty/max_rnd_score",   rnd_scores.max().item(),   current_iter)
+            frac_sim = needs_sim.float().mean().item()
+            self._tb_writer.add_scalar("uncertainty/frac_sim_triggered", frac_sim,               current_iter)
+
+        avg_variance = mean_var.mean().item()
         best_wm_cost = min(wm_costs) if wm_costs else None
-        return n_sim, avg_wm_conf, best_wm_cost
+        return n_sim, avg_variance, best_wm_cost
 
-    def _simulate_and_add(
+    def _submit_step2_sims(
         self,
         design_img_pairs: List,
         current_iter: int,
         tag: str,
-    ) -> Tuple[int, Optional[torch.Tensor], Optional[float]]:
+    ) -> int:
         """
-        Simulate a batch of designs and add real results to buffer.
+        Submit a batch of designs to simulation non-blockingly.
+
+        Stores futures + metadata in ``self._pending_step2`` for collection at
+        the start of the next iteration via ``_collect_step2_sims()``.
 
         Returns
         -------
-        n_ok              : number of successful simulations.
-        best_sim_s_params : (n_states, n_freq) S-param tensor for the best design,
-                            or None if no simulation succeeded.
-        best_sim_cost     : cost of the best design, or None if no simulation succeeded.
+        n_submitted : number of simulations submitted.
         """
         if not design_img_pairs:
-            return 0, None, None
+            return 0
 
         sim_dir   = self.output_dir / "iter_sims" / tag
         overrides = []
@@ -836,20 +954,61 @@ class OnlineMLTrainer:
                 "project":   {"parent_output_dir": str(sim_dir / f"cand{i:04d}")},
             })
 
-        n_total = len(overrides)
-        print(f"  [ML] Sending {n_total} sample(s) to simulation ...")
-        results = self.engine.run_batch(overrides)
+        futures = [self.engine.submit(ov) for ov in overrides]
+        self._pending_step2 = {
+            "futures":          futures,
+            "design_img_pairs": design_img_pairs,
+            "current_iter":     current_iter,
+            "tag":              tag,
+        }
+        print(f"  [ML] Submitted {len(futures)} sample(s) to simulation (non-blocking).")
+        return len(futures)
+
+    def _collect_step2_sims(
+        self,
+    ) -> Tuple[int, Optional[torch.Tensor], Optional[float], Optional[torch.Tensor]]:
+        """
+        Collect simulation results submitted by ``_submit_step2_sims()``.
+
+        Called at the start of each iteration to gather results from the
+        previous iteration's submissions.  Blocks only if futures are not yet
+        done (should be rare since training ran in the meantime).
+
+        Returns
+        -------
+        n_ok              : number of successful simulations.
+        best_sim_s_params : (n_states, n_freq) S-param tensor for the best design,
+                            or None if no simulation succeeded.
+        best_sim_cost     : cost of the best design, or None if no simulation succeeded.
+        best_sim_image    : (1, rows, cols+n_states) encoded image of the best design,
+                            or None if no simulation succeeded.
+        """
+        if self._pending_step2 is None:
+            return 0, None, None, None
+
+        pending           = self._pending_step2
+        futures           = pending["futures"]
+        design_img_pairs  = pending["design_img_pairs"]
+        current_iter      = pending["current_iter"]
+        tag               = pending["tag"]
+
+        not_done = sum(1 for f in futures if not f.done())
+        if not_done:
+            print(f"  [ML] Waiting for {not_done} pending simulation(s) from iter {current_iter} ...")
+        results = [f.result() for f in futures]
+        self._pending_step2 = None
 
         n_ok              = 0
         best_sim_s_params = None
         best_sim_cost     = None
+        best_sim_image    = None
+        n_total           = len(results)
 
         for (design, img), result in zip(design_img_pairs, results):
             s_params = result_to_s_param_tensor(result, self.freq_points, self.cfg.n_states)
             if s_params is None:
                 continue
 
-            # Track best cost across all iterations
             cost = compute_total_cost(result.s_param_files, self.specs)
             if cost < self._best_cost:
                 prev_best = self._best_cost
@@ -861,13 +1020,12 @@ class OnlineMLTrainer:
                     f"  (iter {current_iter}, tag={tag})"
                 )
 
-            # Update per-region best scores for score-based guidance
             self._update_best_scores(s_params)
 
-            # Track best design in this simulation batch
             if best_sim_cost is None or cost < best_sim_cost:
                 best_sim_cost     = cost
                 best_sim_s_params = s_params
+                best_sim_image    = img
 
             self.buffer.add(
                 image       = img,
@@ -880,8 +1038,22 @@ class OnlineMLTrainer:
             )
             n_ok += 1
 
-        print(f"  [ML] Simulation done. {n_ok}/{n_total} succeeded.")
-        return n_ok, best_sim_s_params, best_sim_cost
+        print(f"  [ML] Simulation collected (iter {current_iter}). {n_ok}/{n_total} succeeded.")
+
+        if best_sim_s_params is not None:
+            plot_iter_best_sim(
+                s_params     = best_sim_s_params,
+                current_iter = current_iter,
+                freq_points  = self.freq_points,
+                target_s     = self.target_s,
+                output_dir   = self.output_dir,
+                cost         = best_sim_cost,
+                design_image = best_sim_image,
+                tb_writer    = self._tb_writer,
+                debug        = self.cfg.debug,
+            )
+
+        return n_ok, best_sim_s_params, best_sim_cost, best_sim_image
 
     # ------------------------------------------------------------------
     # Step 3: Train generative model
@@ -897,26 +1069,50 @@ class OnlineMLTrainer:
             entries = self.buffer.sample_for_generative(
                 cfg.gen_batch_size,
                 current_iter,
-                min_infeasible_fraction=cfg.buf_infeasible_min_fraction,
             )
             if not entries:
                 break
 
             # Count sample types for diagnostics
-            n_real_samples       = sum(1 for e in entries if e.is_real and e.is_feasible)
-            n_wm_samples         = sum(1 for e in entries if not e.is_real and e.is_feasible)
-            n_infeasible_samples = sum(1 for e in entries if not e.is_feasible)
-            print(
-                f"  [DBG] gen step: real={n_real_samples}  "
-                f"wm={n_wm_samples}  infeasible={n_infeasible_samples}"
-            )
+            n_real_samples = sum(1 for e in entries if e.is_real)
+            n_wm_samples   = sum(1 for e in entries if not e.is_real)
+            if cfg.debug:
+                print(f"  [DBG] gen step: real={n_real_samples}  wm={n_wm_samples}")
 
             images   = torch.stack([e.image    for e in entries]).to(self.device)
             s_params = torch.stack([e.s_params for e in entries]).to(self.device)
 
-            # Conditioning: use score tensors in score_based mode, s_params otherwise
+            # Re-evaluate world-model-labeled entries using the *current* world model.
+            # WM predictions in the buffer may be stale (recorded when the WM was less
+            # accurate).  Running a fresh inference replaces those stale labels with the
+            # best available prediction without modifying the buffer.
+            wm_idx = [i for i, e in enumerate(entries) if not e.is_real]
+            if wm_idx and self.world_model is not None:
+                wm_images = images[wm_idx]
+                self.world_model.eval()
+                with torch.no_grad():
+                    mean_fresh, _ = self.world_model.predict(wm_images)
+                self.world_model.train()
+                s_params = s_params.clone()
+                s_params[wm_idx] = mean_fresh
+
+            # Conditioning: use score tensors in score_based mode, s_params otherwise.
+            # In score_based mode, scores are computed from the (possibly refreshed)
+            # s_params tensor so WM re-evaluations propagate to the conditioning.
             if cfg.guidance_mode == "score_based":
-                cond_input = self._get_score_cond_from_entries(entries).to(self.device)
+                cond_input = self._get_score_cond_from_s_params(
+                    entries, s_params
+                ).to(self.device)
+                # Diagnostic 2: log training conditioning range vs. inference target
+                if n_steps == 0:  # once per outer iteration (first train step only)
+                    cond_mean = cond_input.mean(dim=-1)  # (B, n_states)
+                    cond_min  = cond_mean.min().item()
+                    cond_max  = cond_mean.max().item()
+                    cond_avg  = cond_mean.mean().item()
+                    print(
+                        f"  [DBG-COND] training cond range: "
+                        f"min={cond_min:.3f}  mean={cond_avg:.3f}  max={cond_max:.3f}"
+                    )
             else:
                 cond_input = s_params
 
@@ -942,35 +1138,291 @@ class OnlineMLTrainer:
                 ]
             weights = torch.tensor(raw_w, dtype=torch.float32)
 
+            # Diagnostic 3: weight effective sample size
+            if n_steps == 0:  # once per outer iteration
+                w_np  = weights.numpy()
+                w_sum = w_np.sum()
+                eff_n = (w_sum ** 2) / (w_np ** 2).sum() if w_sum > 0 else 0.0
+                print(
+                    f"  [DBG-WEIGHT] max_w={w_np.max():.2f}  min_w={w_np.min():.4f}"
+                    f"  eff_n={eff_n:.1f}/{len(w_np)}"
+                )
+
             self.gen_opt.zero_grad()
-            total_loss, fm_loss, c_loss = self.gen_model.train_step(
+            _, fm_loss, clf_loss = self.gen_model.train_step(
                 images, cond_input,
-                weights           = weights,
-                constraint_fn     = self._constraint_fn,
-                constraint_weight = cfg.gen_constraint_weight,
+                weights            = weights,
+                classifier         = self.clf_model,
+                classifier_weight  = cfg.clf_guidance_weight if self.clf_model is not None else 0.0,
             )
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.gen_model.parameters(), 1.0)
+
+            # Linearly ramp up clf contribution to avoid early-training domination
+            effective_clf_weight = cfg.clf_guidance_weight * min(
+                1.0, current_iter / max(cfg.clf_warmup_iters, 1)
+            )
+
+            use_clf = (
+                self.clf_model is not None
+                and effective_clf_weight > 0.0
+                and clf_loss.item() > 0.0
+            )
+
+            # Phase 1: FM gradients — keep graph alive only if clf pass will follow
+            fm_loss.backward(retain_graph=use_clf)
+            torch.nn.utils.clip_grad_norm_(self.gen_model.parameters(), cfg.gen_fm_grad_clip)
+
+            if use_clf:
+                # Save FM grads, then compute clf grads with a separate, tighter budget
+                fm_grads = {
+                    n: p.grad.clone()
+                    for n, p in self.gen_model.named_parameters()
+                    if p.grad is not None
+                }
+                self.gen_opt.zero_grad()
+                # Phase 2: clf gradients
+                (effective_clf_weight * clf_loss).backward()
+                torch.nn.utils.clip_grad_norm_(self.gen_model.parameters(), cfg.gen_clf_grad_clip)
+                # Merge: restore FM grads on top of the clipped clf grads
+                for n, p in self.gen_model.named_parameters():
+                    if n in fm_grads:
+                        p.grad = (p.grad + fm_grads[n]) if p.grad is not None else fm_grads[n]
+
             self.gen_opt.step()
+
+            # Reconstruct total loss scalar for logging (no backward)
+            total_loss_val = fm_loss.item() + cfg.clf_guidance_weight * clf_loss.item()
 
             # Per-step TensorBoard logging
             if self._tb_writer is not None:
                 self._tb_writer.add_scalar(
-                    "loss/gen_model_step", total_loss.item(), self._global_gen_step
+                    "loss/gen_model_step", total_loss_val, self._global_gen_step
                 )
                 self._tb_writer.add_scalar(
                     "loss/gen_fm_step", fm_loss.item(), self._global_gen_step
                 )
-                if cfg.gen_constraint_weight > 0.0:
+                if self.clf_model is not None:
                     self._tb_writer.add_scalar(
-                        "loss/gen_constraint_step", c_loss.item(), self._global_gen_step
+                        "loss/gen_clf_step", clf_loss.item(), self._global_gen_step
+                    )
+                    self._tb_writer.add_scalar(
+                        "train/effective_clf_weight", effective_clf_weight, self._global_gen_step
                     )
             self._global_gen_step += 1
 
-            loss_accum += total_loss.item()
+            loss_accum += total_loss_val
             n_steps    += 1
 
         return loss_accum / max(n_steps, 1)
+
+    # ------------------------------------------------------------------
+    # Step 3b: Train generative model via world model rollout
+    # ------------------------------------------------------------------
+
+    def _step3b_train_gen_wm_rollout(self, current_iter: int) -> float:
+        """
+        Closed-loop generative model training using world model feedback.
+
+        Algorithm (one call per training iteration):
+          1. Generate a pool of ``gen_wm_rollout_pool_size`` images from the gen
+             model in a single ODE pass (no gradient).
+          2. Decode each image; check design feasibility.
+             - Feasible designs  → world model predicts S-params.
+             - Infeasible designs → assign large penalty labels.
+          3. Run ``gen_wm_rollout_n_steps`` gradient steps on the gen model
+             using random mini-batches (size = gen_batch_size) drawn from the
+             labeled pool.  No entries are added to the replay buffer.
+
+        Because no real simulation is involved, this step is cheap and can run
+        many more gradient steps than the real-sample-based Step 3.
+
+        Returns the mean flow-matching loss over all rollout gradient steps.
+        """
+        cfg = self.cfg
+        if not cfg.gen_wm_rollout_enabled:
+            return 0.0
+
+        pool_size = cfg.gen_wm_rollout_pool_size
+        penalty   = cfg.gen_wm_rollout_infeasible_penalty
+
+        # ------------------------------------------------------------------
+        # 1. Generate a fresh pool in a single ODE pass (no grad)
+        # ------------------------------------------------------------------
+        cond_input = self._get_guidance_cond(pool_size)
+        self.gen_model.eval()
+        with torch.no_grad():
+            raw_imgs = self.gen_model.sample(
+                cond_input                 = cond_input,
+                n_steps                    = cfg.gen_n_steps,
+                guidance_scale             = cfg.gen_guidance_scale,
+                classifier                 = self.clf_model,
+                classifier_guidance_weight = (
+                    cfg.clf_sample_guidance_weight if self.clf_model is not None else 0.0
+                ),
+            )  # (pool_size, 1, H, W)
+        self.gen_model.train()
+
+        # ------------------------------------------------------------------
+        # 2. Decode + feasibility check; collect feasible indices
+        # ------------------------------------------------------------------
+        decoded_imgs: List[torch.Tensor] = []
+        feasible_mask: List[bool]         = []
+        feasible_indices: List[int]       = []
+
+        for i in range(pool_size):
+            img    = raw_imgs[i]   # (1, H, W)
+            is_ok  = False
+            try:
+                candidate = self.encoder.decode(img)
+                ok, _     = check_design_feasibility(
+                    matrix         = candidate.matrix,
+                    switch_states  = candidate.switch_states,
+                    n_switches_min = cfg.n_switches_min,
+                    n_switches_max = cfg.n_switches_max,
+                    max_inductors  = cfg.max_inductors,
+                    feas_cfg       = cfg.feas_cfg,
+                )
+                if ok:
+                    is_ok = True
+                    img   = self.encoder.encode(candidate)  # snapped version
+            except Exception:
+                pass
+            decoded_imgs.append(img.to(self.device))
+            feasible_mask.append(is_ok)
+            if is_ok:
+                feasible_indices.append(i)
+
+        n_feasible   = len(feasible_indices)
+        feas_pct     = 100.0 * n_feasible / pool_size if pool_size else 0.0
+        pool_images  = torch.stack(decoded_imgs, dim=0)   # (pool_size, 1, H, W)
+
+        # ------------------------------------------------------------------
+        # 3. World model labeling
+        # ------------------------------------------------------------------
+        # s_params_pool : (pool_size, n_states, n_freq) — WM pred or penalty
+        s_params_pool = torch.zeros(
+            pool_size, cfg.n_states, cfg.s_param_n_freq,
+            dtype=torch.float32, device=self.device,
+        )
+
+        if feasible_indices:
+            feas_imgs = pool_images[feasible_indices]   # (n_feas, 1, H, W)
+            self.world_model.eval()
+            with torch.no_grad():
+                wm_preds, _ = self.world_model.predict(feas_imgs)   # (n_feas, S, F)
+            self.world_model.train()
+            for k, idx in enumerate(feasible_indices):
+                s_params_pool[idx] = wm_preds[k]
+
+        # Infeasible indices → fill with penalty labels
+        infeasible_indices = [i for i in range(pool_size) if not feasible_mask[i]]
+        if infeasible_indices:
+            if cfg.guidance_mode == "score_based":
+                # penalty is a large cost → fill s_params with a large positive value
+                # (compute_score_tensor will map this to large penalty scores)
+                fill_val = penalty
+            else:
+                # s_param mode: large negative dB = terrible passband insertion loss
+                fill_val = -penalty
+            s_params_pool[infeasible_indices] = fill_val
+
+        # Build conditioning tensor for the whole pool
+        if cfg.guidance_mode == "score_based":
+            cond_pool_rows = []
+            infeasible_score = torch.full(
+                (cfg.n_states, cfg.n_score_components),
+                penalty,
+                dtype=torch.float32,
+                device=self.device,
+            )
+            for i in range(pool_size):
+                if feasible_mask[i]:
+                    cond_pool_rows.append(
+                        compute_score_tensor(
+                            s_params_pool[i].cpu(), self.freq_points, self.specs
+                        ).to(self.device)
+                    )
+                else:
+                    cond_pool_rows.append(infeasible_score)
+            cond_pool = torch.stack(cond_pool_rows, dim=0)  # (pool_size, S, n_score_components)
+        else:
+            cond_pool = s_params_pool   # (pool_size, S, F)
+
+        # ------------------------------------------------------------------
+        # 4. Multiple gradient steps using mini-batches from the labeled pool
+        # ------------------------------------------------------------------
+        B           = min(cfg.gen_batch_size, pool_size)
+        loss_accum  = 0.0
+        n_steps     = 0
+
+        self.gen_model.train()
+        for _ in range(cfg.gen_wm_rollout_n_steps):
+            perm  = torch.randperm(pool_size, device=self.device)[:B]
+            imgs  = pool_images[perm]   # (B, 1, H, W)
+            conds = cond_pool[perm]     # (B, S, ...)
+
+            effective_clf_weight = cfg.clf_guidance_weight * min(
+                1.0, current_iter / max(cfg.clf_warmup_iters, 1)
+            )
+
+            self.gen_opt.zero_grad()
+            _, fm_loss, clf_loss = self.gen_model.train_step(
+                imgs, conds,
+                classifier        = self.clf_model,
+                classifier_weight = (
+                    cfg.clf_guidance_weight if self.clf_model is not None else 0.0
+                ),
+            )
+
+            use_clf = (
+                self.clf_model is not None
+                and effective_clf_weight > 0.0
+                and clf_loss.item() > 0.0
+            )
+
+            fm_loss.backward(retain_graph=use_clf)
+            torch.nn.utils.clip_grad_norm_(
+                self.gen_model.parameters(), cfg.gen_wm_rollout_grad_clip
+            )
+
+            if use_clf:
+                fm_grads = {
+                    n: p.grad.clone()
+                    for n, p in self.gen_model.named_parameters()
+                    if p.grad is not None
+                }
+                self.gen_opt.zero_grad()
+                (effective_clf_weight * clf_loss).backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.gen_model.parameters(), cfg.gen_clf_grad_clip
+                )
+                for n, p in self.gen_model.named_parameters():
+                    if n in fm_grads:
+                        p.grad = (
+                            p.grad + fm_grads[n]
+                            if p.grad is not None else fm_grads[n]
+                        )
+
+            self.gen_opt.step()
+
+            total_loss_val = fm_loss.item() + (
+                effective_clf_weight * clf_loss.item() if use_clf else 0.0
+            )
+
+            if self._tb_writer is not None:
+                self._tb_writer.add_scalar(
+                    "loss/gen_wm_rollout_step", total_loss_val, self._global_gen_step
+                )
+            self._global_gen_step += 1
+
+            loss_accum += total_loss_val
+            n_steps    += 1
+
+        avg_loss = loss_accum / max(n_steps, 1)
+        print(
+            f"  [WM-Rollout] steps={n_steps}  loss={avg_loss:.4f}  "
+            f"feasible={n_feasible}/{pool_size}({feas_pct:.0f}%)"
+        )
+        return avg_loss
 
     # ------------------------------------------------------------------
     # Step 4: Train world model
@@ -990,16 +1442,40 @@ class OnlineMLTrainer:
             images   = torch.stack([e.image    for e in entries]).to(self.device)
             s_params = torch.stack([e.s_params for e in entries]).to(self.device)
 
+            # World model NLL loss
             self.wm_opt.zero_grad()
             loss = self.world_model.train_step(images, s_params)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.world_model.parameters(), 1.0)
             self.wm_opt.step()
 
+            # RND predictor update (on the same batch of real images)
+            if self.rnd_network is not None and self.rnd_opt is not None:
+                self.rnd_opt.zero_grad()
+                rnd_loss = self.rnd_network.train_step(images.detach())
+                rnd_loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    [p for p in self.rnd_network.parameters() if p.requires_grad], 1.0
+                )
+                self.rnd_opt.step()
+
+            # Prediction error metrics (separate no-grad forward pass on the same batch)
+            with torch.no_grad():
+                mean_pred, _ = self.world_model.predict(images)
+                err      = mean_pred - s_params                          # (B, S, F)
+                mae      = err.abs().mean().item()
+                rmse     = err.pow(2).mean().sqrt().item()
+
             # Per-step TensorBoard logging
             if self._tb_writer is not None:
                 self._tb_writer.add_scalar(
                     "loss/world_model_step", loss.item(), self._global_wm_step
+                )
+                self._tb_writer.add_scalar(
+                    "world_model/mae_step", mae, self._global_wm_step
+                )
+                self._tb_writer.add_scalar(
+                    "world_model/rmse_step", rmse, self._global_wm_step
                 )
             self._global_wm_step += 1
 
@@ -1009,36 +1485,109 @@ class OnlineMLTrainer:
         return total_loss / max(n_steps, 1)
 
     # ------------------------------------------------------------------
-    # Step 5: Correction — re-simulate high-confidence entries
+    # Classifier training step
     # ------------------------------------------------------------------
 
-    def _step5_correction(self, current_iter: int) -> int:
+    def _step_train_classifier(self) -> None:
+        """
+        Train FeasibilityClassifier on feasible buffer entries (label=1)
+        vs. infeasible images from _infeasible_store (label=0).
+
+        Skipped if either pool is too small.
+        """
+        cfg = self.cfg
+        if self.clf_model is None or self.clf_opt is None:
+            return
+        if len(self._infeasible_store) < cfg.clf_min_store_size:
+            return
+
+        half = cfg.gen_batch_size // 2
+        feasible_entries = self.buffer.sample_for_world_model(half)
+        if not feasible_entries:
+            return
+
+        infeasible_imgs = list(self._infeasible_store)
+        if len(infeasible_imgs) > half:
+            infeasible_imgs = self._infeasible_store._rng_sample(half) if hasattr(
+                self._infeasible_store, '_rng_sample') else infeasible_imgs[-half:]
+
+        feasible_x   = torch.stack([e.image for e in feasible_entries]).to(self.device)
+        infeasible_x = torch.stack(infeasible_imgs).to(self.device)
+
+        self.clf_model.train()
+        for _ in range(cfg.clf_n_train_steps):
+            self.clf_opt.zero_grad()
+            loss = self.clf_model.train_step(feasible_x, infeasible_x)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.clf_model.parameters(), 1.0)
+            self.clf_opt.step()
+
+        if self._tb_writer is not None:
+            self._tb_writer.add_scalar("loss/clf_step", loss.item(), self._global_wm_step)
+
+        # Classifier accuracy metrics (computed on the last training batch)
+        self.clf_model.eval()
+        with torch.no_grad():
+            prob_f = self.clf_model.classify(feasible_x)    # (N,) — label=1
+            prob_i = self.clf_model.classify(infeasible_x)  # (M,) — label=0
+            pred_f = (prob_f > 0.5).float()
+            pred_i = (prob_i > 0.5).float()
+
+            tp = pred_f.sum().item()
+            tn = (1.0 - pred_i).sum().item()
+            fp = pred_i.sum().item()           # infeasible predicted as feasible
+            fn = (1.0 - pred_f).sum().item()   # feasible predicted as infeasible
+
+            total     = pred_f.numel() + pred_i.numel()
+            accuracy  = (tp + tn) / total if total > 0 else 0.0
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall    = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+
+        self.clf_model.train()
+
+        if self._tb_writer is not None:
+            step = self._global_wm_step
+            self._tb_writer.add_scalar("classifier/accuracy",  accuracy,  step)
+            self._tb_writer.add_scalar("classifier/precision", precision, step)
+            self._tb_writer.add_scalar("classifier/recall",    recall,    step)
+
+    # ------------------------------------------------------------------
+    # Step 5: Correction — re-simulate world-model-labeled entries
+    # ------------------------------------------------------------------
+
+    def _submit_correction_sims(self, current_iter: int) -> None:
+        """
+        Submit correction simulations non-blockingly.
+
+        Samples high-confidence WM-labeled buffer entries, decodes them, and
+        submits re-simulations to the engine.  Futures + metadata are stored in
+        ``self._pending_correction`` for collection at the start of the next
+        iteration via ``_collect_correction_sims()``.
+        """
         cfg = self.cfg
         entries = self.buffer.sample_for_correction(
             n                    = cfg.wm_correction_n,
-            confidence_threshold = self._current_confidence_threshold(current_iter),
+            confidence_threshold = 0.0,
         )
         if not entries:
-            return 0
+            return
 
-        # Get WM predictions for selected entries BEFORE re-simulation
+        # Get WM predictions BEFORE re-simulation (for later comparison plot)
         self.world_model.eval()
         wm_preds_before: List[torch.Tensor] = []
         with torch.no_grad():
             try:
                 entry_images = torch.stack([e.image for e in entries]).to(self.device)
                 mean_before, _ = self.world_model.confidence(entry_images)
-                # mean_before: (n_entries, n_states, n_freq)
                 for k in range(mean_before.shape[0]):
                     wm_preds_before.append(mean_before[k].cpu())
             except Exception:
-                wm_preds_before = [e.s_params for e in entries]  # fallback: stored WM label
+                wm_preds_before = [e.s_params for e in entries]
         self.world_model.train()
 
         sim_dir   = self.output_dir / "correction" / f"iter{current_iter}"
         overrides = []
         for i, entry in enumerate(entries):
-            # Decode image back to design for simulation override
             try:
                 design = self.encoder.decode(entry.image)
             except Exception:
@@ -1054,17 +1603,49 @@ class OnlineMLTrainer:
             ))
 
         if not overrides:
+            return
+
+        futures = [self.engine.submit(o[2]) for o in overrides]
+        self._pending_correction = {
+            "futures":        futures,
+            "overrides":      overrides,
+            "entries":        entries,
+            "wm_preds_before": wm_preds_before,
+            "current_iter":   current_iter,
+        }
+        print(f"  [ML] Submitted {len(futures)} correction sim(s) (non-blocking).")
+
+    def _collect_correction_sims(self) -> int:
+        """
+        Collect correction simulation results submitted by ``_submit_correction_sims()``.
+
+        Called at the start of each iteration.  Updates buffer labels, plots
+        WM-vs-sim comparison, and fine-tunes the world model on corrected data.
+
+        Returns
+        -------
+        n_corrected : number of successfully collected correction simulations.
+        """
+        if self._pending_correction is None:
             return 0
 
-        sim_overrides = [o[2] for o in overrides]
-        n_correction_total = len(sim_overrides)
-        print(f"  [ML] Sending {n_correction_total} sample(s) to simulation (correction) ...")
-        results = self.engine.run_batch(sim_overrides)
+        pending         = self._pending_correction
+        futures         = pending["futures"]
+        overrides       = pending["overrides"]
+        entries         = pending["entries"]
+        wm_preds_before = pending["wm_preds_before"]
+        current_iter    = pending["current_iter"]
+        cfg             = self.cfg
 
-        # Fine-tune world model on corrected data
+        not_done = sum(1 for f in futures if not f.done())
+        if not_done:
+            print(f"  [ML] Waiting for {not_done} pending correction sim(s) from iter {current_iter} ...")
+        results = [f.result() for f in futures]
+        self._pending_correction = None
+
+        n_correction_total = len(results)
         correction_images   = []
         correction_s_params = []
-        # Collect (wm_pred_before, sim_s_params, entry_id) for plotting
         plot_wm_list:  List[torch.Tensor] = []
         plot_sim_list: List[torch.Tensor] = []
         plot_eids:     List[int]          = []
@@ -1075,7 +1656,6 @@ class OnlineMLTrainer:
             if s_params is None:
                 continue
 
-            # Compute real cost and update buffer entry (label + score)
             cost = compute_total_cost(result.s_param_files, self.specs)
             self.buffer.update_entry(
                 entry_id   = entry_id,
@@ -1088,7 +1668,6 @@ class OnlineMLTrainer:
             correction_images.append(entries[i].image)
             correction_s_params.append(s_params)
 
-            # Collect for WM-vs-sim plot
             if i < len(wm_preds_before):
                 plot_wm_list.append(wm_preds_before[i])
                 plot_sim_list.append(s_params)
@@ -1096,9 +1675,8 @@ class OnlineMLTrainer:
 
             n_corrected += 1
 
-        print(f"  [ML] Simulation done. {n_corrected}/{n_correction_total} succeeded (correction).")
+        print(f"  [ML] Correction collected (iter {current_iter}). {n_corrected}/{n_correction_total} succeeded.")
 
-        # Plot WM predictions vs real simulation for corrected entries
         if plot_wm_list:
             plot_wm_vs_sim(
                 wm_preds     = plot_wm_list,
@@ -1112,14 +1690,12 @@ class OnlineMLTrainer:
                 debug        = cfg.debug,
             )
 
-        # Include best known real designs so the world model does not forget
-        # high-performing designs that were scored by the real simulator.
+        # Include best known real designs so the world model does not forget them
         best_real_entries = self.buffer.sample_best_real(n=cfg.wm_correction_n)
         for entry in best_real_entries:
             correction_images.append(entry.image)
             correction_s_params.append(entry.s_params)
 
-        # Fine-tune world model on corrected + best-real entries
         if correction_images:
             imgs    = torch.stack(correction_images).to(self.device)
             sparams = torch.stack(correction_s_params).to(self.device)
@@ -1258,6 +1834,12 @@ class OnlineMLTrainer:
             else:
                 # Guide toward a slightly better score than the current best
                 target = self._best_scores.to(self.device) * cfg.score_guidance_improvement_factor
+            # Diagnostic 2: log inference target (mean over states/components)
+            print(
+                f"  [DBG-COND] inference target (mean per state): "
+                f"{target.mean(dim=-1).tolist()}  "
+                f"(best_scores×{cfg.score_guidance_improvement_factor})"
+            )
             return target.unsqueeze(0).expand(batch_size, -1, -1)
         else:
             return self.target_s.unsqueeze(0).expand(batch_size, -1, -1)
@@ -1281,6 +1863,36 @@ class OnlineMLTrainer:
         for e in entries:
             if e.is_feasible:
                 rows.append(compute_score_tensor(e.s_params, self.freq_points, self.specs))
+            else:
+                rows.append(infeasible_score)
+        return torch.stack(rows, dim=0)   # (B, n_states, 4)
+
+    def _get_score_cond_from_s_params(
+        self,
+        entries,
+        s_params: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute score-based conditioning from a pre-built (B, n_states, n_freq)
+        s_params tensor rather than reading each entry's buffer field.
+
+        This is used in ``_step3_train_generative`` so that freshly re-predicted
+        s_params (from the current world model) are used for conditioning instead
+        of the potentially stale values stored in each BufferEntry.
+
+        Infeasible entries still receive the fixed large infeasible score regardless
+        of their row in s_params (infeasible sentinel is not a valid S-parameter).
+        """
+        cfg = self.cfg
+        infeasible_score = torch.full(
+            (cfg.n_states, cfg.n_score_components), 100.0, dtype=torch.float32
+        )
+        rows = []
+        for i, e in enumerate(entries):
+            if e.is_feasible:
+                rows.append(compute_score_tensor(
+                    s_params[i].cpu(), self.freq_points, self.specs
+                ))
             else:
                 rows.append(infeasible_score)
         return torch.stack(rows, dim=0)   # (B, n_states, 4)
@@ -1321,6 +1933,10 @@ class OnlineMLTrainer:
         torch.save(self.world_model.state_dict(), ckpt_dir / "world_model.pt")
         torch.save(self.gen_opt.state_dict(),     ckpt_dir / "gen_opt.pt")
         torch.save(self.wm_opt.state_dict(),      ckpt_dir / "wm_opt.pt")
+        if self.rnd_network is not None:
+            torch.save(self.rnd_network.state_dict(), ckpt_dir / "rnd_network.pt")
+        if self.clf_model is not None:
+            torch.save(self.clf_model.state_dict(), ckpt_dir / "clf_model.pt")
         self.buffer.save(ckpt_dir / "buffer.pkl")
         # Save iteration so resume knows where to continue from
         (ckpt_dir / "iter.json").write_text(json.dumps({"iteration": it}))
@@ -1363,6 +1979,14 @@ class OnlineMLTrainer:
         self.wm_opt.load_state_dict(
             torch.load(ckpt / "wm_opt.pt",      map_location=self.device)
         )
+        if self.rnd_network is not None and (ckpt / "rnd_network.pt").exists():
+            self.rnd_network.load_state_dict(
+                torch.load(ckpt / "rnd_network.pt", map_location=self.device)
+            )
+        if self.clf_model is not None and (ckpt / "clf_model.pt").exists():
+            self.clf_model.load_state_dict(
+                torch.load(ckpt / "clf_model.pt", map_location=self.device)
+            )
         self.buffer = ReplayBuffer.load(ckpt / "buffer.pkl")
 
         # Restore iteration counter; fall back to 0 if iter.json is absent

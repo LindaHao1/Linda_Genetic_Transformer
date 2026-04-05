@@ -92,8 +92,8 @@ switch_model:
 # LAYOUT GEOMETRY — shared by all modes
 # ============================================================
 layout:
-  pixel_size: 12.0   # um — metal patch size (top layer); may be > grid_size for overlap
-  grid_size: 10.0    # um — pitch between pixel centres (pixelated_design_simple only)
+  pixel_size: 25.0   # um — metal patch size (top layer); may be > grid_size for overlap
+  grid_size: 20.0    # um — pitch between pixel centres (pixelated_design_simple only)
                      #      pixel_size > grid_size creates intentional pixel overlap
   gnd_layer: "M4"
   pixel_layer: "AP"
@@ -110,13 +110,13 @@ simulation:
 
   # EMX EM extraction sweep
   emx_freq_start: 0
-  emx_freq_stop: "50e9"
+  emx_freq_stop: "70e9"
   emx_freq_step: "5e8"
   emx_parallel_threads: 8
 
   # Spectre SP analysis
   spectre_freq_start: "0G"
-  spectre_freq_stop: "50G"
+  spectre_freq_stop: "70G"
   spectre_freq_step: "500M"
 
 # ============================================================

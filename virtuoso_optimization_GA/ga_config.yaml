@@ -16,14 +16,14 @@
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
 
 # Root directory for all GA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_large_1"
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE
 # ---------------------------------------------------------------------------
 grid:
-  rows: 25              # number of pixel rows
-  cols: 27              # number of pixel columns (col 0 and col N-1 are feed columns)
+  rows: 40              # number of pixel rows
+  cols: 42              # number of pixel columns (col 0 and col N-1 are feed columns)
   n_switches: 4         # exact number of switch pixels (type 3) required
   max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
   n_states: 2           # number of filter states (= number of switch-state vectors)
@@ -39,31 +39,48 @@ grid:
 # FILTER TARGET SPECIFICATIONS
 # ---------------------------------------------------------------------------
 filter_specs:
+  # - state_index:     0
+  #   passband:        [6.0e9, 8.0e9]       # 7 GHz centre, ±1 GHz bandwidth
+  #   passband_min_db: -0.0                   # < -3 dB in passband is penalised
+  #   stopband_regions:
+  #     - [4.0e9,    6.0e9]                   # below passband
+  #     - [8.0e9,  10.0e9]                   # above passband
+  #   stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
+  #   weight: 2.0
+  #   # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
+  #   cross_stopband_regions:
+  #     - [36.0e9, 44.0e9]
+  #   cross_stopband_max_db: -10.0
+  #   cross_stopband_weight: 1.0
+
   - state_index:     0
-    passband:        [36.0e9, 44.0e9]
-    passband_min_db: -3.0
+    passband:        [18.0e9, 22.0e9]       # 20 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0                   # < -3 dB in passband is penalised
     stopband_regions:
-      - [33.0,    35.0e9]
-      - [45.0e9,  57.0e9]
-    stopband_max_db: -15.0
-    weight: 1.0
+      - [16.0e9,    18.0e9]                   # below passband
+      - [22.0e9,  24.0e9]                   # above passband
+    stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
+    weight: 2.0
+    # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
+    cross_stopband_regions:
+      - [36.0e9, 44.0e9]
+    cross_stopband_max_db: -10.0
+    cross_stopband_weight: 1.0
+
+  - state_index:     1
+    passband:        [36.0e9, 44.0e9]       # 20 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9,  36.0e9]
+      - [44.0e9,  48.0e9]
+    stopband_max_db: -20.0
+    weight: 2.0
+    # Decoupling: state 1 must also attenuate at state 0's passband (40 GHz)
     cross_stopband_regions:
       - [18.0e9, 22.0e9]
     cross_stopband_max_db: -10.0
     cross_stopband_weight: 1.0
 
-  - state_index:     1
-    passband:        [18.0e9, 22.0e9]
-    passband_min_db: -3.0
-    stopband_regions:
-      - [15.0,     17.0e9]
-      - [23.0e9,  25.0e9]
-    stopband_max_db: -15.0
-    weight: 1.0
-    cross_stopband_regions:
-      - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -10.0
-    cross_stopband_weight: 1.0
 
 # ---------------------------------------------------------------------------
 # GENETIC ALGORITHM PARAMETERS
@@ -71,8 +88,10 @@ filter_specs:
 ga:
   # Population
   pop_size: 20           # number of individuals per generation
-  n_gen:    200           # total number of generations
+  n_gen:    100           # total number of generations
   n_elite:  4            # elites carried over unchanged each generation
+  n_immigrants: 2        # fresh random designs injected every generation
+  n_keep_bad:  1         # non-elite individuals from the bottom 50% preserved unchanged
 
   # Operators
   p_crossover: 0.7       # probability of applying crossover (vs. cloning fitter parent)
@@ -91,7 +110,7 @@ ga:
 
   # Per-action sampling weights (relative)
   # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value, perturb_caps, flip_switch_state]
-  action_weights: [2.0, 1.5, 1.0, 1.0, 2.0, 1.5]
+  action_weights: [2.0, 1.5, 2.0, 1.0, 2.0, 1.5]
 
 # Random seed (set to null for non-deterministic)
 seed: 42

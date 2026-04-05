@@ -128,7 +128,7 @@ def compute_state_cost(
         if pb_lo <= f <= pb_hi:
             shortfall = spec.passband_min_db - s21
             if shortfall > 0:
-                total += 5 * shortfall
+                total += 2 * shortfall
             n_points += 1
 
         # Stopband penalty
@@ -144,7 +144,7 @@ def compute_state_cost(
             if cs_lo <= f <= cs_hi:
                 excess = s21 - spec.cross_stopband_max_db
                 if excess > 0:
-                    total += excess * spec.cross_stopband_weight
+                    total += 0.5 * excess * spec.cross_stopband_weight
                 n_points += 1
 
     mean_abs = total / n_points if n_points > 0 else 0.0

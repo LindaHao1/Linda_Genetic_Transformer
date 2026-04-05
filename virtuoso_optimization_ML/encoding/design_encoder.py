@@ -25,9 +25,17 @@ Once the region is identified, the raw value is clipped to [R_LO, R_HI]
 before recovering the inductor index or cap value.  This gives region-specific
 snapping rather than nearest-centre ambiguity.
 
-The last `n_states` columns encode switch states:
-  column (cols + s) = 1.0 at the row of each switch that is ON in state s,
-                      0.0 elsewhere.
+The last `n_states` columns encode switch states using switch-index order:
+  Switches are sorted in row-first scan order (same order as cap_values /
+  switch_states).  For state s, row i of column (cols + s) holds:
+    1.0  if switch i is ON  in state s
+    0.0  if switch i is OFF in state s
+  Rows beyond the number of switches present are left at 0.0.
+
+  This means the state columns always use the first n_switches rows as a
+  compact lookup table — independent of where each switch sits spatially —
+  so multiple switches in the same spatial row are handled correctly.
+
 The decoder identifies state columns by position (last n_states cols), not by
 value, so there is no ambiguity with pixel type 1 (metal, value 0.20).
 
@@ -145,12 +153,14 @@ class DesignEncoder:
                 )
 
         # --- Fill switch-state columns ---
+        # Row i of each state column encodes switch i's ON/OFF state.
+        # This is independent of the switch's spatial position, so multiple
+        # switches in the same grid row are handled correctly.
         for s in range(n_s):
             col_idx = cols + s
             state_row = design.switch_states[s]  # length n_switches, 0/1
-            for sw_pos, sw_i in sw_idx_map.items():
-                r_sw = sw_pos[0]
-                img[r_sw, col_idx] = float(state_row[sw_i])
+            for sw_i in range(len(state_row)):
+                img[sw_i, col_idx] = float(state_row[sw_i])
 
         return torch.tensor(img, dtype=torch.float32).unsqueeze(0)  # (1, H, W)
 
@@ -200,7 +210,7 @@ class DesignEncoder:
         -------
         DesignState
         """
-        from virtuoso_optimization_SA.design import DesignState  # deferred
+        from ..design import DesignState  # deferred
 
         cfg  = self.cfg
         rows = cfg.rows
@@ -261,14 +271,13 @@ class DesignEncoder:
             matrix.append(row_out)
 
         # --- Decode switch states from appended columns ---
-        n_switches_found = sw_count
+        # Row i of each state column holds switch i's ON/OFF value.
         switch_states: List[List[int]] = []
         for s in range(n_s):
             col_idx = cols + s
             state_row: List[int] = []
-            for sw_pos in sw_positions:
-                r_sw = sw_pos[0]
-                val  = arr[r_sw, col_idx]
+            for sw_i in range(sw_count):
+                val = arr[sw_i, col_idx]
                 state_row.append(1 if val >= 0.5 else 0)
             switch_states.append(state_row)
 

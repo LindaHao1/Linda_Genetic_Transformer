@@ -64,24 +64,47 @@ class _TeeStream:
     """
     Wraps an output stream so that every write goes to both the original
     stream and a log file.  A lock makes it safe for concurrent threads.
+
+    When ``quiet=True`` output from **worker threads** is written only to
+    the log file — the original console stream is left untouched for those
+    threads.  Output from the **main thread** always reaches the console so
+    that the caller's own progress messages are never suppressed.
     """
 
-    def __init__(self, original: TextIO, log_file: TextIO) -> None:
-        self._original = original
-        self._log_file = log_file
-        self._lock     = threading.Lock()
+    def __init__(
+        self,
+        original: TextIO,
+        log_file: TextIO,
+        quiet: bool = False,
+        main_thread: Optional[threading.Thread] = None,
+    ) -> None:
+        self._original    = original
+        self._log_file    = log_file
+        self._lock        = threading.Lock()
+        self._quiet       = quiet
+        self._main_thread = main_thread  # only this thread always shows on console
+
+    def _suppress_console(self) -> bool:
+        """Return True if the current thread's output should be console-suppressed."""
+        if not self._quiet:
+            return False
+        if self._main_thread is None:
+            return True
+        return threading.current_thread() is not self._main_thread
 
     def write(self, data: str) -> int:
         with self._lock:
-            self._original.write(data)
-            self._original.flush()
+            if not self._suppress_console():
+                self._original.write(data)
+                self._original.flush()
             self._log_file.write(data)
             self._log_file.flush()
         return len(data)
 
     def flush(self) -> None:
         with self._lock:
-            self._original.flush()
+            if not self._suppress_console():
+                self._original.flush()
             self._log_file.flush()
 
     # Delegate everything else (e.g. .encoding, .fileno) to the original
@@ -171,15 +194,27 @@ class ParallelVirtuosoEngine:
         config_path: str | Path,
         num_workers: Optional[int] = None,
         log_path: Optional[str | Path] = "auto",
+        quiet: bool = False,
     ) -> None:
+        """
+        Parameters
+        ----------
+        quiet:
+            When ``True``, suppress all engine and worker output from the
+            console.  Output is still captured to ``log_path`` if provided.
+            Use this in automated training loops where you want concise
+            top-level logging instead of verbose per-simulation messages.
+        """
         self.config_path  = Path(config_path)
         self._num_workers = num_workers
         self._log_path    = log_path      # "auto", a Path, or None
+        self._quiet       = quiet
         self._task_queue: queue.Queue[Optional[_Task]] = queue.Queue()
         self._workers: List[_WorkerThread] = []
         self._started    = False
         self._log_file: Optional[io.TextIOWrapper] = None
         self._orig_stdout = None
+        self._null_stdout = None   # used when quiet=True and no log file
 
     # ------------------------------------------------------------------
     # Context manager
@@ -205,7 +240,7 @@ class ParallelVirtuosoEngine:
             cfg = yaml.safe_load(f)
         n = self._num_workers or cfg.get("parallel", {}).get("num_workers", 1)
 
-        # --- Set up console logging ---
+        # --- Set up console logging / output suppression ---
         if self._log_path is not None:
             if self._log_path == "auto":
                 parent_dir = Path(cfg["project"]["parent_output_dir"])
@@ -214,9 +249,14 @@ class ParallelVirtuosoEngine:
             else:
                 resolved_log = Path(self._log_path)
             resolved_log.parent.mkdir(parents=True, exist_ok=True)
-            self._log_file   = resolved_log.open("w", buffering=1, encoding="utf-8")
+            self._log_file    = resolved_log.open("w", buffering=1, encoding="utf-8")
             self._orig_stdout = sys.stdout
-            sys.stdout        = _TeeStream(self._orig_stdout, self._log_file)
+            sys.stdout        = _TeeStream(
+                self._orig_stdout,
+                self._log_file,
+                quiet=self._quiet,
+                main_thread=threading.current_thread(),
+            )
             # Write header so the log is self-describing
             sys.stdout.write(
                 f"# ParallelVirtuosoEngine log\n"
@@ -224,6 +264,19 @@ class ParallelVirtuosoEngine:
                 f"# Config  : {self.config_path}\n"
                 f"# Workers : {n}\n"
                 f"# Log file: {resolved_log}\n\n"
+            )
+        elif self._quiet:
+            # No log file requested but still want to suppress worker console output.
+            # Use a TeeStream that routes worker output to /dev/null while keeping
+            # the main thread's output on the real console.
+            import os
+            self._orig_stdout = sys.stdout
+            self._null_stdout = open(os.devnull, "w", encoding="utf-8")
+            sys.stdout        = _TeeStream(
+                self._orig_stdout,
+                self._null_stdout,
+                quiet=self._quiet,
+                main_thread=threading.current_thread(),
             )
 
         for worker_id in range(n):
@@ -258,6 +311,9 @@ class ParallelVirtuosoEngine:
             )
             self._log_file.close()
             self._log_file = None
+        if self._null_stdout is not None:
+            self._null_stdout.close()
+            self._null_stdout = None
 
     # ------------------------------------------------------------------
     # Public API

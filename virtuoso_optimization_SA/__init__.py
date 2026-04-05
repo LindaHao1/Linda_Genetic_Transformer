@@ -17,6 +17,8 @@ Quick start::
 from .design      import DesignState
 from .feasibility import (
     is_feasible,
+    check_switch_count_range,
+    check_switch_states_distinct,
     generate_random_design,
     check_connectivity,
     check_switch_spacing,
@@ -35,6 +37,8 @@ from .sa_optimizer import SwitchableFilterSA, run_sa
 __all__ = [
     "DesignState",
     "is_feasible",
+    "check_switch_count_range",
+    "check_switch_states_distinct",
     "generate_random_design",
     "check_connectivity",
     "check_switch_spacing",

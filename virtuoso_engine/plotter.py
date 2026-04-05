@@ -44,6 +44,7 @@ def plot_s2p_results(
     s2p_files: List[Path],
     state_labels: List[str],
     output_dir: Path,
+    pixel_matrix: List[List[int]] | None = None,
 ) -> dict:
     """
     Plot S21 and S11 for each switch state and save PNGs to *output_dir*.
@@ -52,10 +53,13 @@ def plot_s2p_results(
         s2p_files:    Ordered list of .s2p paths, one per state.
         state_labels: Corresponding state labels (e.g. ["state0", "state1"]).
         output_dir:   Directory where plots are saved.
+        pixel_matrix: Optional 2-D list of pixel types (0-3).  When provided,
+                      a design-matrix visualisation is added as a third panel
+                      in both the S21 and S11 figure files.
 
     Returns:
-        dict with keys 's21_magnitude' and 's11_magnitude', each pointing to
-        the saved PNG path (or None if that plot could not be generated).
+        dict with keys 's21_magnitude', 's11_magnitude', and optionally
+        'design_matrix', each pointing to the saved PNG path (or None).
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -63,20 +67,31 @@ def plot_s2p_results(
     networks = _load_networks(s2p_files, state_labels)
     if not networks:
         print("  [plotter] No valid .s2p files to plot.")
-        return {"s21_magnitude": None, "s11_magnitude": None}
+        return {"s21_magnitude": None, "s11_magnitude": None, "design_matrix": None}
 
     s21_path = output_dir / "s21_magnitude.png"
     s11_path = output_dir / "s11_magnitude.png"
 
     _plot_s2p_magnitude(networks, s21_path, row=1, col=0, ylabel="S21 (dB)",
-                        title="S21 Magnitude vs Frequency (Filter Transmission)")
+                        title="S21 Magnitude vs Frequency (Filter Transmission)",
+                        pixel_matrix=pixel_matrix)
     _plot_s2p_magnitude(networks, s11_path, row=0, col=0, ylabel="S11 (dB)",
-                        title="S11 Magnitude vs Frequency (Input Match)")
+                        title="S11 Magnitude vs Frequency (Input Match)",
+                        pixel_matrix=pixel_matrix)
 
     print(f"  [plotter] S21 magnitude → {s21_path}")
     print(f"  [plotter] S11 magnitude → {s11_path}")
 
-    return {"s21_magnitude": str(s21_path), "s11_magnitude": str(s11_path)}
+    result: dict = {"s21_magnitude": str(s21_path), "s11_magnitude": str(s11_path),
+                    "design_matrix": None}
+
+    if pixel_matrix is not None:
+        dm_path = output_dir / "design_matrix.png"
+        _plot_design_matrix(pixel_matrix, dm_path)
+        print(f"  [plotter] Design matrix → {dm_path}")
+        result["design_matrix"] = str(dm_path)
+
+    return result
 
 
 def _plot_s2p_magnitude(
@@ -86,9 +101,22 @@ def _plot_s2p_magnitude(
     col: int,
     ylabel: str,
     title: str,
+    pixel_matrix: List[List[int]] | None = None,
 ) -> None:
-    """Plot S[row][col] magnitude in dB vs frequency (GHz) for 2-port networks."""
-    fig, ax = plt.subplots(figsize=(10, 6))
+    """Plot S[row][col] magnitude in dB vs frequency (GHz) for 2-port networks.
+
+    When *pixel_matrix* is supplied a design-matrix panel is appended to the
+    right of the S-parameter axes.
+    """
+    if pixel_matrix is not None:
+        fig, (ax, ax_dm) = plt.subplots(
+            1, 2,
+            figsize=(14, 6),
+            gridspec_kw={"width_ratios": [2, 1]},
+        )
+        _draw_design_matrix(pixel_matrix, ax_dm)
+    else:
+        fig, ax = plt.subplots(figsize=(10, 6))
 
     for ntwk, label in networks:
         freq_ghz = ntwk.f / 1e9
@@ -148,6 +176,64 @@ def plot_s11_results(
         result["impedance_ratio"] = str(ratio_path)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Design-matrix visualisation helpers
+# ---------------------------------------------------------------------------
+
+# Pixel type → (display label, colour)
+_PIXEL_STYLE = {
+    0: ("GND",  "#4a4a4a"),   # dark grey  — ground layer only
+    1: ("MTL",  "#5ba8d4"),   # steel blue — top + ground metal
+    2: ("IND",  "#e8a838"),   # amber      — inductor port
+    3: ("SW",   "#d94f3d"),   # red        — switch port
+}
+
+
+def _draw_design_matrix(matrix: List[List[int]], ax) -> None:
+    """Render the pixel-type matrix as a colour-coded grid on *ax*."""
+    n_rows = len(matrix)
+    n_cols = len(matrix[0]) if n_rows else 0
+
+    # Build an RGB image (row 0 of the matrix = top row visually)
+    img = np.zeros((n_rows, n_cols, 3))
+    for r in range(n_rows):
+        for c in range(n_cols):
+            ptype = int(matrix[r][c])
+            hex_color = _PIXEL_STYLE.get(ptype, ("?", "#ffffff"))[1]
+            img[r, c] = [int(hex_color.lstrip("#")[i:i+2], 16) / 255.0 for i in (0, 2, 4)]
+
+    ax.imshow(img, origin="upper", aspect="equal", interpolation="nearest")
+
+    # Grid lines only — no text labels
+    ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
+    ax.grid(which="minor", color="white", linewidth=1.0)
+    ax.tick_params(which="minor", length=0)
+    ax.set_xticks(np.arange(n_cols))
+    ax.set_xticklabels([str(c) for c in range(n_cols)], fontsize=8)
+    ax.set_yticks(np.arange(n_rows))
+    ax.set_yticklabels([str(r) for r in range(n_rows)], fontsize=8)
+    ax.set_title("Design Matrix", fontsize=11)
+
+    # Legend patches
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor=style[1], label=f"{ptype}: {style[0]}")
+        for ptype, style in _PIXEL_STYLE.items()
+    ]
+    ax.legend(handles=legend_handles, fontsize=7, loc="upper right",
+              bbox_to_anchor=(1.0, -0.08), ncol=2)
+
+
+def _plot_design_matrix(matrix: List[List[int]], save_path: Path) -> None:
+    """Save a standalone design-matrix visualisation to *save_path*."""
+    fig, ax = plt.subplots(figsize=(6, 5))
+    _draw_design_matrix(matrix, ax)
+    fig.tight_layout()
+    fig.savefig(str(save_path), dpi=150)
+    plt.close(fig)
 
 
 # ---------------------------------------------------------------------------
