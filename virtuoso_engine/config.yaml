@@ -111,13 +111,13 @@ simulation:
   # EMX EM extraction sweep
   emx_freq_start: 0
   emx_freq_stop: "70e9"
-  emx_freq_step: "5e8"
+  emx_freq_step: "1e9"
   emx_parallel_threads: 8
 
   # Spectre SP analysis
   spectre_freq_start: "0G"
   spectre_freq_stop: "70G"
-  spectre_freq_step: "500M"
+  spectre_freq_step: "1G"
 
 # ============================================================
 # TUNABLE PARAMETERS — pixelated_design_simple mode
@@ -181,10 +181,30 @@ pixelated:
   # Per-inductor value index (one entry per type-2 pixel, in row-first order).
   # Each integer is an index into inductor_translation_table above.
   # Length must equal the number of type-2 pixels in pixel_state_matrix.
-  inductor_values: [1]   # 1 = 200nH (matches the single type-2 pixel in the example matrix)
+  inductor_values: [1, 2]   # 1 = 200nH (matches the single type-2 pixel in the example matrix)
+
+  # Per-inductor ON/OFF control per state (switchable inductor).
+  # Outer list length = number of states (must match state_list).
+  # Inner list length = number of type-2 (inductor) pixels (row-first order).
+  # 1 = inductor active (connected to s1p nport); 0 = open circuit (1 TΩ to GND).
+  # Omit this key entirely (or set to []) to keep all inductors ON in all states.
+  # inductor_switch_states:
+  #   - [1, 1]   # state 0: both inductors ON
+  #   - [1, 0]   # state 1: IND_0 ON, IND_1 OFF
+  #   - [0, 1]   # state 2: IND_0 OFF, IND_1 ON
+  #   - [1, 1]   # state 3: both ON
 
   # Kept for single-inductor / legacy use.  Ignored when inductor_values is present.
   inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+
+  # Capacitor pixel pairs — state-independent capacitors bridging two pixels.
+  # Each entry is [[row1, col1], [row2, col2]] (row/col match pixel_state_matrix).
+  # A port CP_{i}A is created at pixel (row1, col1) and CP_{i}B at (row2, col2);
+  # Spectre connects them with a capacitor of value cap_pair_values[i].
+  # Both pixels must have type > 0 (metal present).
+  # Leave empty ([]) when not used.
+  cap_pixel_pairs: []   # e.g. [[[0,1],[1,2]], [[0,3],[2,3]]]
+  cap_pair_values: []   # e.g. [1.0e-12, 2.0e-12]
 
 # ============================================================
 # PARALLEL ENGINE SETTINGS

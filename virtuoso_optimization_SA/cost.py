@@ -24,6 +24,7 @@ files produced by Spectre and EMX.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import permutations as _permutations
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -195,6 +196,102 @@ def compute_total_cost(
             total += _FAIL_PENALTY * spec.weight
 
     return total
+
+
+# ---------------------------------------------------------------------------
+# Dynamic state assignment
+# ---------------------------------------------------------------------------
+
+def _build_cost_matrix(
+    s2p_paths: List[Optional[Path]],
+    specs:     List[FilterStateSpec],
+) -> np.ndarray:
+    """
+    Build an N×N cost matrix where entry [sim_idx, spec_idx] is the cost of
+    evaluating simulated state ``sim_idx`` against spec ``spec_idx``.
+
+    N = number of specs = number of s2p_paths.  A failed simulation row is
+    filled with _FAIL_PENALTY so the solver naturally avoids assigning it.
+    """
+    _FAIL_PENALTY = 1e9
+    n = len(specs)
+    matrix = np.full((n, n), _FAIL_PENALTY)
+
+    loaded: List[Optional[Tuple[np.ndarray, np.ndarray]]] = []
+    for path in s2p_paths[:n]:
+        if path is None or not Path(path).exists():
+            loaded.append(None)
+        else:
+            try:
+                loaded.append(get_s21_db(path))
+            except Exception:  # noqa: BLE001
+                loaded.append(None)
+
+    for sim_idx, data in enumerate(loaded):
+        if data is None:
+            continue
+        freqs, s21_db_vals = data
+        for spec_idx, spec in enumerate(specs):
+            matrix[sim_idx, spec_idx] = compute_state_cost(freqs, s21_db_vals, spec)
+
+    return matrix
+
+
+def compute_total_cost_dynamic(
+    s2p_paths: List[Optional[Path]],
+    specs:     List[FilterStateSpec],
+) -> Tuple[float, List[int]]:
+    """
+    Find the bijective assignment of simulated states to specs that minimises
+    total cost, then return ``(total_cost, assignment)`` where
+    ``assignment[spec_idx] = sim_idx``.
+
+    This solves the linear sum assignment problem (a.k.a. the Hungarian
+    algorithm).  scipy is used when available; otherwise all N! permutations
+    are tried (safe for N ≤ 8 which covers all practical cases).
+
+    Parameters
+    ----------
+    s2p_paths : one .s2p file per simulated state, in simulation order.
+    specs     : one FilterStateSpec per target band, in spec order.
+
+    Returns
+    -------
+    total_cost : float — sum of per-state costs under the optimal assignment.
+    assignment : list of length len(specs) — assignment[spec_idx] = sim_idx.
+    """
+    n = len(specs)
+    if n == 0:
+        return 0.0, []
+
+    # Pad s2p_paths to length n if shorter (treat missing entries as failures)
+    padded = list(s2p_paths) + [None] * max(0, n - len(s2p_paths))
+
+    cost_matrix = _build_cost_matrix(padded, specs)
+
+    # --- solve assignment ---
+    try:
+        from scipy.optimize import linear_sum_assignment  # type: ignore
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        # row_ind are sim indices, col_ind are spec indices
+        # Cast to plain int — scipy returns numpy.int64 which is not JSON-serialisable
+        assignment = [0] * n
+        for sim_idx, spec_idx in zip(row_ind, col_ind):
+            assignment[int(spec_idx)] = int(sim_idx)
+        total_cost = float(cost_matrix[row_ind, col_ind].sum())
+    except ImportError:
+        # Brute-force over all N! permutations of sim indices
+        best_cost = float("inf")
+        best_perm = list(range(n))
+        for perm in _permutations(range(n)):
+            c = sum(cost_matrix[perm[spec_idx], spec_idx] for spec_idx in range(n))
+            if c < best_cost:
+                best_cost = c
+                best_perm = list(perm)
+        assignment = best_perm   # assignment[spec_idx] = sim_idx
+        total_cost = best_cost
+
+    return total_cost, assignment
 
 
 # ---------------------------------------------------------------------------

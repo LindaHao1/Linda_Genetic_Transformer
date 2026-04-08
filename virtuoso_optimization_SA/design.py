@@ -2,9 +2,10 @@
 design.py — DesignState: the complete description of one switchable-filter candidate.
 
 A design is fully described by three things:
-  matrix        (rows x cols) of int  — pixel types 0/1/2/3
-  switch_states (n_states x n_switches) of int — 0=OFF / 1=ON per state
-  cap_values    (n_switches,) of float — series coupling capacitance per switch (F)
+  matrix               (rows x cols) of int  — pixel types 0/1/2/3
+  switch_states        (n_states x n_switches) of int — 0=OFF / 1=ON per state
+  cap_values           (n_switches,) of float — series coupling capacitance per switch (F)
+  inductor_switch_states (n_states x n_inductors) of int — 0=OFF (open) / 1=ON per state
 """
 
 from __future__ import annotations
@@ -35,10 +36,15 @@ class DesignState:
         Empty list means all inductors use the engine's ``inductor_s1p`` fallback.
     """
 
-    matrix:          List[List[int]]
-    switch_states:   List[List[int]]   # [n_states][n_switches]
-    cap_values:      List[float]       # [n_switches]
-    inductor_values: List[int] = field(default_factory=list)  # [n_inductors]
+    matrix:                List[List[int]]
+    switch_states:         List[List[int]]   # [n_states][n_switches]
+    cap_values:            List[float]       # [n_switches]
+    inductor_values:       List[int] = field(default_factory=list)  # [n_inductors]
+    inductor_switch_states: List[List[int]] = field(default_factory=list)
+    # [n_states][n_inductors] — 1=ON (connect s1p nport), 0=OFF (open circuit, 1 TΩ to GND).
+    # Empty outer list means all inductors are ON in all states (backward-compatible default).
+    cap_pixel_pairs: List[List[List[int]]] = field(default_factory=list)  # [[[r1,c1],[r2,c2]], ...]
+    cap_pair_values: List[float] = field(default_factory=list)            # [n_cap_pairs]
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -66,16 +72,23 @@ class DesignState:
     def n_states(self) -> int:
         return len(self.switch_states)
 
+    @property
+    def n_cap_pairs(self) -> int:
+        return len(self.cap_pixel_pairs)
+
     # ------------------------------------------------------------------
     # Copy helper
     # ------------------------------------------------------------------
 
     def copy(self) -> "DesignState":
         return DesignState(
-            matrix          = copy.deepcopy(self.matrix),
-            switch_states   = copy.deepcopy(self.switch_states),
-            cap_values      = list(self.cap_values),
-            inductor_values = list(self.inductor_values),
+            matrix                 = copy.deepcopy(self.matrix),
+            switch_states          = copy.deepcopy(self.switch_states),
+            cap_values             = list(self.cap_values),
+            inductor_values        = list(self.inductor_values),
+            inductor_switch_states = copy.deepcopy(self.inductor_switch_states),
+            cap_pixel_pairs        = copy.deepcopy(self.cap_pixel_pairs),
+            cap_pair_values        = list(self.cap_pair_values),
         )
 
     # ------------------------------------------------------------------
@@ -97,6 +110,11 @@ class DesignState:
         }
         if self.inductor_values:
             cfg["inductor_values"] = self.inductor_values
+        if self.inductor_switch_states:
+            cfg["inductor_switch_states"] = self.inductor_switch_states
+        if self.cap_pixel_pairs:
+            cfg["cap_pixel_pairs"] = self.cap_pixel_pairs
+            cfg["cap_pair_values"] = self.cap_pair_values
         return cfg
 
     def __repr__(self) -> str:
@@ -104,9 +122,12 @@ class DesignState:
         return (
             f"DesignState(rows={self.rows}, cols={self.cols}, "
             f"n_sw={self.n_switches}, n_ind={self.n_inductors}, "
-            f"n_states={self.n_states})\n"
+            f"n_pairs={self.n_cap_pairs}, n_states={self.n_states})\n"
             f"  Matrix:\n  {rows_str}\n"
-            f"  SwitchStates:    {self.switch_states}\n"
-            f"  CapValues:       {self.cap_values}\n"
-            f"  InductorValues:  {self.inductor_values}"
+            f"  SwitchStates:         {self.switch_states}\n"
+            f"  CapValues:            {self.cap_values}\n"
+            f"  InductorValues:       {self.inductor_values}\n"
+            f"  InductorSwitchStates: {self.inductor_switch_states}\n"
+            f"  CapPixelPairs:        {self.cap_pixel_pairs}\n"
+            f"  CapPairValues:        {self.cap_pair_values}"
         )

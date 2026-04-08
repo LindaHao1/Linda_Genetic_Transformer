@@ -110,6 +110,9 @@ def generate_state_netlist(
     sim_cfg: dict,
     output_s2p: Path,
     netlist_dir: Path,
+    cap_pair_indices: Optional[List[tuple]] = None,
+    cap_pair_values: Optional[List[float]] = None,
+    inductor_state_vector: Optional[List[int]] = None,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
@@ -132,6 +135,10 @@ def generate_state_netlist(
         sim_cfg                   simulation config dict (spectre_freq_* keys).
         output_s2p                Path where Spectre should write the .s2p file.
         netlist_dir               Directory to write the .scs file into.
+        cap_pair_indices          List of (port_idx_a, port_idx_b) tuples for each
+                                  capacitor pair (CP_{i}A, CP_{i}B ports).
+        cap_pair_values           Per-pair capacitance values (F), same order as
+                                  cap_pair_indices.
 
     Returns:
         Path to the written .scs netlist file.
@@ -165,16 +172,21 @@ def generate_state_netlist(
             lines.append(f"v_{node} ({node} 0) vsource dc=0")
         lines.append("")
 
-    # --- Inductor connections (state-independent) ---
+    # --- Inductor connections (state-dependent) ---
     if ind_indices_in_port_order:
-        lines.append("// Inductor connections (always connected)")
+        lines.append("// Inductor connections (state-dependent)")
         for local_idx, port_idx in enumerate(ind_indices_in_port_order):
-            node   = node_names[port_idx]
-            s1p    = inductor_s1p_list[local_idx] if local_idx < len(inductor_s1p_list) else ""
-            lines.append(
-                f"nport_ind{local_idx} ({node} 0) nport"
-                f" file=\"{s1p}\" N=1"
-            )
+            node = node_names[port_idx]
+            is_on = True
+            if inductor_state_vector is not None and local_idx < len(inductor_state_vector):
+                is_on = bool(inductor_state_vector[local_idx])
+
+            if is_on:
+                s1p = inductor_s1p_list[local_idx] if local_idx < len(inductor_s1p_list) else ""
+                lines.append(f"nport_ind{local_idx} ({node} 0) nport file=\"{s1p}\" N=1")
+            else:
+                lines.append(f"// IND_{local_idx}: OFF (open-circuit termination)")
+                lines.append(f"r_open_ind{local_idx} ({node} 0) resistor r=1e12")
         lines.append("")
 
     # --- Switch connections (state-dependent) ---
@@ -195,6 +207,16 @@ def generate_state_netlist(
             lines.append(f"r_off{local_sw_idx} ({mid} 0) resistor r={r_off}")
             lines.append(f"c_off{local_sw_idx} ({mid} 0) capacitor c={c_off}")
     lines.append("")
+
+    # --- Capacitor pair connections (state-independent) ---
+    if cap_pair_indices:
+        lines.append("// Capacitor pair connections (always connected)")
+        for pair_idx, (idx_a, idx_b) in enumerate(cap_pair_indices):
+            node_a = node_names[idx_a]
+            node_b = node_names[idx_b]
+            cap_v  = (cap_pair_values or [])[pair_idx]
+            lines.append(f"c_pair{pair_idx} ({node_a} {node_b}) capacitor c={cap_v}")
+        lines.append("")
 
     # --- I/O ports ---
     lines.append("// Input/output RF ports")
@@ -227,17 +249,20 @@ def run_all_states(
     cfg: dict,
     emx_dir: Path,
     cell_name: str,
+    cap_pair_values: Optional[List[float]] = None,
+    inductor_state_list: Optional[List[List[int]]] = None,
 ) -> List[Optional[Path]]:
     """
     Post-EMX driver: parse SNP port order, generate netlists, run Spectre.
 
     Args:
-        snp_path    Path to the EMX .snp result file.
-        state_list  List of binary switch-state vectors.
-        cap_values  Per-switch capacitances (same order as SW_* ports).
-        cfg         Full merged engine config dict.
-        emx_dir     Directory containing EMX results (netlists written here too).
-        cell_name   Cell name prefix for output file naming.
+        snp_path         Path to the EMX .snp result file.
+        state_list       List of binary switch-state vectors.
+        cap_values       Per-switch capacitances (same order as SW_* ports).
+        cfg              Full merged engine config dict.
+        emx_dir          Directory containing EMX results (netlists written here too).
+        cell_name        Cell name prefix for output file naming.
+        cap_pair_values  Per-pair capacitances (F) for CP_* ports; None or [] if unused.
 
     Returns:
         List of .s2p paths, one per state (None for any state where Spectre failed).
@@ -257,6 +282,23 @@ def run_all_states(
                    if name in ("PIX_IN_GND", "PIX_OUT_GND")]
 
     print(f"  [spectre_runner] GND ports: {[port_order[i] for i in gnd_indices]}")
+
+    # --- Derive cap pair index pairs from port_order ---
+    cap_pair_values = cap_pair_values or []
+    num_cap_pairs   = len(cap_pair_values)
+    cap_pair_indices: List[tuple] = []
+    for pair_idx in range(num_cap_pairs):
+        name_a = f"CP_{pair_idx}A"
+        name_b = f"CP_{pair_idx}B"
+        idx_a  = next((i for i, n in enumerate(port_order) if n == name_a), None)
+        idx_b  = next((i for i, n in enumerate(port_order) if n == name_b), None)
+        if idx_a is not None and idx_b is not None:
+            cap_pair_indices.append((idx_a, idx_b))
+        else:
+            print(
+                f"  [spectre_runner] WARNING: cap pair {pair_idx} ports "
+                f"({name_a}, {name_b}) not found in SNP — skipping pair."
+            )
 
     # Sanity checks
     if len(sw_indices) != len(cap_values):
@@ -293,7 +335,13 @@ def run_all_states(
     s2p_paths: List[Optional[Path]] = []
 
     for state_idx, state_vector in enumerate(state_list):
-        print(f"  [spectre_runner] State {state_idx}: {state_vector}")
+        # Determine inductor ON/OFF vector for this state (None = all-ON default)
+        if inductor_state_list is not None and state_idx < len(inductor_state_list):
+            inductor_state_vector = inductor_state_list[state_idx]
+        else:
+            inductor_state_vector = None
+
+        print(f"  [spectre_runner] State {state_idx}: SW={state_vector}  IND={inductor_state_vector}")
 
         output_s2p  = emx_dir / f"{cell_name}_state{state_idx}.s2p"
         psf_dir     = emx_dir / f"psf_state{state_idx}"
@@ -315,6 +363,9 @@ def run_all_states(
             sim_cfg                   = sim,
             output_s2p                = output_s2p,
             netlist_dir               = emx_dir,
+            cap_pair_indices          = cap_pair_indices,
+            cap_pair_values           = cap_pair_values,
+            inductor_state_vector     = inductor_state_vector,
         )
 
         # --- Run Spectre ---

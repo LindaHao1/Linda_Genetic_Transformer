@@ -132,31 +132,65 @@ def get_feed_rows(matrix: List[List[int]]) -> Tuple[int, int]:
 # EMX port flag builder
 # ---------------------------------------------------------------------------
 
-def build_emx_port_flags(matrix_info: Dict[str, Any]) -> str:
+def build_cap_pair_port_entries(
+    cap_pixel_pairs: List[List[List[int]]],
+) -> List[Tuple[str, int, int]]:
+    """
+    Build a flat list of (port_name, row, col) for all capacitor-pair ports.
+
+    Pair i contributes two entries:
+        ("CP_{i}A", row1, col1)  — first  pixel of the pair
+        ("CP_{i}B", row2, col2)  — second pixel of the pair
+
+    Args:
+        cap_pixel_pairs: list of [[row1, col1], [row2, col2]] pairs from config.
+
+    Returns:
+        Flat list of (port_name, row, col) tuples, in pair order (A before B).
+    """
+    entries: List[Tuple[str, int, int]] = []
+    for i, pair in enumerate(cap_pixel_pairs):
+        (r1, c1), (r2, c2) = pair
+        entries.append((f"CP_{i}A", int(r1), int(c1)))
+        entries.append((f"CP_{i}B", int(r2), int(c2)))
+    return entries
+
+
+def build_emx_port_flags(
+    matrix_info: Dict[str, Any],
+    cap_pair_entries: Optional[List[Tuple[str, int, int]]] = None,
+) -> str:
     """
     Build the EMX CLI port flags string from analyzed matrix info.
 
     Port order is always:
-        PIX_IN  PIX_OUT  PIX_IN_GND  PIX_OUT_GND  IND_0 ...  SW_0 ...
+        PIX_IN  PIX_OUT  PIX_IN_GND  PIX_OUT_GND  IND_0 ...  SW_0 ...  CP_0A  CP_0B ...
 
     The two GND ports are placed in the ground layer at the same x/y
     position as PIX_IN / PIX_OUT and are used as reference ground
     terminals in the Spectre testbench.
 
+    Args:
+        matrix_info:      Output of analyze_matrix().
+        cap_pair_entries: Output of build_cap_pair_port_entries(); None or [] if unused.
+
     Returns e.g.:
-        "-p PIX_IN -p PIX_OUT -p PIX_IN_GND -p PIX_OUT_GND -p IND_0 -p SW_0"
+        "-p PIX_IN -p PIX_OUT -p PIX_IN_GND -p PIX_OUT_GND -p IND_0 -p SW_0 -p CP_0A -p CP_0B"
     """
     flags = ["-p PIX_IN", "-p PIX_OUT", "-p PIX_IN_GND", "-p PIX_OUT_GND"]
     for _, _, idx in matrix_info["ind_pixels"]:
         flags.append(f"-p IND_{idx}")
     for _, _, idx in matrix_info["sw_pixels"]:
         flags.append(f"-p SW_{idx}")
+    if cap_pair_entries:
+        for name, _, _ in cap_pair_entries:
+            flags.append(f"-p {name}")
     return " ".join(flags)
 
 
-def total_ports(matrix_info: Dict[str, Any]) -> int:
-    """Total EMX port count: PIX_IN + PIX_OUT + PIX_IN_GND + PIX_OUT_GND + num_ind + num_sw."""
-    return 4 + matrix_info["num_ind"] + matrix_info["num_sw"]
+def total_ports(matrix_info: Dict[str, Any], num_cap_pairs: int = 0) -> int:
+    """Total EMX port count: PIX_IN + PIX_OUT + PIX_IN_GND + PIX_OUT_GND + num_ind + num_sw + 2*num_cap_pairs."""
+    return 4 + matrix_info["num_ind"] + matrix_info["num_sw"] + 2 * num_cap_pairs
 
 
 # ---------------------------------------------------------------------------

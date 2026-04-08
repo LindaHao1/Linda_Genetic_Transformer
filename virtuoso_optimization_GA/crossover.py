@@ -258,7 +258,9 @@ def _inherit_values(
     cap_max: float,
     n_inductor_values: int,
     rng: random.Random,
-) -> Tuple[List[List[int]], List[float], List[int]]:
+    ind_sw_states_p1: List[List[int]] = (),  # parent1.inductor_switch_states
+    ind_sw_states_p2: List[List[int]] = (),  # parent2.inductor_switch_states
+) -> Tuple[List[List[int]], List[float], List[int], List[List[int]]]:
     """
     Walk the child matrix in row-major order and build:
       - switch_states  [n_states][n_child_switches]
@@ -277,6 +279,10 @@ def _inherit_values(
     switch_states: List[List[int]] = [[] for _ in range(n_states)]
     cap_values:    List[float]     = []
     inductor_values: List[int]     = []
+
+    p1_has_ind_sw = len(ind_sw_states_p1) > 0
+    p2_has_ind_sw = len(ind_sw_states_p2) > 0
+    inductor_switch_states: List[List[int]] = [[] for _ in range(n_states)]
 
     for r in range(rows):
         for c in range(cols):
@@ -314,16 +320,32 @@ def _inherit_values(
                            if p_idx < len(parent1.inductor_values)
                            else rng.randint(0, n_inductor_values - 1))
                     inductor_values.append(val)
+                    for si in range(n_states):
+                        if p1_has_ind_sw and p_idx < len(ind_sw_states_p1[si]):
+                            inductor_switch_states[si].append(ind_sw_states_p1[si][p_idx])
+                        else:
+                            inductor_switch_states[si].append(rng.randint(0, 1))
                 elif (not from_p1) and (r, c) in ind_map_p2:
                     p_idx = ind_map_p2[(r, c)]
                     val = (parent2.inductor_values[p_idx]
                            if p_idx < len(parent2.inductor_values)
                            else rng.randint(0, n_inductor_values - 1))
                     inductor_values.append(val)
+                    for si in range(n_states):
+                        if p2_has_ind_sw and p_idx < len(ind_sw_states_p2[si]):
+                            inductor_switch_states[si].append(ind_sw_states_p2[si][p_idx])
+                        else:
+                            inductor_switch_states[si].append(rng.randint(0, 1))
                 else:
                     inductor_values.append(rng.randint(0, n_inductor_values - 1))
+                    for si in range(n_states):
+                        inductor_switch_states[si].append(rng.randint(0, 1))
 
-    return switch_states, cap_values, inductor_values
+    # If no inductors in child, use empty list (all-ON convention)
+    if not inductor_values:
+        inductor_switch_states = []
+
+    return switch_states, cap_values, inductor_values, inductor_switch_states
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +407,7 @@ def crossover_zig_zag(
         return None
 
     # --- Inherit continuous/discrete values from parents ---
-    switch_states, cap_values, inductor_values = _inherit_values(
+    switch_states, cap_values, inductor_values, inductor_switch_states = _inherit_values(
         child_matrix,
         cut_cols,
         parent1,
@@ -399,11 +421,14 @@ def crossover_zig_zag(
         cap_max,
         n_inductor_values,
         rng,
+        ind_sw_states_p1=parent1.inductor_switch_states,
+        ind_sw_states_p2=parent2.inductor_switch_states,
     )
 
     return DesignState(
-        matrix          = child_matrix,
-        switch_states   = switch_states,
-        cap_values      = cap_values,
-        inductor_values = inductor_values,
+        matrix                 = child_matrix,
+        switch_states          = switch_states,
+        cap_values             = cap_values,
+        inductor_values        = inductor_values,
+        inductor_switch_states = inductor_switch_states,
     )

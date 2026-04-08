@@ -77,6 +77,7 @@ from .runner import PersistentVirtuosoRunner, VirtuosoResult
 from .plotter import plot_s11_results, plot_s2p_results
 from .pixel_matrix import (
     analyze_matrix,
+    build_cap_pair_port_entries,
     build_emx_port_flags,
     build_skill_pixel_types_list,
     build_skill_port_names_list,
@@ -632,27 +633,53 @@ class VirtuosoPixelEngine:
                         f"number of switch pixels ({mat_info['num_sw']})."
                     )
 
+        # Validate cap pixel pairs
+        cap_pixel_pairs = pd.get("cap_pixel_pairs", [])
+        cap_pair_values = pd.get("cap_pair_values", [])
+        if len(cap_pixel_pairs) != len(cap_pair_values):
+            raise ValueError(
+                f"cap_pixel_pairs length ({len(cap_pixel_pairs)}) must equal "
+                f"cap_pair_values length ({len(cap_pair_values)})."
+            )
+        for i, pair in enumerate(cap_pixel_pairs):
+            if len(pair) != 2:
+                raise ValueError(
+                    f"cap_pixel_pairs[{i}] must have exactly 2 entries, got {len(pair)}."
+                )
+            for row, col in pair:
+                if not (0 <= row < mat_info["num_rows"] and 0 <= col < mat_info["num_cols"]):
+                    raise ValueError(
+                        f"cap_pixel_pairs[{i}] coordinate ({row}, {col}) is out of bounds "
+                        f"for a {mat_info['num_rows']}×{mat_info['num_cols']} matrix."
+                    )
+
         # Feed rows are read directly from col 0 and col N-1 of the matrix.
         feed_row_left, feed_row_right = get_feed_rows(matrix)
+
+        grid_size = la.get("grid_size", la["pixel_size"])
+        cap_port_data_skill = _build_cap_port_data_skill(
+            cap_pixel_pairs, mat_info["num_rows"], grid_size
+        )
 
         template_text = (_TEMPLATES_DIR / "pixelated_design_simple/layout.il").read_text()
 
         rendered = string.Template(template_text).substitute(
-            LIB_NAME           = cfg["project"]["lib_name"],
-            CELL_NAME          = cell_name,
-            PIXEL_SIZE         = la["pixel_size"],
-            GRID_SIZE          = la.get("grid_size", la["pixel_size"]),
-            GND_LAYER          = la["gnd_layer"],
-            PIXEL_LAYER        = la["pixel_layer"],
-            NUM_ROWS           = mat_info["num_rows"],
-            NUM_COLS           = mat_info["num_cols"],
-            PIXEL_TYPES_SKILL  = build_skill_pixel_types_list(matrix),
-            PORT_NAMES_SKILL   = build_skill_port_names_list(mat_info),
-            FEEDLINE_ROW_LEFT  = feed_row_left,
-            FEEDLINE_ROW_RIGHT = feed_row_right,
-            FEEDLINE_WIDTH     = feedline.get("feedline_width", 5.0),
-            FEEDLINE_PADDING   = feedline.get("feedline_padding", 10.0),
-            GND_Y_EXTENSION    = la.get("gnd_y_extension", 0.0),
+            LIB_NAME            = cfg["project"]["lib_name"],
+            CELL_NAME           = cell_name,
+            PIXEL_SIZE          = la["pixel_size"],
+            GRID_SIZE           = grid_size,
+            GND_LAYER           = la["gnd_layer"],
+            PIXEL_LAYER         = la["pixel_layer"],
+            NUM_ROWS            = mat_info["num_rows"],
+            NUM_COLS            = mat_info["num_cols"],
+            PIXEL_TYPES_SKILL   = build_skill_pixel_types_list(matrix),
+            PORT_NAMES_SKILL    = build_skill_port_names_list(mat_info),
+            FEEDLINE_ROW_LEFT   = feed_row_left,
+            FEEDLINE_ROW_RIGHT  = feed_row_right,
+            FEEDLINE_WIDTH      = feedline.get("feedline_width", 5.0),
+            FEEDLINE_PADDING    = feedline.get("feedline_padding", 10.0),
+            GND_Y_EXTENSION     = la.get("gnd_y_extension", 0.0),
+            CAP_PORT_DATA_SKILL = cap_port_data_skill,
         )
         output_path.write_text(rendered)
 
@@ -697,6 +724,9 @@ class VirtuosoPixelEngine:
                         "Check the 'pixelated.inductor_s1p' config key."
                     )
 
+        cap_pixel_pairs = pd.get("cap_pixel_pairs", [])
+        cap_pair_entries = build_cap_pair_port_entries(cap_pixel_pairs)
+
         template_text = (_TEMPLATES_DIR / "pixelated_design_simple/emx.il").read_text()
 
         rendered = string.Template(template_text).substitute(
@@ -709,8 +739,8 @@ class VirtuosoPixelEngine:
             EMX_FREQ_STOP  = sim["emx_freq_stop"],
             EMX_FREQ_STEP  = sim["emx_freq_step"],
             EMX_PARALLEL   = sim["emx_parallel_threads"],
-            EMX_PORT_FLAGS = build_emx_port_flags(mat_info),
-            TOTAL_PORTS    = matrix_total_ports(mat_info),
+            EMX_PORT_FLAGS = build_emx_port_flags(mat_info, cap_pair_entries),
+            TOTAL_PORTS    = matrix_total_ports(mat_info, len(cap_pixel_pairs)),
         )
         output_path.write_text(rendered)
 
@@ -726,10 +756,11 @@ class VirtuosoPixelEngine:
         Finds the .snp file written by EMX, then calls spectre_runner.run_all_states()
         to generate per-state Spectre netlists, run Spectre, and collect .s2p outputs.
         """
-        pd       = cfg["pixelated"]
-        matrix   = pd["pixel_state_matrix"]
-        mat_info = analyze_matrix(matrix)
-        n_ports  = matrix_total_ports(mat_info)
+        pd              = cfg["pixelated"]
+        matrix          = pd["pixel_state_matrix"]
+        mat_info        = analyze_matrix(matrix)
+        cap_pixel_pairs = pd.get("cap_pixel_pairs", [])
+        n_ports         = matrix_total_ports(mat_info, len(cap_pixel_pairs))
 
         snp_path = emx_dir / f"{cell_name}.s{n_ports}p"
         if not snp_path.exists():
@@ -738,12 +769,14 @@ class VirtuosoPixelEngine:
             return []
 
         s2p_paths = run_all_states(
-            snp_path   = snp_path,
-            state_list = pd.get("state_list", []),
-            cap_values = pd.get("cap_values", []),
-            cfg        = cfg,
-            emx_dir    = emx_dir,
-            cell_name  = cell_name,
+            snp_path             = snp_path,
+            state_list           = pd.get("state_list", []),
+            cap_values           = pd.get("cap_values", []),
+            cfg                  = cfg,
+            emx_dir              = emx_dir,
+            cell_name            = cell_name,
+            cap_pair_values      = pd.get("cap_pair_values", []),
+            inductor_state_list  = pd.get("inductor_switch_states"),
         )
         return [p for p in s2p_paths if p is not None]
 
@@ -760,6 +793,36 @@ class VirtuosoPixelEngine:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _build_cap_port_data_skill(
+    cap_pixel_pairs: List[List[List[int]]],
+    num_rows: int,
+    grid_size: float,
+) -> str:
+    """
+    Build the SKILL list literal for the CAP_PORT_DATA_SKILL template variable.
+
+    Returns a SKILL expression like:
+        list(
+            list(30.0 50.0 "CP_0A")
+            list(50.0 30.0 "CP_0B")
+        )
+    or "list()" when cap_pixel_pairs is empty.
+
+    The y-flip formula matches the layout template:
+        center_x = col * grid_size + grid_size / 2
+        center_y = (num_rows - 1 - row) * grid_size + grid_size / 2
+    """
+    if not cap_pixel_pairs:
+        return "list()"
+    entries = []
+    for i, pair in enumerate(cap_pixel_pairs):
+        for side, (row, col) in zip(["A", "B"], pair):
+            cx = col * grid_size + grid_size / 2.0
+            cy = (num_rows - 1 - row) * grid_size + grid_size / 2.0
+            entries.append(f'list({cx} {cy} "CP_{i}{side}")')
+    return "list(\n    " + "\n    ".join(entries) + "\n)"
+
 
 def _cellname_safe(v: Any) -> str:
     """
@@ -870,13 +933,17 @@ def _make_plots(
     """Dispatch to the appropriate plotter based on mode."""
     if mode == "pixelated_design_simple":
         matrix = None
+        cap_pixel_pairs = None
         if cfg is not None:
-            matrix = cfg.get("pixelated", {}).get("pixel_state_matrix")
+            pd = cfg.get("pixelated", {})
+            matrix = pd.get("pixel_state_matrix")
+            cap_pixel_pairs = pd.get("cap_pixel_pairs") or None
         return plot_s2p_results(
             s2p_files=s_param_files,
             state_labels=labels,
             output_dir=plot_dir,
             pixel_matrix=matrix,
+            cap_pixel_pairs=cap_pixel_pairs,
         )
     return plot_s11_results(
         s1p_files=s_param_files,

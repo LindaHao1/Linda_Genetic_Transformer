@@ -11,10 +11,9 @@ Six actions are available:
 5. perturb_caps         — add Gaussian noise to cap values (clipped to valid range).
 6. flip_switch_state    — flip one bit in the switch-state matrix.
 
-``random_action`` picks one of the six uniformly at random (or weighted by
-``action_weights``) and returns a mutated copy of the design.  If the chosen
-action fails to produce a feasible design after ``max_retries`` attempts it
-returns None, signalling the caller to retry.
+``random_action`` picks one action by weight, retries it up to
+``max_retries_per_action`` times, then falls back to the next weighted action
+if still infeasible — cycling through all actions before returning (None, None).
 """
 
 from __future__ import annotations
@@ -24,14 +23,24 @@ from typing import List, Optional
 
 from .design import DesignState
 from .feasibility import (
+    _build_other_interior_cells,
     _can_place_inductor_at,
     _can_place_switch_at,
+    check_cap_pair_valid,
     check_connectivity,
     check_inductor_count,
     check_inductor_spacing,
+    check_inductor_states_distinct,
     check_switch_spacing,
+    check_switch_states_distinct,
+    filter_valid_pairs,
     is_feasible,
 )
+
+
+def _states_can_be_distinct(n_bits: int, n_states: int) -> bool:
+    """Return True if 2^n_bits >= n_states (enough distinct binary vectors exist)."""
+    return (1 << n_bits) >= n_states
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +51,8 @@ def action_flip_01(
     state: DesignState,
     n_flip: int,
     rng: random.Random,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> tuple:
     """
     Randomly flip up to ``n_flip`` type-0 or type-1 interior pixels
@@ -75,6 +86,11 @@ def action_flip_01(
     if not check_connectivity(new.matrix):
         return None, None
     # Spacing constraints still satisfied (we only touched 0/1 cells)
+    # Prune any cap pairs whose endpoints or corridor were disturbed
+    new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+        new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+        cap_pair_min_dist, cap_pair_max_dist,
+    )
     info = {
         "action": "flip_01",
         "description": f"Flipped {len(flipped_cells)} pixel(s) between type-0 (empty) and type-1 (metal)",
@@ -90,6 +106,8 @@ def action_flip_01(
 def action_move_switch(
     state: DesignState,
     rng: random.Random,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> tuple:
     """
     Pick a random switch pixel (type 3), remove it (set to 1), then place it
@@ -131,6 +149,11 @@ def action_move_switch(
         if _can_place_switch_at(new.matrix, pr, pc):
             new.matrix[pr][pc] = 3
             if check_connectivity(new.matrix):
+                # Prune pairs whose corridor now overlaps the new switch
+                new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+                    new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+                    cap_pair_min_dist, cap_pair_max_dist,
+                )
                 info = {
                     "action": "move_switch",
                     "description": f"Moved switch from ({rm_r},{rm_c}) to ({pr},{pc})",
@@ -165,6 +188,8 @@ def action_flip_inductor(
     max_inductors: int,
     rng: random.Random,
     n_inductor_values: int = 4,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> tuple:
     """
     Either add an inductor (type 1 → 2) or remove one (type 2 → 1).
@@ -207,6 +232,27 @@ def action_flip_inductor(
         idx = _inductor_row_first_index(new.matrix, r, c)
         val = rng.randint(0, n_inductor_values - 1)
         new.inductor_values.insert(idx, val)
+        # Keep inductor_switch_states in sync (new inductor defaults to ON in all states).
+        # If the list was empty (all-ON convention), initialize it now so the explicit
+        # per-inductor state is tracked going forward.
+        n_states_count = len(new.switch_states)
+        if not new.inductor_switch_states and n_states_count > 0:
+            # n_ind is the count *before* this add, so new total = n_ind + 1
+            new.inductor_switch_states = [[1] * (n_ind + 1) for _ in range(n_states_count)]
+        elif new.inductor_switch_states:
+            for state_row in new.inductor_switch_states:
+                state_row.insert(idx, 1)
+        # Reject if adding this inductor makes inductor states non-distinct
+        n_ind_new = n_ind + 1
+        if (new.inductor_switch_states
+                and _states_can_be_distinct(n_ind_new, len(new.switch_states))
+                and not check_inductor_states_distinct(new.inductor_switch_states)):
+            return None, None
+        # Prune pairs whose corridor now overlaps the new inductor
+        new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+            new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+            cap_pair_min_dist, cap_pair_max_dist,
+        )
         info = {
             "action": "flip_inductor",
             "description": f"Added inductor at ({r},{c}) with value index {val} (list index {idx})",
@@ -237,6 +283,26 @@ def action_flip_inductor(
             return None, None
         if idx < len(new.inductor_values):
             new.inductor_values.pop(idx)
+        # Keep inductor_switch_states in sync.
+        # After removing, if every state row is now empty, reset to [] (all-ON convention).
+        if new.inductor_switch_states:
+            for state_row in new.inductor_switch_states:
+                if idx < len(state_row):
+                    state_row.pop(idx)
+            if all(len(sr) == 0 for sr in new.inductor_switch_states):
+                new.inductor_switch_states = []
+        # Reject if removing this inductor makes remaining inductor states non-distinct
+        n_ind_new = n_ind - 1
+        if (new.inductor_switch_states
+                and _states_can_be_distinct(n_ind_new, len(new.switch_states))
+                and not check_inductor_states_distinct(new.inductor_switch_states)):
+            return None, None
+        # Re-validate pairs (endpoint now type 1 again — generally safe, but
+        # run filter in case the corridor was already invalid for other reasons)
+        new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+            new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+            cap_pair_min_dist, cap_pair_max_dist,
+        )
         info = {
             "action": "flip_inductor",
             "description": f"Removed inductor at ({r},{c}) (had value index {old_val}, list index {idx})",
@@ -356,31 +422,253 @@ def action_perturb_caps(
 def action_flip_switch_state(
     state: DesignState,
     rng: random.Random,
+    max_flips: int = 1,
 ) -> tuple:
     """
-    Flip one randomly chosen bit in the switch_states matrix.
+    Flip between 1 and ``max_flips`` randomly chosen bits in the switch_states matrix.
+
+    The number of bits to flip is chosen uniformly from [1, min(max_flips, total_bits)].
+    Bits are sampled without replacement from the full (n_states × n_switches) grid.
 
     Returns (mutated copy, info_dict), or (None, None) if there are no switch states.
     """
     if not state.switch_states or not state.switch_states[0]:
         return None, None
 
-    n_states  = state.n_states
+    n_states   = state.n_states
     n_switches = len(state.switch_states[0])
 
-    si = rng.randint(0, n_states  - 1)
-    sw = rng.randint(0, n_switches - 1)
+    all_positions = [(si, sw) for si in range(n_states) for sw in range(n_switches)]
+    k = rng.randint(1, min(max_flips, len(all_positions)))
+    chosen = rng.sample(all_positions, k)
 
-    old_bit = state.switch_states[si][sw]
     new = state.copy()
-    new.switch_states[si][sw] = 1 - old_bit
+    flips = []
+    for si, sw in chosen:
+        old_bit = new.switch_states[si][sw]
+        new.switch_states[si][sw] = 1 - old_bit
+        flips.append({"state": si, "switch": sw, "old": old_bit, "new": 1 - old_bit})
+
+    # Reject if the flip creates duplicate switch state vectors (when enough
+    # distinct vectors exist to satisfy the constraint).
+    if (_states_can_be_distinct(n_switches, n_states)
+            and not check_switch_states_distinct(new.switch_states)):
+        return None, None
+
     info = {
-        "action": "flip_switch_state",
-        "description": f"Flipped switch {sw} in state {si}: {old_bit} → {1 - old_bit}",
-        "state_index": si,
-        "switch_index": sw,
-        "old_bit": old_bit,
-        "new_bit": 1 - old_bit,
+        "action":      "flip_switch_state",
+        "description": f"Flipped {k} switch-state bit(s): {flips}",
+        "n_flips":     k,
+        "flips":       flips,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action 10: flip one inductor ON/OFF bit in one state
+# ---------------------------------------------------------------------------
+
+def action_flip_inductor_state(
+    state: DesignState,
+    rng: random.Random,
+    max_flips: int = 1,
+) -> tuple:
+    """
+    Flip between 1 and ``max_flips`` randomly chosen bits in the inductor_switch_states matrix.
+
+    The number of bits to flip is chosen uniformly from [1, min(max_flips, total_bits)].
+    Bits are sampled without replacement from the full (n_states × n_inductors) grid.
+
+    If ``inductor_switch_states`` is empty (all-ON by convention), it is first
+    initialized to an all-ones matrix of shape (n_states × n_inductors).
+
+    Returns (mutated copy, info_dict), or (None, None) if there are no inductor
+    pixels or no states.
+    """
+    n_ind    = state.n_inductors
+    n_states = state.n_states
+
+    if n_ind == 0 or n_states == 0:
+        return None, None
+
+    new = state.copy()
+
+    # Initialize to all-ON if missing
+    if not new.inductor_switch_states:
+        new.inductor_switch_states = [[1] * n_ind for _ in range(n_states)]
+
+    all_positions = [(si, ii) for si in range(n_states) for ii in range(n_ind)]
+    k = rng.randint(1, min(max_flips, len(all_positions)))
+    chosen = rng.sample(all_positions, k)
+
+    flips = []
+    for si, ii in chosen:
+        old_bit = new.inductor_switch_states[si][ii]
+        new.inductor_switch_states[si][ii] = 1 - old_bit
+        flips.append({"state": si, "inductor": ii, "old": old_bit, "new": 1 - old_bit})
+
+    # Reject if the flip creates duplicate inductor state vectors (when enough
+    # distinct vectors exist to satisfy the constraint).
+    if (_states_can_be_distinct(n_ind, n_states)
+            and not check_inductor_states_distinct(new.inductor_switch_states)):
+        return None, None
+
+    info = {
+        "action":      "flip_inductor_state",
+        "description": f"Flipped {k} inductor-state bit(s): {flips}",
+        "n_flips":     k,
+        "flips":       flips,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action 7: add one cap pixel pair
+# ---------------------------------------------------------------------------
+
+def action_add_cap_pair(
+    state: DesignState,
+    max_cap_pairs: int,
+    cap_pair_min: float,
+    cap_pair_max: float,
+    cap_pair_min_dist: int,
+    cap_pair_max_dist: int,
+    rng: random.Random,
+    max_search: int = 300,
+) -> tuple:
+    """
+    Find two type-1 interior pixels that form a valid axis-aligned cap pair
+    and add it to the design.
+
+    Returns (mutated copy, info_dict), or (None, None) if already at the cap
+    pair limit or no valid pair can be found within ``max_search`` attempts.
+    """
+    if state.n_cap_pairs >= max_cap_pairs:
+        return None, None
+
+    rows = state.rows
+    cols = state.cols
+
+    metal_pixels = [
+        (r, c)
+        for r in range(rows)
+        for c in range(1, cols - 1)
+        if state.matrix[r][c] == 1
+    ]
+    if len(metal_pixels) < 2:
+        return None, None
+
+    existing = state.cap_pixel_pairs
+    # Pre-build the set of all existing pair interior cells (for clearance check)
+    existing_interior = _build_other_interior_cells(existing)
+
+    for _ in range(max_search):
+        a, b = rng.sample(metal_pixels, 2)
+        r1, c1 = a
+        r2, c2 = b
+        if r1 != r2 and c1 != c2:
+            continue  # diagonal — skip
+        candidate = [[r1, c1], [r2, c2]]
+        rev_candidate = [[r2, c2], [r1, c1]]
+        if candidate in existing or rev_candidate in existing:
+            continue
+        if not check_cap_pair_valid(
+            state.matrix, candidate,
+            cap_pair_min_dist, cap_pair_max_dist,
+            existing_interior,
+        ):
+            continue
+        new = state.copy()
+        new_val = rng.uniform(cap_pair_min, cap_pair_max)
+        new.cap_pixel_pairs.append(candidate)
+        new.cap_pair_values.append(new_val)
+        info = {
+            "action": "add_cap_pair",
+            "description": f"Added cap pair [({r1},{c1})↔({r2},{c2})] = {new_val*1e15:.1f} fF",
+            "pair": candidate,
+            "value_fF": new_val * 1e15,
+            "n_pairs_before": state.n_cap_pairs,
+            "n_pairs_after": state.n_cap_pairs + 1,
+        }
+        return new, info
+
+    return None, None
+
+
+# ---------------------------------------------------------------------------
+# Action 8: remove one cap pixel pair
+# ---------------------------------------------------------------------------
+
+def action_remove_cap_pair(
+    state: DesignState,
+    rng: random.Random,
+) -> tuple:
+    """
+    Remove a randomly selected cap pixel pair.
+
+    Returns (mutated copy, info_dict), or (None, None) if no pairs exist.
+    """
+    if state.n_cap_pairs == 0:
+        return None, None
+
+    new = state.copy()
+    idx = rng.randrange(len(new.cap_pixel_pairs))
+    removed_pair = new.cap_pixel_pairs.pop(idx)
+    removed_val = new.cap_pair_values.pop(idx)
+    info = {
+        "action": "remove_cap_pair",
+        "description": (
+            f"Removed cap pair [{removed_pair[0]}↔{removed_pair[1]}] "
+            f"({removed_val*1e15:.1f} fF)"
+        ),
+        "pair": removed_pair,
+        "value_fF": removed_val * 1e15,
+        "n_pairs_before": state.n_cap_pairs,
+        "n_pairs_after": state.n_cap_pairs - 1,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action 9: perturb cap pair capacitance values
+# ---------------------------------------------------------------------------
+
+def action_perturb_pair_caps(
+    state: DesignState,
+    sigma: float,
+    cap_pair_min: float,
+    cap_pair_max: float,
+    rng: random.Random,
+) -> tuple:
+    """
+    Add independent Gaussian noise (std = ``sigma``) to every cap pair value,
+    then clip to [cap_pair_min, cap_pair_max].
+
+    Returns (mutated copy, info_dict), or (None, None) if no pair values exist.
+    """
+    if not state.cap_pair_values:
+        return None, None
+
+    new = state.copy()
+    pair_changes = []
+    for i in range(len(new.cap_pair_values)):
+        old_val = new.cap_pair_values[i]
+        noise = rng.gauss(0.0, sigma)
+        new.cap_pair_values[i] = max(cap_pair_min, min(cap_pair_max, old_val + noise))
+        pair_changes.append({
+            "index": i,
+            "old_fF": round(old_val * 1e15, 4),
+            "new_fF": round(new.cap_pair_values[i] * 1e15, 4),
+            "delta_fF": round((new.cap_pair_values[i] - old_val) * 1e15, 4),
+        })
+    info = {
+        "action": "perturb_pair_caps",
+        "description": (
+            f"Perturbed {len(pair_changes)} pair cap(s) with Gaussian noise "
+            f"(sigma={sigma*1e15:.1f} fF)"
+        ),
+        "sigma_fF": sigma * 1e15,
+        "pair_changes": pair_changes,
     }
     return new, info
 
@@ -396,7 +684,71 @@ _ACTION_NAMES = [
     "flip_inductor_value",
     "perturb_caps",
     "flip_switch_state",
+    "add_cap_pair",
+    "remove_cap_pair",
+    "perturb_pair_caps",
+    "flip_inductor_state",
 ]
+
+
+def _dispatch_action(
+    action_name: str,
+    state: DesignState,
+    n_regular_flip: int,
+    max_inductors: int,
+    cap_min: float,
+    cap_max: float,
+    cap_sigma: float,
+    rng: random.Random,
+    n_inductor_values: int,
+    max_cap_pairs: int,
+    cap_pair_min: float,
+    cap_pair_max: float,
+    cap_pair_sigma: float,
+    cap_pair_min_dist: int,
+    cap_pair_max_dist: int,
+    max_switch_state_flips: int,
+    max_inductor_state_flips: int,
+) -> tuple:
+    """Apply a single named action once. Returns (result, info) or (None, None)."""
+    if action_name == "flip_01":
+        return action_flip_01(
+            state, n_regular_flip, rng,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+        )
+    elif action_name == "move_switch":
+        return action_move_switch(
+            state, rng,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+        )
+    elif action_name == "flip_inductor":
+        return action_flip_inductor(
+            state, max_inductors, rng, n_inductor_values,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+        )
+    elif action_name == "flip_inductor_value":
+        return action_flip_inductor_value(state, n_inductor_values, rng)
+    elif action_name == "perturb_caps":
+        return action_perturb_caps(state, cap_sigma, cap_min, cap_max, rng)
+    elif action_name == "flip_switch_state":
+        return action_flip_switch_state(state, rng, max_flips=max_switch_state_flips)
+    elif action_name == "add_cap_pair":
+        return action_add_cap_pair(
+            state, max_cap_pairs, cap_pair_min, cap_pair_max,
+            cap_pair_min_dist, cap_pair_max_dist, rng,
+        )
+    elif action_name == "remove_cap_pair":
+        return action_remove_cap_pair(state, rng)
+    elif action_name == "perturb_pair_caps":
+        return action_perturb_pair_caps(
+            state, cap_pair_sigma, cap_pair_min, cap_pair_max, rng,
+        )
+    elif action_name == "flip_inductor_state":
+        return action_flip_inductor_state(state, rng, max_flips=max_inductor_state_flips)
+    return None, None
 
 
 def random_action(
@@ -409,50 +761,84 @@ def random_action(
     rng: random.Random,
     n_inductor_values: int = 4,
     action_weights: Optional[List[float]] = None,
-    max_retries: int = 50,
+    max_retries_per_action: int = 20,
+    max_cap_pairs: int = 0,
+    cap_pair_min: float = 50e-15,
+    cap_pair_max: float = 500e-15,
+    cap_pair_sigma: float = 20e-15,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
+    max_switch_state_flips: int = 1,
+    max_inductor_state_flips: int = 1,
 ) -> tuple:
     """
-    Pick one of the 6 SA actions (or weighted by ``action_weights``) and apply
-    it to produce a feasible mutated design.
+    Pick one action by weight, retry it up to ``max_retries_per_action`` times,
+    then fall back to another action if it stays infeasible — and so on until
+    either a feasible mutation is found or all actions are exhausted.
 
-    Retries up to ``max_retries`` times (re-drawing the action each time)
-    before returning (None, None).
+    This preserves the intended weight distribution: an action is chosen once
+    by its weight, then exhausted before the next action is drawn.  The old
+    approach re-drew from the full pool on every failure, which distorted the
+    effective weights whenever some actions are frequently infeasible.
 
     Returns
     -------
     (DesignState, info_dict) on success, or (None, None) on failure.
-    ``info_dict`` contains the action name, a human-readable description,
-    and action-specific details about exactly what was changed.
 
     Parameters
     ----------
-    n_inductor_values : number of discrete inductance choices in the translation table.
-    action_weights : optional list of 6 floats (probabilities / unnormalised weights).
+    action_weights : optional list of 10 floats (unnormalised weights).
         Order matches _ACTION_NAMES:
         [flip_01, move_switch, flip_inductor, flip_inductor_value,
-         perturb_caps, flip_switch_state]
+         perturb_caps, flip_switch_state,
+         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state]
+        Lists shorter than 10 are zero-padded; longer lists are truncated.
+    max_retries_per_action : number of attempts for the chosen action before
+        giving up on it and sampling a different one.
+    max_cap_pairs : maximum number of cap pixel pairs allowed (0 disables pair actions).
     """
-    weights = action_weights or [1.0] * 6
+    # Pad or truncate weights to match action list length for backward compat.
+    weights = list(action_weights) if action_weights else [1.0] * len(_ACTION_NAMES)
+    if len(weights) < len(_ACTION_NAMES):
+        weights += [0.0] * (len(_ACTION_NAMES) - len(weights))
+    elif len(weights) > len(_ACTION_NAMES):
+        weights = weights[:len(_ACTION_NAMES)]
 
-    for _ in range(max_retries):
-        action_name = rng.choices(_ACTION_NAMES, weights=weights)[0]
+    dispatch_kwargs = dict(
+        n_regular_flip=n_regular_flip,
+        max_inductors=max_inductors,
+        cap_min=cap_min,
+        cap_max=cap_max,
+        cap_sigma=cap_sigma,
+        rng=rng,
+        n_inductor_values=n_inductor_values,
+        max_cap_pairs=max_cap_pairs,
+        cap_pair_min=cap_pair_min,
+        cap_pair_max=cap_pair_max,
+        cap_pair_sigma=cap_pair_sigma,
+        cap_pair_min_dist=cap_pair_min_dist,
+        cap_pair_max_dist=cap_pair_max_dist,
+        max_switch_state_flips=max_switch_state_flips,
+        max_inductor_state_flips=max_inductor_state_flips,
+    )
 
-        if action_name == "flip_01":
-            result, info = action_flip_01(state, n_regular_flip, rng)
-        elif action_name == "move_switch":
-            result, info = action_move_switch(state, rng)
-        elif action_name == "flip_inductor":
-            result, info = action_flip_inductor(state, max_inductors, rng, n_inductor_values)
-        elif action_name == "flip_inductor_value":
-            result, info = action_flip_inductor_value(state, n_inductor_values, rng)
-        elif action_name == "perturb_caps":
-            result, info = action_perturb_caps(state, cap_sigma, cap_min, cap_max, rng)
-        elif action_name == "flip_switch_state":
-            result, info = action_flip_switch_state(state, rng)
-        else:
-            continue
+    # Build a pool of (name, weight) pairs with positive weight.
+    pool_names   = [n for n, w in zip(_ACTION_NAMES, weights) if w > 0]
+    pool_weights = [w for w in weights if w > 0]
 
-        if result is not None:
-            return result, info
+    while pool_names:
+        # 1. Choose one action from the remaining pool by weight.
+        chosen = rng.choices(pool_names, weights=pool_weights)[0]
+        chosen_idx = pool_names.index(chosen)
+
+        # 2. Retry that exact action up to max_retries_per_action times.
+        for _ in range(max_retries_per_action):
+            result, info = _dispatch_action(chosen, state, **dispatch_kwargs)
+            if result is not None:
+                return result, info
+
+        # 3. Action exhausted — remove it and try the next one.
+        pool_names.pop(chosen_idx)
+        pool_weights.pop(chosen_idx)
 
     return None, None

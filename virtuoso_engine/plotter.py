@@ -45,17 +45,21 @@ def plot_s2p_results(
     state_labels: List[str],
     output_dir: Path,
     pixel_matrix: List[List[int]] | None = None,
+    cap_pixel_pairs: List[List[List[int]]] | None = None,
 ) -> dict:
     """
     Plot S21 and S11 for each switch state and save PNGs to *output_dir*.
 
     Args:
-        s2p_files:    Ordered list of .s2p paths, one per state.
-        state_labels: Corresponding state labels (e.g. ["state0", "state1"]).
-        output_dir:   Directory where plots are saved.
-        pixel_matrix: Optional 2-D list of pixel types (0-3).  When provided,
-                      a design-matrix visualisation is added as a third panel
-                      in both the S21 and S11 figure files.
+        s2p_files:       Ordered list of .s2p paths, one per state.
+        state_labels:    Corresponding state labels (e.g. ["state0", "state1"]).
+        output_dir:      Directory where plots are saved.
+        pixel_matrix:    Optional 2-D list of pixel types (0-3).  When provided,
+                         a design-matrix visualisation is added as a third panel
+                         in both the S21 and S11 figure files.
+        cap_pixel_pairs: Optional list of [[row1,col1],[row2,col2]] pairs.  When
+                         provided alongside pixel_matrix, each pair of pixels is
+                         annotated with a shared index number on the design matrix.
 
     Returns:
         dict with keys 's21_magnitude', 's11_magnitude', and optionally
@@ -74,10 +78,10 @@ def plot_s2p_results(
 
     _plot_s2p_magnitude(networks, s21_path, row=1, col=0, ylabel="S21 (dB)",
                         title="S21 Magnitude vs Frequency (Filter Transmission)",
-                        pixel_matrix=pixel_matrix)
+                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs)
     _plot_s2p_magnitude(networks, s11_path, row=0, col=0, ylabel="S11 (dB)",
                         title="S11 Magnitude vs Frequency (Input Match)",
-                        pixel_matrix=pixel_matrix)
+                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs)
 
     print(f"  [plotter] S21 magnitude → {s21_path}")
     print(f"  [plotter] S11 magnitude → {s11_path}")
@@ -87,7 +91,7 @@ def plot_s2p_results(
 
     if pixel_matrix is not None:
         dm_path = output_dir / "design_matrix.png"
-        _plot_design_matrix(pixel_matrix, dm_path)
+        _plot_design_matrix(pixel_matrix, dm_path, cap_pixel_pairs=cap_pixel_pairs)
         print(f"  [plotter] Design matrix → {dm_path}")
         result["design_matrix"] = str(dm_path)
 
@@ -102,6 +106,7 @@ def _plot_s2p_magnitude(
     ylabel: str,
     title: str,
     pixel_matrix: List[List[int]] | None = None,
+    cap_pixel_pairs: List[List[List[int]]] | None = None,
 ) -> None:
     """Plot S[row][col] magnitude in dB vs frequency (GHz) for 2-port networks.
 
@@ -114,7 +119,7 @@ def _plot_s2p_magnitude(
             figsize=(14, 6),
             gridspec_kw={"width_ratios": [2, 1]},
         )
-        _draw_design_matrix(pixel_matrix, ax_dm)
+        _draw_design_matrix(pixel_matrix, ax_dm, cap_pixel_pairs=cap_pixel_pairs)
     else:
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -191,8 +196,18 @@ _PIXEL_STYLE = {
 }
 
 
-def _draw_design_matrix(matrix: List[List[int]], ax) -> None:
-    """Render the pixel-type matrix as a colour-coded grid on *ax*."""
+def _draw_design_matrix(
+    matrix: List[List[int]],
+    ax,
+    cap_pixel_pairs: List[List[List[int]]] | None = None,
+) -> None:
+    """Render the pixel-type matrix as a colour-coded grid on *ax*.
+
+    When *cap_pixel_pairs* is provided, each pair of pixels is annotated with a
+    shared index number drawn in the cell centre.  Both pixels in a pair show the
+    same number, making the connection visually obvious.  A thin line is also
+    drawn between the two pixels to reinforce the pairing.
+    """
     n_rows = len(matrix)
     n_cols = len(matrix[0]) if n_rows else 0
 
@@ -206,7 +221,7 @@ def _draw_design_matrix(matrix: List[List[int]], ax) -> None:
 
     ax.imshow(img, origin="upper", aspect="equal", interpolation="nearest")
 
-    # Grid lines only — no text labels
+    # Grid lines
     ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
     ax.set_yticks(np.arange(-0.5, n_rows, 1), minor=True)
     ax.grid(which="minor", color="white", linewidth=1.0)
@@ -216,6 +231,35 @@ def _draw_design_matrix(matrix: List[List[int]], ax) -> None:
     ax.set_yticks(np.arange(n_rows))
     ax.set_yticklabels([str(r) for r in range(n_rows)], fontsize=8)
     ax.set_title("Design Matrix", fontsize=11)
+
+    # --- Capacitor pair annotations ---
+    # Each pair gets a shared integer label drawn on both pixels, plus a
+    # connecting line between their centres.
+    if cap_pixel_pairs:
+        # Cycle through a set of high-contrast colours for multiple pairs.
+        pair_colors = ["#ffffff", "#ffe066", "#ff9ff3", "#54a0ff", "#00d2d3", "#ff6b6b"]
+        for pair_idx, pair in enumerate(cap_pixel_pairs):
+            (r1, c1), (r2, c2) = pair
+            color = pair_colors[pair_idx % len(pair_colors)]
+            label = str(pair_idx)
+
+            # Number on each pixel
+            for r, c in [(r1, c1), (r2, c2)]:
+                ax.text(
+                    c, r, label,
+                    ha="center", va="center",
+                    fontsize=9, fontweight="bold",
+                    color=color,
+                    bbox=dict(boxstyle="circle,pad=0.15", facecolor="black",
+                              edgecolor=color, linewidth=1.2, alpha=0.75),
+                )
+
+            # Connecting line between the two pixel centres
+            ax.plot(
+                [c1, c2], [r1, r2],
+                color=color, linewidth=1.5, linestyle="--", alpha=0.8,
+                zorder=3,
+            )
 
     # Legend patches
     from matplotlib.patches import Patch
@@ -227,10 +271,14 @@ def _draw_design_matrix(matrix: List[List[int]], ax) -> None:
               bbox_to_anchor=(1.0, -0.08), ncol=2)
 
 
-def _plot_design_matrix(matrix: List[List[int]], save_path: Path) -> None:
+def _plot_design_matrix(
+    matrix: List[List[int]],
+    save_path: Path,
+    cap_pixel_pairs: List[List[List[int]]] | None = None,
+) -> None:
     """Save a standalone design-matrix visualisation to *save_path*."""
     fig, ax = plt.subplots(figsize=(6, 5))
-    _draw_design_matrix(matrix, ax)
+    _draw_design_matrix(matrix, ax, cap_pixel_pairs=cap_pixel_pairs)
     fig.tight_layout()
     fig.savefig(str(save_path), dpi=150)
     plt.close(fig)

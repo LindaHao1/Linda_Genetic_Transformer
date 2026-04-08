@@ -1,9 +1,10 @@
 # ===========================================================================
 # GA Configuration — Switchable Filter Optimiser
 #
-# Two-state switchable filter:
-#   State 0: passband at 40 GHz  (36–44 GHz)
-#   State 1: passband at 20 GHz  (18–22 GHz)
+# Three-state switchable filter (matches sa_config.yaml task):
+#   State 0: passband at  7 GHz  ( 6– 8 GHz)
+#   State 1: passband at 24 GHz  (22–26 GHz)
+#   State 2: passband at 40 GHz  (38–42 GHz)
 #
 # The optimiser uses ParallelVirtuosoEngine to simulate the population.
 # Each design is a pixelated_design_simple run that produces one .s2p file
@@ -16,17 +17,18 @@
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
 
 # Root directory for all GA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_large_1"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_3state"
 
 # ---------------------------------------------------------------------------
-# GRID / DESIGN SPACE
+# GRID / DESIGN SPACE  (matches sa_config.yaml)
 # ---------------------------------------------------------------------------
 grid:
-  rows: 40              # number of pixel rows
-  cols: 42              # number of pixel columns (col 0 and col N-1 are feed columns)
+  rows: 21              # number of pixel rows
+  cols: 27              # number of pixel columns (col 0 and col N-1 are feed columns)
   n_switches: 4         # exact number of switch pixels (type 3) required
   max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
-  n_states: 2           # number of filter states (= number of switch-state vectors)
+  n_initial_inductors: 4  # inductors to place in each randomly generated design
+  n_states: 3           # number of filter states (= number of switch-state vectors)
 
   # Switch series capacitance range (Farads)
   cap_min: 200.0e-15    # 200 fF
@@ -36,60 +38,59 @@ grid:
   n_inductor_values: 4
 
 # ---------------------------------------------------------------------------
-# FILTER TARGET SPECIFICATIONS
+# FILTER TARGET SPECIFICATIONS  (matches sa_config.yaml — 7/24/40 GHz version)
 # ---------------------------------------------------------------------------
 filter_specs:
-  # - state_index:     0
-  #   passband:        [6.0e9, 8.0e9]       # 7 GHz centre, ±1 GHz bandwidth
-  #   passband_min_db: -0.0                   # < -3 dB in passband is penalised
-  #   stopband_regions:
-  #     - [4.0e9,    6.0e9]                   # below passband
-  #     - [8.0e9,  10.0e9]                   # above passband
-  #   stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
-  #   weight: 2.0
-  #   # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
-  #   cross_stopband_regions:
-  #     - [36.0e9, 44.0e9]
-  #   cross_stopband_max_db: -10.0
-  #   cross_stopband_weight: 1.0
-
   - state_index:     0
-    passband:        [18.0e9, 22.0e9]       # 20 GHz centre, ±2 GHz bandwidth
-    passband_min_db: -0.0                   # < -3 dB in passband is penalised
+    passband:        [6.0e9, 8.0e9]        # 7 GHz centre, ±1 GHz bandwidth
+    passband_min_db: -0.0
     stopband_regions:
-      - [16.0e9,    18.0e9]                   # below passband
-      - [22.0e9,  24.0e9]                   # above passband
-    stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
-    weight: 2.0
-    # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
+      - [4.0e9,   6.0e9]                   # below passband
+      - [8.0e9,  14.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
     cross_stopband_regions:
-      - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -10.0
+      - [22.0e9, 26.0e9]
+      - [38.0e9, 42.0e9]
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
   - state_index:     1
-    passband:        [36.0e9, 44.0e9]       # 20 GHz centre, ±2 GHz bandwidth
+    passband:        [22.0e9, 26.0e9]      # 24 GHz centre, ±2 GHz bandwidth
     passband_min_db: -0.0
     stopband_regions:
-      - [32.0e9,  36.0e9]
-      - [44.0e9,  48.0e9]
-    stopband_max_db: -20.0
-    weight: 2.0
-    # Decoupling: state 1 must also attenuate at state 0's passband (40 GHz)
+      - [14.0e9, 22.0e9]                   # below passband
+      - [26.0e9, 32.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
     cross_stopband_regions:
-      - [18.0e9, 22.0e9]
-    cross_stopband_max_db: -10.0
+      - [6.0e9,  8.0e9]
+      - [38.0e9, 42.0e9]
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
+  - state_index:     2
+    passband:        [38.0e9, 42.0e9]      # 40 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9, 38.0e9]                   # below passband
+      - [42.0e9, 50.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    cross_stopband_regions:
+      - [6.0e9,  8.0e9]
+      - [22.0e9, 26.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
 
 # ---------------------------------------------------------------------------
 # GENETIC ALGORITHM PARAMETERS
 # ---------------------------------------------------------------------------
 ga:
   # Population
-  pop_size: 20           # number of individuals per generation
-  n_gen:    100           # total number of generations
-  n_elite:  4            # elites carried over unchanged each generation
+  pop_size: 30           # number of individuals per generation
+  n_gen:    100          # total number of generations
+  n_elite:  6            # elites carried over unchanged each generation
   n_immigrants: 2        # fresh random designs injected every generation
   n_keep_bad:  1         # non-elite individuals from the bottom 50% preserved unchanged
 
@@ -102,15 +103,22 @@ ga:
   tournament_size: 3
 
   # Parallel simulation workers (one Virtuoso instance per worker)
-  n_parallel: 4
+  n_parallel: 5
 
-  # Mutation action parameters (passed to random_action())
-  n_regular_flip: 8         # max pixels to flip per flip_01 action
+  # Mutation action parameters (matches sa_config.yaml values)
+  n_regular_flip: 25         # max pixels to flip per flip_01 action
   cap_sigma:      50.0e-15   # Gaussian noise std for cap perturbation (50 fF)
 
   # Per-action sampling weights (relative)
-  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value, perturb_caps, flip_switch_state]
-  action_weights: [2.0, 1.5, 2.0, 1.0, 2.0, 1.5]
+  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
+  #         perturb_caps, flip_switch_state,
+  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state]
+  # Cap-pair actions are 0.0 — GA does not generate designs with cap pairs.
+  action_weights: [4.0, 2.0, 1.0, 4.0,  4.0, 8.0,  0.0, 0.0, 0.0, 12.0]
+
+  # State-wise champion elitism: preserve the best design per filter state
+  # so crossover can mix frequency-specific experts.
+  use_state_champions: true
 
 # Random seed (set to null for non-deterministic)
 seed: 42

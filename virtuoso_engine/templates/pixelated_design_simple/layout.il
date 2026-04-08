@@ -70,6 +70,21 @@ gnd_y_extension    = ${GND_Y_EXTENSION}
 ; 2. INITIALIZATION
 ; ============================================================
 cv = dbOpenCellViewByType(libName cellName "layout" "maskLayout" "w")
+unless(cv
+    ; Cell view exists with a stale lock (e.g. from a crashed previous run).
+    ; Forcibly delete the stale cell via DDI and retry.
+    fprintf(errport "*Warning* [PixelEngine] Cannot lock %s/%s — purging stale cell and retrying.\n"
+            libName cellName)
+    let((staleCell)
+        staleCell = ddGetObj(libName cellName)
+        when(staleCell ddDeleteObj(staleCell))
+    )
+    cv = dbOpenCellViewByType(libName cellName "layout" "maskLayout" "w")
+)
+unless(cv
+    error("*Error* [PixelEngine] Failed to open/create layout cell view for %s/%s\n"
+          libName cellName)
+)
 printf("--- Generating Pixelated Design Simple: %s/%s ---\n" libName cellName)
 printf("    Grid: %dx%d  pixel_size=%.2f um  grid_size=%.2f um  gnd_ext=%.2f um\n"
        num_rows num_cols pixel_size grid_size gnd_y_extension)
@@ -177,6 +192,35 @@ for( col_i 0 (num_cols - 1)
 )
 
 printf(" [3] Pixel grid drawn: %d rows x %d cols\n" num_rows num_cols)
+
+; ============================================================
+; 3.5. CAPACITOR PAIR PORTS  (cap_pixel_pairs — state-independent)
+;
+; cap_port_data is a SKILL list of (x_center y_center "PORT_NAME") triples,
+; one entry per cap port (2 per pair: CP_{i}A and CP_{i}B).
+; Coordinates are pre-computed in Python from (row, col) using the same
+; y-flip formula as section 3 above.
+; When no cap pairs are configured, cap_port_data = list() and the loop
+; runs zero times — backward compatible.
+; ============================================================
+let( (cap_port_data num_cap_ports cp_entry cp_x cp_y cp_name pin_box)
+    cap_port_data = ${CAP_PORT_DATA_SKILL}
+    num_cap_ports = length(cap_port_data)
+    when( num_cap_ports > 0
+        printf(" [3.5] Drawing %d cap pair port(s)...\n" num_cap_ports)
+        for( cp_i 0 (num_cap_ports - 1)
+            cp_entry = nth(cp_i cap_port_data)
+            cp_x     = car(cp_entry)
+            cp_y     = cadr(cp_entry)
+            cp_name  = caddr(cp_entry)
+            pin_box = list(
+                list(cp_x - pin_size/2.0  cp_y - pin_size/2.0)
+                list(cp_x + pin_size/2.0  cp_y + pin_size/2.0))
+            pixsimple_create_pin(cv cp_name list(pixel_layer "pin") pin_box "inputOutput")
+            printf("  [cap pair port] %s at (%.2f, %.2f)\n" cp_name cp_x cp_y)
+        )
+    )
+)
 
 ; ============================================================
 ; 4. DRAW FEEDLINE EXTENSIONS  (beyond the grid, left and right)

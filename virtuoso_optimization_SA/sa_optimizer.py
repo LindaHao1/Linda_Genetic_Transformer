@@ -34,7 +34,7 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 from .actions import random_action
-from .cost import compute_total_cost, specs_from_config, FilterStateSpec
+from .cost import compute_total_cost, compute_total_cost_dynamic, specs_from_config, FilterStateSpec
 from .design import DesignState
 from .feasibility import generate_random_design, is_feasible
 
@@ -55,12 +55,22 @@ class SAConfig:
     # Grid
     rows:              int
     cols:              int
-    n_switches:        int
-    max_inductors:     int
-    n_states:          int
-    cap_min:           float
-    cap_max:           float
-    n_inductor_values: int   # number of entries in the inductor_translation_table
+    n_switches:          int
+    max_inductors:       int
+    n_initial_inductors: int   # exact number of inductors to place in the initial design
+    n_states:            int
+    cap_min:             float
+    cap_max:             float
+    n_inductor_values:   int   # number of entries in the inductor_translation_table
+
+    # Cap pixel pairs
+    enable_cap_pairs:  bool   # False = cap pairs disabled everywhere (init + SA actions)
+    max_cap_pairs:     int
+    cap_pair_min:      float
+    cap_pair_max:      float
+    cap_pair_sigma:    float
+    cap_pair_min_dist: int
+    cap_pair_max_dist: int
 
     # SA algorithm
     T_start:        float
@@ -68,11 +78,15 @@ class SAConfig:
     n_iter:         int
     cooling:        str    # "geometric" or "linear"
     n_parallel:     int
-    n_regular_flip: int
-    cap_sigma:      float
-    action_weights: List[float]  # 6-element weights: [flip_01, move_switch,
+    n_regular_flip:           int
+    cap_sigma:                float
+    max_switch_state_flips:   int   # max bits to flip per flip_switch_state action
+    max_inductor_state_flips: int   # max bits to flip per flip_inductor_state action
+    action_weights: List[float]  # 10-element weights: [flip_01, move_switch,
                                  #   flip_inductor, flip_inductor_value,
-                                 #   perturb_caps, flip_switch_state]
+                                 #   perturb_caps, flip_switch_state,
+                                 #   add_cap_pair, remove_cap_pair, perturb_pair_caps,
+                                 #   flip_inductor_state]
 
     # Paths
     virtuoso_config: str   # path to the Virtuoso engine config YAML
@@ -84,6 +98,11 @@ class SAConfig:
     # Connectivity mode for initial design generation
     require_4_connected: bool = False
 
+    # Dynamic state assignment: find the optimal bijection of simulated states
+    # to filter specs before computing cost.  Helps when the optimiser produces
+    # a design whose states are "swapped" relative to the spec ordering.
+    dynamic_state_assignment: bool = True
+
     @classmethod
     def from_dict(cls, d: dict) -> "SAConfig":
         sa   = d["sa"]
@@ -91,28 +110,40 @@ class SAConfig:
         return cls(
             rows               = int(grid["rows"]),
             cols               = int(grid["cols"]),
-            n_switches         = int(grid["n_switches"]),
-            max_inductors      = int(grid["max_inductors"]),
-            n_states           = int(grid["n_states"]),
-            cap_min            = float(grid["cap_min"]),
-            cap_max            = float(grid["cap_max"]),
-            n_inductor_values  = int(grid.get("n_inductor_values", 4)),
+            n_switches           = int(grid["n_switches"]),
+            max_inductors        = int(grid["max_inductors"]),
+            n_initial_inductors  = int(grid.get("n_initial_inductors", 0)),
+            n_states             = int(grid["n_states"]),
+            cap_min              = float(grid["cap_min"]),
+            cap_max              = float(grid["cap_max"]),
+            n_inductor_values    = int(grid.get("n_inductor_values", 4)),
+
+            enable_cap_pairs   = bool(grid.get("enable_cap_pairs", True)),
+            max_cap_pairs      = int(grid.get("max_cap_pairs", 0)),
+            cap_pair_min       = float(grid.get("cap_pair_min", 50e-15)),
+            cap_pair_max       = float(grid.get("cap_pair_max", 500e-15)),
+            cap_pair_sigma     = float(grid.get("cap_pair_sigma", 20e-15)),
+            cap_pair_min_dist  = int(grid.get("cap_pair_min_dist", 2)),
+            cap_pair_max_dist  = int(grid.get("cap_pair_max_dist", 3)),
 
             T_start        = float(sa["T_start"]),
             T_end          = float(sa["T_end"]),
             n_iter         = int(sa["n_iter"]),
             cooling        = str(sa.get("cooling", "geometric")),
             n_parallel     = int(sa.get("n_parallel", 4)),
-            n_regular_flip = int(sa.get("n_regular_flip", 3)),
-            cap_sigma      = float(sa.get("cap_sigma", 50e-15)),
+            n_regular_flip           = int(sa.get("n_regular_flip", 3)),
+            cap_sigma                = float(sa.get("cap_sigma", 50e-15)),
+            max_switch_state_flips   = int(sa.get("max_switch_state_flips", 1)),
+            max_inductor_state_flips = int(sa.get("max_inductor_state_flips", 1)),
             action_weights = [float(w) for w in sa.get(
-                "action_weights", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
+                "action_weights", [1.0] * 10)],
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
 
-            seed                = d.get("seed"),
-            require_4_connected = bool(d.get("require_4_connected", False)),
+            seed                      = d.get("seed"),
+            require_4_connected       = bool(d.get("require_4_connected", False)),
+            dynamic_state_assignment  = bool(d.get("dynamic_state_assignment", True)),
         )
 
 
@@ -187,9 +218,10 @@ class SwitchableFilterSA:
         start_time = time.time()
 
         with self._make_engine() as engine:
-            current_cost = self._evaluate(engine, current, iter_idx=-1, tag="init")
+            current_cost, current_assignment = self._evaluate(engine, current, iter_idx=-1, tag="init")
 
-            print(f"[SA] Initial cost: {current_cost:.4f}")
+            print(f"[SA] Initial cost: {current_cost:.4f}"
+                  + (f"  assignment={current_assignment}" if current_assignment is not None else ""))
 
             best_design = current.copy()
             best_cost   = current_cost
@@ -205,12 +237,14 @@ class SwitchableFilterSA:
                     continue
 
                 # Evaluate all candidates in parallel
-                costs = self._evaluate_batch(engine, candidates, step)
+                cost_assignments = self._evaluate_batch(engine, candidates, step)
+                costs = [c for c, _ in cost_assignments]
 
                 # Pick best candidate
                 best_cand_idx  = min(range(len(costs)), key=lambda i: costs[i])
                 best_cand, _   = candidates[best_cand_idx]
                 best_cand_cost = costs[best_cand_idx]
+                best_cand_assignment = cost_assignments[best_cand_idx][1]
 
                 # Metropolis acceptance
                 delta = best_cand_cost - current_cost
@@ -221,8 +255,9 @@ class SwitchableFilterSA:
                     accept = self.rng.random() < accept_prob
 
                 if accept:
-                    current      = best_cand
-                    current_cost = best_cand_cost
+                    current            = best_cand
+                    current_cost       = best_cand_cost
+                    current_assignment = best_cand_assignment
 
                 # Track global best
                 if current_cost < best_cost:
@@ -232,7 +267,8 @@ class SwitchableFilterSA:
 
                 # Progress logging
                 elapsed = time.time() - start_time
-                self._log_step(step, T, current_cost, best_cost, delta, accept, elapsed)
+                self._log_step(step, T, current_cost, best_cost, delta, accept, elapsed,
+                               assignment=current_assignment)
                 self._save_progress()
 
                 print(
@@ -240,6 +276,7 @@ class SwitchableFilterSA:
                     f"cost={current_cost:.4f}  best={best_cost:.4f}  "
                     f"{'ACCEPT' if accept else 'reject'}  "
                     f"(Δ={delta:+.4f})  {elapsed:.1f}s"
+                    + (f"  assign={current_assignment}" if current_assignment is not None else "")
                 )
 
         print(f"\n[SA] Finished. Best cost: {best_cost:.4f}")
@@ -266,17 +303,24 @@ class SwitchableFilterSA:
 
     def _generate_initial_design(self) -> DesignState:
         cfg = self.cfg
+        effective_max_cap_pairs = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0
         design = generate_random_design(
             rows                = cfg.rows,
             cols                = cfg.cols,
             n_switches          = cfg.n_switches,
             max_inductors       = cfg.max_inductors,
+            n_initial_inductors = cfg.n_initial_inductors,
             n_states            = cfg.n_states,
             cap_min             = cfg.cap_min,
             cap_max             = cfg.cap_max,
             rng                 = self.rng,
             n_inductor_values   = cfg.n_inductor_values,
             require_4_connected = cfg.require_4_connected,
+            max_cap_pairs       = effective_max_cap_pairs,
+            cap_pair_min        = cfg.cap_pair_min,
+            cap_pair_max        = cfg.cap_pair_max,
+            cap_pair_min_dist   = cfg.cap_pair_min_dist,
+            cap_pair_max_dist   = cfg.cap_pair_max_dist,
         )
         if design is None:
             raise RuntimeError(
@@ -312,6 +356,14 @@ class SwitchableFilterSA:
                 rng                = self.rng,
                 n_inductor_values  = cfg.n_inductor_values,
                 action_weights     = cfg.action_weights,
+                max_cap_pairs             = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
+                cap_pair_min              = cfg.cap_pair_min,
+                cap_pair_max              = cfg.cap_pair_max,
+                cap_pair_sigma            = cfg.cap_pair_sigma,
+                cap_pair_min_dist         = cfg.cap_pair_min_dist,
+                cap_pair_max_dist         = cfg.cap_pair_max_dist,
+                max_switch_state_flips    = cfg.max_switch_state_flips,
+                max_inductor_state_flips  = cfg.max_inductor_state_flips,
             )
             if candidate is None:
                 continue
@@ -358,8 +410,8 @@ class SwitchableFilterSA:
         design: DesignState,
         iter_idx: int,
         tag: str = "eval",
-    ) -> float:
-        """Simulate one design synchronously and return its cost."""
+    ) -> Tuple[float, Optional[List[int]]]:
+        """Simulate one design synchronously and return (cost, assignment)."""
         override = self._build_override(design, iter_idx, 0)
         override["project"]["parent_output_dir"] = str(
             self.output_dir / "sims" / tag
@@ -372,13 +424,12 @@ class SwitchableFilterSA:
         engine: ParallelVirtuosoEngine,
         candidates: List[Tuple[DesignState, dict]],
         iter_idx: int,
-    ) -> List[float]:
-        """Simulate all candidates in parallel and return their costs."""
+    ) -> List[Tuple[float, Optional[List[int]]]]:
+        """Simulate all candidates in parallel and return (cost, assignment) per candidate."""
         overrides = []
         for i, (d, action_info) in enumerate(candidates):
             override = self._build_override(d, iter_idx, i)
             overrides.append(override)
-            # Write action summary to the candidate's output directory
             cand_dir = Path(override["project"]["parent_output_dir"])
             cand_dir.mkdir(parents=True, exist_ok=True)
             summary = dict(action_info)
@@ -386,14 +437,29 @@ class SwitchableFilterSA:
             summary["candidate_index"] = i
             (cand_dir / "action_summary.json").write_text(json.dumps(summary, indent=2))
         results = engine.run_batch(overrides)
-        return [self._cost_from_result(r) for r in results]
+        cost_assignments = [self._cost_from_result(r) for r in results]
+        # Write assignment back into each candidate's action_summary.json
+        for i, (cost, assignment) in enumerate(cost_assignments):
+            if assignment is not None:
+                cand_dir = Path(overrides[i]["project"]["parent_output_dir"])
+                summary_path = cand_dir / "action_summary.json"
+                try:
+                    summary = json.loads(summary_path.read_text())
+                    summary["cost"] = cost
+                    summary["state_assignment"] = assignment
+                    summary_path.write_text(json.dumps(summary, indent=2))
+                except Exception:
+                    pass
+        return cost_assignments
 
-    def _cost_from_result(self, result: "RunResult") -> float:
-        """Extract cost from a RunResult using the S-parameter files."""
+    def _cost_from_result(self, result: "RunResult") -> Tuple[float, Optional[List[int]]]:
+        """Extract (cost, assignment) from a RunResult."""
         if not result.success:
-            return 1e9
-        # s_param_files is one .s2p per state, in state order
-        return compute_total_cost(result.s_param_files, self.specs)
+            return 1e9, None
+        if self.cfg.dynamic_state_assignment:
+            cost, assignment = compute_total_cost_dynamic(result.s_param_files, self.specs)
+            return cost, assignment
+        return compute_total_cost(result.s_param_files, self.specs), None
 
     # ------------------------------------------------------------------
     # Persistence
@@ -426,8 +492,9 @@ class SwitchableFilterSA:
         delta: float,
         accepted: bool,
         elapsed: float,
+        assignment: Optional[List[int]] = None,
     ) -> None:
-        self._progress.append({
+        entry = {
             "step":         step,
             "T":            T,
             "current_cost": current_cost,
@@ -435,7 +502,10 @@ class SwitchableFilterSA:
             "delta":        delta,
             "accepted":     accepted,
             "elapsed_s":    elapsed,
-        })
+        }
+        if assignment is not None:
+            entry["state_assignment"] = assignment
+        self._progress.append(entry)
 
     def _save_progress(self) -> None:
         path = self.output_dir / "sa_progress.json"

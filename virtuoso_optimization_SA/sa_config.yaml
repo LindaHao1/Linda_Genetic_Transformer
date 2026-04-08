@@ -18,17 +18,19 @@
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
 
 # Root directory for all SA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/sa_filter_results_700u_2_seed10"
+output_dir: "/disk/mcao53/Sim_engine_results/sa_filter_results_700u_3state"
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE
 # ---------------------------------------------------------------------------
 grid:
-  rows: 35              # number of pixel rows
-  cols: 37             # number of pixel columns (col 0 and col N-1 are feed columns)
-  n_switches: 3        # exact number of switch pixels (type 3) required
+  rows: 21              # number of pixel rows
+  cols: 27             # number of pixel columns (col 0 and col N-1 are feed columns)
+  n_switches: 4         # exact number of switch pixels (type 3) required
   max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
-  n_states: 2          # number of filter states (= number of switch-state vectors)
+  n_initial_inductors: 4  # number of inductor pixels to place in the initial random design
+                          # (capped at max_inductors; SA can add/remove inductors freely)
+  n_states: 3           # number of filter states (= number of switch-state vectors)
 
   # Switch series capacitance range (Farads)
   cap_min: 200.0e-15   # 300 fF
@@ -36,6 +38,15 @@ grid:
 
   # Number of discrete inductance choices in inductor_translation_table (config.yaml)
   n_inductor_values: 4
+
+  # Cap pixel pairs: inter-pixel coupling capacitors (axis-aligned, type-1 endpoints only)
+  enable_cap_pairs: false    # set to true to enable cap-pair features (initial + SA actions)
+  max_cap_pairs: 5           # maximum number of cap pixel pairs (only used when enable_cap_pairs: true)
+  cap_pair_min: 50.0e-15     # 50 fF minimum pair capacitance
+  cap_pair_max: 1000.0e-15    # 1000 fF maximum pair capacitance
+  cap_pair_sigma: 50.0e-15   # 20 fF Gaussian noise std for pair cap perturbation
+  cap_pair_min_dist: 2       # min Manhattan distance between pair endpoints (2 = 1 pixel in between)
+  cap_pair_max_dist: 3       # max Manhattan distance between pair endpoints (3 = 2 pixels in between)
 
 # ---------------------------------------------------------------------------
 # FILTER TARGET SPECIFICATIONS
@@ -49,40 +60,50 @@ grid:
 # weight             : contribution weight to total cost
 # ---------------------------------------------------------------------------
 filter_specs:
-  # - state_index:     0
-  #   passband:        [6.0e9, 8.0e9]       # 7 GHz centre, ±1 GHz bandwidth
-  #   passband_min_db: -3.0                 # < -3 dB in passband is penalised
-  #   stopband_regions:
-  #     - [3.0,    5.5e9]                   # below passband
-  #     - [8.5e9,  11e9]                  # above passband
-  #   stopband_max_db: -15.0                # > -15 dB in stopband is penalised
-  #   weight: 1.0
+  ####### 7-24-40G version
   - state_index:     0
-    passband:        [6.0e9, 8.0e9]       # 7 GHz centre, ±1 GHz bandwidth
-    passband_min_db: -0.0                   # < -3 dB in passband is penalised
+    passband:        [6.0e9, 8.0e9]        # 7 GHz centre, ±1 GHz bandwidth
+    passband_min_db: -0.0
     stopband_regions:
-      - [4.0e9,    6.0e9]                   # below passband
-      - [8.0e9,  10.0e9]                   # above passband
-    stopband_max_db: -20.0                  # > -25 dB in stopband is penalised
-    weight: 2.0
-    # Decoupling: state 0 must also attenuate at state 1's passband (20 GHz)
+      - [4.0e9,   6.0e9]                   # below passband
+      - [8.0e9,  14.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    # Decoupling: must also attenuate at states 1 and 2 passbands (24 GHz, 40 GHz)
     cross_stopband_regions:
-      - [36.0e9, 44.0e9]
-    cross_stopband_max_db: -10.0
+      - [22.0e9, 26.0e9]
+      - [38.0e9, 42.0e9]
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
   - state_index:     1
-    passband:        [36.0e9, 44.0e9]       # 20 GHz centre, ±2 GHz bandwidth
+    passband:        [22.0e9, 26.0e9]      # 24 GHz centre, ±2 GHz bandwidth
     passband_min_db: -0.0
     stopband_regions:
-      - [32.0e9,  36.0e9]
-      - [44.0e9,  48.0e9]
-    stopband_max_db: -20.0
-    weight: 2.0
-    # Decoupling: state 1 must also attenuate at state 0's passband (40 GHz)
+      - [14.0e9, 22.0e9]                   # below passband
+      - [26.0e9, 32.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    # Decoupling: must also attenuate at states 0 and 2 passbands (7 GHz, 40 GHz)
     cross_stopband_regions:
-      - [6.0e9, 8.0e9]
-    cross_stopband_max_db: -10.0
+      - [6.0e9,  8.0e9]
+      - [38.0e9, 42.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+
+  - state_index:     2
+    passband:        [38.0e9, 42.0e9]      # 40 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9, 38.0e9]                   # below passband
+      - [42.0e9, 50.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    # Decoupling: must also attenuate at states 0 and 1 passbands (7 GHz, 24 GHz)
+    cross_stopband_regions:
+      - [6.0e9,  8.0e9]
+      - [22.0e9, 26.0e9]
+    cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
 
 # ---------------------------------------------------------------------------
@@ -101,17 +122,30 @@ sa:
 
   # Action parameters
   n_regular_flip: 25         # max pixels to flip per flip_01 action
-  cap_sigma:      50.0e-15  # Gaussian noise std for cap perturbation (50 fF)
+  cap_sigma:      50.0e-15   # Gaussian noise std for cap perturbation (50 fF)
+  max_switch_state_flips:   3  # max bits to flip per flip_switch_state action (k drawn from [1, max])
+  max_inductor_state_flips: 3  # max bits to flip per flip_inductor_state action (k drawn from [1, max])
 
   # Per-action sampling weights (relative, not required to sum to 1)
-  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value, perturb_caps, flip_switch_state]
-  action_weights: [8.0, 4.0, 4.0, 4.0, 4.0, 4.0]
+  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
+  #         perturb_caps, flip_switch_state,
+  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state]
+  action_weights: [4.0, 2.0, 1.0, 4.0,    4.0, 8.0,     3.0, 3.0, 3.0, 16.0]
 
 # Random seed (set to null for non-deterministic)
-seed: 10
+seed: 45
 
 # If true, the initial random design is regenerated until the pixel path from
 # the left feed column to the right feed column is fully 4-connected
 # (Manhattan / up-down-left-right only, no diagonals).  This produces a
 # physically cleaner starting point at the cost of more generation attempts.
 require_4_connected: true
+
+# Dynamic state assignment: before computing cost, find the bijective mapping
+# of simulated states to filter specs that minimises total cost (Hungarian algorithm).
+# This handles cases where the optimizer produces a design whose states are
+# "swapped" relative to the spec ordering — e.g. simulated state 0 actually
+# behaves like the 40 GHz filter while state 2 behaves like the 7 GHz filter.
+# Uses scipy.optimize.linear_sum_assignment when available, falls back to
+# brute-force permutations (safe for N ≤ 8).  Set to false to use fixed ordering.
+dynamic_state_assignment: true

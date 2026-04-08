@@ -38,7 +38,10 @@ from typing import Dict, List, Optional, Tuple
 import yaml
 
 from virtuoso_optimization_SA.actions import random_action
-from virtuoso_optimization_SA.cost import compute_total_cost, specs_from_config, FilterStateSpec
+from virtuoso_optimization_SA.cost import (
+    compute_total_cost, compute_state_cost, get_s21_db,
+    specs_from_config, FilterStateSpec,
+)
 from virtuoso_optimization_SA.design import DesignState
 from virtuoso_optimization_SA.feasibility import generate_random_design, is_feasible
 
@@ -60,11 +63,12 @@ class GAConfig:
     rows:              int
     cols:              int
     n_switches:        int
-    max_inductors:     int
-    n_states:          int
-    cap_min:           float
-    cap_max:           float
-    n_inductor_values: int
+    max_inductors:       int
+    n_initial_inductors: int
+    n_states:            int
+    cap_min:             float
+    cap_max:             float
+    n_inductor_values:   int
 
     # GA algorithm
     pop_size:        int
@@ -80,6 +84,7 @@ class GAConfig:
     n_regular_flip:  int
     cap_sigma:       float
     action_weights:  List[float]
+    use_state_champions: bool
 
     # Paths
     virtuoso_config: str
@@ -96,8 +101,9 @@ class GAConfig:
             rows               = int(grid["rows"]),
             cols               = int(grid["cols"]),
             n_switches         = int(grid["n_switches"]),
-            max_inductors      = int(grid["max_inductors"]),
-            n_states           = int(grid["n_states"]),
+            max_inductors        = int(grid["max_inductors"]),
+            n_initial_inductors  = int(grid.get("n_initial_inductors", 4)),
+            n_states             = int(grid["n_states"]),
             cap_min            = float(grid["cap_min"]),
             cap_max            = float(grid["cap_max"]),
             n_inductor_values  = int(grid.get("n_inductor_values", 4)),
@@ -116,6 +122,7 @@ class GAConfig:
             cap_sigma       = float(ga.get("cap_sigma", 50e-15)),
             action_weights  = [float(w) for w in ga.get(
                 "action_weights", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
+            use_state_champions = bool(ga.get("use_state_champions", True)),
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
@@ -227,13 +234,35 @@ class SwitchableFilterGA:
             print(f"[GA] Generating initial population of {cfg.pop_size} ...")
             population = self._init_population()
             print(f"[GA] Evaluating initial population ...")
-            costs = self._evaluate_batch(engine, population, gen_idx=-1)
+            if cfg.use_state_champions:
+                costs, init_per_state_costs = self._evaluate_batch_with_state_costs(
+                    engine, population, gen_idx=-1
+                )
+            else:
+                costs = self._evaluate_batch(engine, population, gen_idx=-1)
+                init_per_state_costs = []
 
             best_idx    = min(range(len(costs)), key=lambda i: costs[i])
             best_design = population[best_idx].copy()
             best_cost   = costs[best_idx]
-            self._save_best(best_design, best_cost, generation=-1)
+            best_sim_tag = f"gen-1_ind{best_idx}"
+            self._save_best(best_design, best_cost, generation=-1, sim_tag=best_sim_tag)
             self._save_population_snapshot(population, costs, gen=-1)
+
+            # --- State champion initialisation (reuses simulation data, no extra runs) ---
+            # state_champion_costs      : per-state cost (used only to decide which champion wins)
+            # state_champion_total_costs: total cost of the champion (used in population costs list)
+            n_specs = len(self.specs)
+            state_champions: List[Optional[DesignState]] = [None] * n_specs
+            state_champion_costs: List[float]       = [1e9] * n_specs   # per-state
+            state_champion_total_costs: List[float] = [1e9] * n_specs   # total
+            if cfg.use_state_champions and init_per_state_costs:
+                for ind_idx, psc in enumerate(init_per_state_costs):
+                    for si, sc in enumerate(psc):
+                        if sc < state_champion_costs[si]:
+                            state_champion_costs[si]       = sc
+                            state_champion_total_costs[si] = costs[ind_idx]
+                            state_champions[si] = population[ind_idx].copy()
 
             print(f"[GA] Initial best cost: {best_cost:.4f}")
 
@@ -257,9 +286,22 @@ class SwitchableFilterGA:
                         kept_bad       = [population[i].copy() for i in chosen]
                         kept_bad_costs = [costs[i]             for i in chosen]
 
+                # 2b. State champion pool (deduplicated against global elites)
+                sc_pool: List[DesignState] = []
+                sc_pool_costs: List[float] = []
+                if cfg.use_state_champions:
+                    sc_budget = max(0, cfg.pop_size - cfg.n_elite - len(kept_bad))
+                    for si, champ in enumerate(state_champions):
+                        if champ is None or len(sc_pool) >= sc_budget:
+                            break
+                        if not any(champ.matrix == e.matrix for e in elites + sc_pool):
+                            sc_pool.append(champ.copy())
+                            # Use total cost so the population costs list stays on the same scale
+                            sc_pool_costs.append(state_champion_total_costs[si])
+
                 # 3. Produce regular offspring via crossover + mutation
                 offspring: List[DesignState] = []
-                n_offspring = cfg.pop_size - cfg.n_elite - len(kept_bad)
+                n_offspring = cfg.pop_size - cfg.n_elite - len(kept_bad) - len(sc_pool)
                 n_regular   = n_offspring - cfg.n_immigrants
                 max_tries   = n_offspring * 10
                 attempts    = 0
@@ -313,35 +355,57 @@ class SwitchableFilterGA:
                 immigrants: List[DesignState] = []
                 for _ in range(cfg.n_immigrants):
                     immigrant = generate_random_design(
-                        rows              = cfg.rows,
-                        cols              = cfg.cols,
-                        n_switches        = cfg.n_switches,
-                        max_inductors     = cfg.max_inductors,
-                        n_states          = cfg.n_states,
-                        cap_min           = cfg.cap_min,
-                        cap_max           = cfg.cap_max,
-                        rng               = self.rng,
-                        n_inductor_values = cfg.n_inductor_values,
+                        rows                = cfg.rows,
+                        cols                = cfg.cols,
+                        n_switches          = cfg.n_switches,
+                        max_inductors       = cfg.max_inductors,
+                        n_initial_inductors = cfg.n_initial_inductors,
+                        n_states            = cfg.n_states,
+                        cap_min             = cfg.cap_min,
+                        cap_max             = cfg.cap_max,
+                        rng                 = self.rng,
+                        n_inductor_values   = cfg.n_inductor_values,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
 
                 # 5. Evaluate all new individuals in one batch
-                to_evaluate     = offspring + immigrants
-                new_costs       = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
+                to_evaluate = offspring + immigrants
+                if cfg.use_state_champions:
+                    new_costs, new_per_state = self._evaluate_batch_with_state_costs(
+                        engine, to_evaluate, gen_idx=gen
+                    )
+                    # Update state champions from newly evaluated individuals
+                    for local_idx, psc in enumerate(new_per_state):
+                        for si, sc in enumerate(psc):
+                            if sc < state_champion_costs[si]:
+                                state_champion_costs[si]       = sc
+                                state_champion_total_costs[si] = new_costs[local_idx]
+                                state_champions[si] = to_evaluate[local_idx].copy()
+                else:
+                    new_costs = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
                 offspring_costs = new_costs[:len(offspring)]
                 immigrant_costs = new_costs[len(offspring):]
 
-                # 6. Assemble new population: elites | kept_bad | offspring | immigrants
-                population = elites + kept_bad + offspring + immigrants
-                costs      = elite_costs + kept_bad_costs + offspring_costs + immigrant_costs
+                # 6. Assemble new population: elites | state_champs | kept_bad | offspring | immigrants
+                population = elites + sc_pool + kept_bad + offspring + immigrants
+                costs      = elite_costs + sc_pool_costs + kept_bad_costs + offspring_costs + immigrant_costs
 
                 # Track global best
                 gen_best_idx = min(range(len(costs)), key=lambda i: costs[i])
                 if costs[gen_best_idx] < best_cost:
                     best_design = population[gen_best_idx].copy()
                     best_cost   = costs[gen_best_idx]
-                    self._save_best(best_design, best_cost, generation=gen)
+                    # Compute population-slot offset to find the sim folder index.
+                    # Slots: elites[0..n_elite) | sc_pool | kept_bad | to_evaluate[0..)
+                    carried_count = cfg.n_elite + len(sc_pool) + len(kept_bad)
+                    if gen_best_idx >= carried_count:
+                        best_local_idx = gen_best_idx - carried_count
+                        best_sim_tag   = f"gen{gen}_ind{best_local_idx}"
+                    else:
+                        best_sim_tag = f"elite/carried_gen{gen}_slot{gen_best_idx}"
+                    self._save_best(best_design, best_cost, generation=gen,
+                                    sim_tag=best_sim_tag)
 
                 # Stats
                 diversity = _population_diversity(population)
@@ -349,18 +413,30 @@ class SwitchableFilterGA:
                 worst_cost = max(costs)
                 elapsed    = time.time() - start_time
 
-                self._log_generation(gen, best_cost, mean_cost, worst_cost,
-                                     diversity, elapsed)
+                self._log_generation(gen, best_cost, best_sim_tag, mean_cost,
+                                     worst_cost, diversity, elapsed)
                 self._save_progress()
                 self._save_population_snapshot(population, costs, gen=gen)
                 self._plot_progress()
 
-                print(
-                    f"[GA] gen {gen:4d}/{cfg.n_gen}  "
-                    f"best={best_cost:.4f}  mean={mean_cost:.4f}  "
-                    f"worst={worst_cost:.4f}  div={diversity:.3f}  "
-                    f"{elapsed:.1f}s"
-                )
+                if cfg.use_state_champions:
+                    sc_costs_str = "  ".join(
+                        f"sc{si}={c:.4f}" for si, c in enumerate(state_champion_costs)
+                    )
+                    print(
+                        f"[GA] gen {gen:4d}/{cfg.n_gen}  "
+                        f"best={best_cost:.4f}  mean={mean_cost:.4f}  "
+                        f"worst={worst_cost:.4f}  div={diversity:.3f}  "
+                        f"{sc_costs_str}  "
+                        f"{elapsed:.1f}s"
+                    )
+                else:
+                    print(
+                        f"[GA] gen {gen:4d}/{cfg.n_gen}  "
+                        f"best={best_cost:.4f}  mean={mean_cost:.4f}  "
+                        f"worst={worst_cost:.4f}  div={diversity:.3f}  "
+                        f"{elapsed:.1f}s"
+                    )
 
         print(f"\n[GA] Finished. Best cost: {best_cost:.4f}")
         print(f"[GA] Best design:\n{best_design}")
@@ -387,15 +463,16 @@ class SwitchableFilterGA:
         population: List[DesignState] = []
         for i in range(cfg.pop_size):
             design = generate_random_design(
-                rows              = cfg.rows,
-                cols              = cfg.cols,
-                n_switches        = cfg.n_switches,
-                max_inductors     = cfg.max_inductors,
-                n_states          = cfg.n_states,
-                cap_min           = cfg.cap_min,
-                cap_max           = cfg.cap_max,
-                rng               = self.rng,
-                n_inductor_values = cfg.n_inductor_values,
+                rows                = cfg.rows,
+                cols                = cfg.cols,
+                n_switches          = cfg.n_switches,
+                max_inductors       = cfg.max_inductors,
+                n_initial_inductors = cfg.n_initial_inductors,
+                n_states            = cfg.n_states,
+                cap_min             = cfg.cap_min,
+                cap_max             = cfg.cap_max,
+                rng                 = self.rng,
+                n_inductor_values   = cfg.n_inductor_values,
             )
             if design is None:
                 raise RuntimeError(
@@ -446,6 +523,54 @@ class SwitchableFilterGA:
             return 1e9
         return compute_total_cost(result.s_param_files, self.specs)
 
+    def _per_state_costs_from_result(self, result: "RunResult") -> List[float]:
+        """Return per-spec cost list (parallel to self.specs). 1e9 on failure."""
+        n = len(self.specs)
+        if not result.success:
+            return [1e9] * n
+        per_state: List[float] = []
+        for spec in self.specs:
+            si = spec.state_index
+            if si >= len(result.s_param_files) or result.s_param_files[si] is None:
+                per_state.append(1e9 * spec.weight)
+                continue
+            try:
+                freqs, s21_db_vals = get_s21_db(result.s_param_files[si])
+                per_state.append(compute_state_cost(freqs, s21_db_vals, spec))
+            except Exception:
+                per_state.append(1e9 * spec.weight)
+        return per_state
+
+    def _evaluate_batch_with_state_costs(
+        self,
+        engine: "ParallelVirtuosoEngine",
+        individuals: List[DesignState],
+        gen_idx: int,
+    ) -> Tuple[List[float], List[List[float]]]:
+        """
+        Like _evaluate_batch but also returns per-state costs.
+
+        Returns
+        -------
+        costs           : List[float]         — total cost per individual
+        per_state_costs : List[List[float]]   — [individual_idx][spec_idx]
+        """
+        if not individuals:
+            return [], []
+        overrides = [
+            self._build_override(d, gen_idx, i)
+            for i, d in enumerate(individuals)
+        ]
+        results = engine.run_batch(overrides)
+        costs: List[float] = []
+        per_state_costs: List[List[float]] = []
+        for r in results:
+            c = self._cost_from_result(r)
+            costs.append(c)
+            per_state_costs.append(self._per_state_costs_from_result(r))
+            (r.run_dir / "cost.txt").write_text(f"{c}\n")
+        return costs, per_state_costs
+
     # ------------------------------------------------------------------
     # Persistence & plotting
     # ------------------------------------------------------------------
@@ -455,35 +580,42 @@ class SwitchableFilterGA:
         design: DesignState,
         cost: float,
         generation: int,
+        sim_tag: str = "",
     ) -> None:
+        sim_dir = str(self.output_dir / "sims" / sim_tag) if sim_tag else ""
         data = {
-            "generation":     generation,
-            "cost":           cost,
-            "matrix":         design.matrix,
-            "switch_states":  design.switch_states,
-            "cap_values":     design.cap_values,
-            "inductor_values": design.inductor_values,
+            "generation":            generation,
+            "sim_tag":               sim_tag,
+            "sim_dir":               sim_dir,
+            "cost":                  cost,
+            "matrix":                design.matrix,
+            "switch_states":         design.switch_states,
+            "cap_values":            design.cap_values,
+            "inductor_values":       design.inductor_values,
+            "inductor_switch_states": design.inductor_switch_states,
         }
         path = self.output_dir / "best_design.json"
         path.write_text(json.dumps(data, indent=2))
-        print(f"  [GA] Best design saved → {path} (cost={cost:.4f})")
+        print(f"  [GA] Best design saved → {path}  cost={cost:.4f}  sim={sim_tag}")
 
     def _log_generation(
         self,
         gen: int,
         best_cost: float,
+        best_sim_tag: str,
         mean_cost: float,
         worst_cost: float,
         diversity: float,
         elapsed: float,
     ) -> None:
         self._progress.append({
-            "gen":        gen,
-            "best_cost":  best_cost,
-            "mean_cost":  mean_cost,
-            "worst_cost": worst_cost,
-            "diversity":  diversity,
-            "elapsed_s":  elapsed,
+            "gen":          gen,
+            "best_cost":    best_cost,
+            "best_sim_tag": best_sim_tag,
+            "mean_cost":    mean_cost,
+            "worst_cost":   worst_cost,
+            "diversity":    diversity,
+            "elapsed_s":    elapsed,
         })
 
     def _save_progress(self) -> None:
