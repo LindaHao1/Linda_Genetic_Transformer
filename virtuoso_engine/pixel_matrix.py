@@ -38,8 +38,10 @@ def analyze_matrix(matrix: List[List[int]]) -> Dict[str, Any]:
         num_cols    (int)
         ind_pixels  list of (row, col, ind_index)  — type-2 cells
         sw_pixels   list of (row, col,  sw_index)  — type-3 cells
+        via_pixels  list of (row, col, via_index)  — type-4 cells
         num_ind     int
         num_sw      int
+        num_via     int
         all_pixels  list of (row, col, pixel_type)  — every cell
     """
     num_rows = len(matrix)
@@ -51,18 +53,20 @@ def analyze_matrix(matrix: List[List[int]]) -> Dict[str, Any]:
 
     ind_pixels: List[Tuple[int, int, int]] = []
     sw_pixels:  List[Tuple[int, int, int]] = []
+    via_pixels: List[Tuple[int, int, int]] = []
     all_pixels: List[Tuple[int, int, int]] = []
 
     ind_idx = 0
     sw_idx  = 0
+    via_idx = 0
 
     for row in range(num_rows):
         for col in range(num_cols):
             ptype = int(matrix[row][col])
-            if ptype not in (0, 1, 2, 3):
+            if ptype not in (0, 1, 2, 3, 4):
                 raise ValueError(
                     f"Invalid pixel type {ptype!r} at ({row}, {col}). "
-                    "Valid types: 0 (ground), 1 (metal), 2 (inductor), 3 (switch)."
+                    "Valid types: 0 (ground), 1 (metal), 2 (inductor), 3 (switch), 4 (via/gnd-short)."
                 )
             all_pixels.append((row, col, ptype))
             if ptype == 2:
@@ -71,14 +75,19 @@ def analyze_matrix(matrix: List[List[int]]) -> Dict[str, Any]:
             elif ptype == 3:
                 sw_pixels.append((row, col, sw_idx))
                 sw_idx += 1
+            elif ptype == 4:
+                via_pixels.append((row, col, via_idx))
+                via_idx += 1
 
     return {
         "num_rows":   num_rows,
         "num_cols":   num_cols,
         "ind_pixels": ind_pixels,
         "sw_pixels":  sw_pixels,
+        "via_pixels": via_pixels,
         "num_ind":    ind_idx,
         "num_sw":     sw_idx,
+        "num_via":    via_idx,
         "all_pixels": all_pixels,
     }
 
@@ -182,6 +191,8 @@ def build_emx_port_flags(
         flags.append(f"-p IND_{idx}")
     for _, _, idx in matrix_info["sw_pixels"]:
         flags.append(f"-p SW_{idx}")
+    for _, _, idx in matrix_info["via_pixels"]:
+        flags.append(f"-p VIA_{idx}")
     if cap_pair_entries:
         for name, _, _ in cap_pair_entries:
             flags.append(f"-p {name}")
@@ -190,7 +201,7 @@ def build_emx_port_flags(
 
 def total_ports(matrix_info: Dict[str, Any], num_cap_pairs: int = 0) -> int:
     """Total EMX port count: PIX_IN + PIX_OUT + PIX_IN_GND + PIX_OUT_GND + num_ind + num_sw + 2*num_cap_pairs."""
-    return 4 + matrix_info["num_ind"] + matrix_info["num_sw"] + 2 * num_cap_pairs
+    return 4 + matrix_info["num_ind"] + matrix_info["num_sw"] + matrix_info["num_via"] + 2 * num_cap_pairs
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +234,9 @@ def build_skill_port_names_list(matrix_info: Dict[str, Any]) -> str:
         elif ptype == 3:
             idx = next(i for r, c, i in matrix_info["sw_pixels"] if r == row and c == col)
             names.append(f'"SW_{idx}"')
+        elif ptype == 4:
+            idx = next(i for r, c, i in matrix_info["via_pixels"] if r == row and c == col)
+            names.append(f'"VIA_{idx}"')
         else:
             names.append('""')
     return "list(" + " ".join(names) + ")"

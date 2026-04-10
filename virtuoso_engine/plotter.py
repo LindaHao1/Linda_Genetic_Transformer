@@ -193,6 +193,7 @@ _PIXEL_STYLE = {
     1: ("MTL",  "#5ba8d4"),   # steel blue — top + ground metal
     2: ("IND",  "#e8a838"),   # amber      — inductor port
     3: ("SW",   "#d94f3d"),   # red        — switch port
+    4: ("VIA",  "#9b59b6"),   # purple     — via/gnd-short
 }
 
 

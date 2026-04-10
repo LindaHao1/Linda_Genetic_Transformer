@@ -26,6 +26,7 @@ from .feasibility import (
     _build_other_interior_cells,
     _can_place_inductor_at,
     _can_place_switch_at,
+    _can_place_via_at,
     check_cap_pair_valid,
     check_connectivity,
     check_inductor_count,
@@ -314,6 +315,84 @@ def action_flip_inductor(
             "n_inductors_after": n_ind - 1,
         }
         return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action (via): add/remove via-ground pixels (type 4)
+# ---------------------------------------------------------------------------
+
+def action_flip_via(
+    state: DesignState,
+    max_vias: int,
+    via_flip_max_count: int,
+    rng: random.Random,
+) -> tuple:
+    """
+    Remove up to ``via_flip_max_count`` random via pixels (type 4 → 1) and
+    add up to ``via_flip_max_count`` random via pixels (type 1 → 4) in one step.
+
+    Both counts are drawn independently from [0, via_flip_max_count].  The
+    result is rejected if the total number of vias after the operation would
+    exceed ``max_vias``, or if the net change is zero.
+
+    Via spacing rule: all 8-neighbours of a type-4 pixel must be type 0 or 1.
+
+    Returns (mutated copy, info_dict), or (None, None) on failure.
+    """
+    if max_vias <= 0:
+        return None, None
+
+    n_remove = rng.randint(0, via_flip_max_count)
+    n_add    = rng.randint(0, via_flip_max_count)
+    if n_remove == 0 and n_add == 0:
+        return None, None
+
+    new  = state.copy()
+    rows = new.rows
+    cols = new.cols
+
+    # --- Remove phase ---
+    via_positions = [
+        (r, c) for r in range(rows) for c in range(cols)
+        if new.matrix[r][c] == 4
+    ]
+    n_remove = min(n_remove, len(via_positions))
+    if n_remove > 0:
+        rng.shuffle(via_positions)
+        for r, c in via_positions[:n_remove]:
+            new.matrix[r][c] = 1
+
+    # --- Add phase ---
+    actual_added = 0
+    if n_add > 0:
+        eligible = [
+            (r, c) for r in range(rows) for c in range(1, cols - 1)
+            if new.matrix[r][c] == 1 and _can_place_via_at(new.matrix, r, c)
+        ]
+        rng.shuffle(eligible)
+        for r, c in eligible:
+            if actual_added >= n_add:
+                break
+            if _can_place_via_at(new.matrix, r, c):
+                new.matrix[r][c] = 4
+                actual_added += 1
+    n_add = actual_added
+
+    # --- Enforce max ---
+    n_via_after = sum(v == 4 for row in new.matrix for v in row)
+    if n_via_after > max_vias:
+        return None, None
+
+    if n_remove == 0 and n_add == 0:
+        return None, None  # effective no-op
+
+    info = {
+        "action":        "flip_via",
+        "n_removed":     n_remove,
+        "n_added":       n_add,
+        "n_vias_after":  n_via_after,
+    }
+    return new, info
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +767,7 @@ _ACTION_NAMES = [
     "remove_cap_pair",
     "perturb_pair_caps",
     "flip_inductor_state",
+    "flip_via",
 ]
 
 
@@ -709,6 +789,8 @@ def _dispatch_action(
     cap_pair_max_dist: int,
     max_switch_state_flips: int,
     max_inductor_state_flips: int,
+    max_vias: int = 0,
+    via_flip_max_count: int = 3,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -748,6 +830,8 @@ def _dispatch_action(
         )
     elif action_name == "flip_inductor_state":
         return action_flip_inductor_state(state, rng, max_flips=max_inductor_state_flips)
+    elif action_name == "flip_via":
+        return action_flip_via(state, max_vias, via_flip_max_count, rng)
     return None, None
 
 
@@ -770,6 +854,8 @@ def random_action(
     cap_pair_max_dist: int = 3,
     max_switch_state_flips: int = 1,
     max_inductor_state_flips: int = 1,
+    max_vias: int = 0,
+    via_flip_max_count: int = 3,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -787,12 +873,13 @@ def random_action(
 
     Parameters
     ----------
-    action_weights : optional list of 10 floats (unnormalised weights).
+    action_weights : optional list of 11 floats (unnormalised weights).
         Order matches _ACTION_NAMES:
         [flip_01, move_switch, flip_inductor, flip_inductor_value,
          perturb_caps, flip_switch_state,
-         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state]
-        Lists shorter than 10 are zero-padded; longer lists are truncated.
+         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state,
+         flip_via]
+        Lists shorter than 11 are zero-padded; longer lists are truncated.
     max_retries_per_action : number of attempts for the chosen action before
         giving up on it and sampling a different one.
     max_cap_pairs : maximum number of cap pixel pairs allowed (0 disables pair actions).
@@ -820,6 +907,8 @@ def random_action(
         cap_pair_max_dist=cap_pair_max_dist,
         max_switch_state_flips=max_switch_state_flips,
         max_inductor_state_flips=max_inductor_state_flips,
+        max_vias=max_vias,
+        via_flip_max_count=via_flip_max_count,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

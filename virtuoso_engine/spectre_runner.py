@@ -113,6 +113,7 @@ def generate_state_netlist(
     cap_pair_indices: Optional[List[tuple]] = None,
     cap_pair_values: Optional[List[float]] = None,
     inductor_state_vector: Optional[List[int]] = None,
+    via_indices_in_port_order: Optional[List[int]] = None,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
@@ -170,6 +171,14 @@ def generate_state_netlist(
         for port_idx in gnd_indices_in_port_order:
             node = node_names[port_idx]
             lines.append(f"v_{node} ({node} 0) vsource dc=0")
+        lines.append("")
+
+    # --- Via connections (always shorted to GND) ---
+    if via_indices_in_port_order:
+        lines.append("// Via connections (shorted to global ground)")
+        for local_idx, port_idx in enumerate(via_indices_in_port_order):
+            node = node_names[port_idx]
+            lines.append(f"v_via{local_idx} ({node} 0) vsource dc=0")
         lines.append("")
 
     # --- Inductor connections (state-dependent) ---
@@ -280,6 +289,7 @@ def run_all_states(
     ind_indices = [i for i, name in enumerate(port_order) if name.startswith("IND_")]
     gnd_indices = [i for i, name in enumerate(port_order)
                    if name in ("PIX_IN_GND", "PIX_OUT_GND")]
+    via_indices = [i for i, name in enumerate(port_order) if name.startswith("VIA_")]
 
     print(f"  [spectre_runner] GND ports: {[port_order[i] for i in gnd_indices]}")
 
@@ -366,6 +376,7 @@ def run_all_states(
             cap_pair_indices          = cap_pair_indices,
             cap_pair_values           = cap_pair_values,
             inductor_state_vector     = inductor_state_vector,
+            via_indices_in_port_order = via_indices,
         )
 
         # --- Run Spectre ---

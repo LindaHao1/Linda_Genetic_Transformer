@@ -198,8 +198,9 @@ def is_feasible(
     min_switches: Optional[int] = None,
     max_switches: Optional[int] = None,
     four_connected: bool = False,
+    max_vias: int = 0,
 ) -> bool:
-    """Full feasibility check (all rules a–f).
+    """Full feasibility check (all rules a–f, plus optional via rules).
 
     When ``min_switches`` / ``max_switches`` are provided the switch count is
     checked against [min_switches, max_switches] instead of the exact value
@@ -208,6 +209,8 @@ def is_feasible(
 
     When ``four_connected=True`` the connectivity rule uses 4-way (Manhattan)
     connectivity instead of the default 8-way.
+
+    When ``max_vias > 0`` via spacing and count rules are enforced.
     """
     if min_switches is not None or max_switches is not None:
         lo = min_switches if min_switches is not None else n_switches_required
@@ -216,6 +219,8 @@ def is_feasible(
     else:
         sw_ok = check_switch_count(matrix, n_switches_required)
 
+    via_ok = (max_vias == 0) or (check_via_spacing(matrix) and check_via_count(matrix, max_vias))
+
     return (
         check_feed_columns(matrix)
         and check_connectivity(matrix, four_connected=four_connected)
@@ -223,6 +228,7 @@ def is_feasible(
         and check_inductor_spacing(matrix)
         and check_inductor_count(matrix, max_inductors)
         and sw_ok
+        and via_ok
     )
 
 
@@ -425,6 +431,44 @@ def _can_place_inductor_at(
     return True
 
 
+def _can_place_via_at(
+    matrix: List[List[int]],
+    r: int,
+    c: int,
+) -> bool:
+    """
+    Return True if placing a via-ground pixel (type 4) at (r, c) would not
+    violate the spacing rule: all 8-neighbours must be type 0 or 1 only.
+    Assumes the cell is currently type 1 (metal).
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+    if c == 0 or c == cols - 1:
+        return False
+    for nr, nc in _neighbours_8(r, c, rows, cols):
+        if matrix[nr][nc] not in (0, 1):
+            return False
+    return True
+
+
+def check_via_spacing(matrix: List[List[int]]) -> bool:
+    """Via spacing rule: all 8-neighbours of every type-4 pixel must be 0 or 1."""
+    rows = len(matrix)
+    cols = len(matrix[0])
+    for r in range(rows):
+        for c in range(cols):
+            if matrix[r][c] == 4:
+                for nr, nc in _neighbours_8(r, c, rows, cols):
+                    if matrix[nr][nc] not in (0, 1):
+                        return False
+    return True
+
+
+def check_via_count(matrix: List[List[int]], max_vias: int) -> bool:
+    """Return True if the number of type-4 pixels does not exceed max_vias."""
+    return sum(v == 4 for row in matrix for v in row) <= max_vias
+
+
 # ---------------------------------------------------------------------------
 # Random design generation
 # ---------------------------------------------------------------------------
@@ -449,6 +493,8 @@ def generate_random_design(
     cap_pair_max: float = 500e-15,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    n_init_vias: int = 0,
+    max_vias: int = 0,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -539,9 +585,28 @@ def generate_random_design(
                     placed_ind += 1
             # Don't retry matrix if we couldn't place all — just use fewer
 
+        # --- Step 5b: place initial via-ground pixels (type 4) ---
+        if n_init_vias > 0 and max_vias > 0:
+            eligible_via = [
+                (r, c)
+                for r in range(rows)
+                for c in range(1, cols - 1)
+                if matrix[r][c] == 1 and _can_place_via_at(matrix, r, c)
+            ]
+            rng.shuffle(eligible_via)
+            placed_via = 0
+            for (r, c) in eligible_via:
+                if placed_via >= min(n_init_vias, max_vias):
+                    break
+                if _can_place_via_at(matrix, r, c):
+                    matrix[r][c] = 4
+                    placed_via += 1
+            # Don't retry matrix if we couldn't place all — just use fewer
+
         # --- Final feasibility check ---
         if not is_feasible(matrix, n_switches, max_inductors,
-                           four_connected=require_4_connected):
+                           four_connected=require_4_connected,
+                           max_vias=max_vias):
             continue
 
         # --- Step 6: generate switch states, inductor switch states, cap / inductor values ---

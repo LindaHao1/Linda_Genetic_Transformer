@@ -82,11 +82,11 @@ class SAConfig:
     cap_sigma:                float
     max_switch_state_flips:   int   # max bits to flip per flip_switch_state action
     max_inductor_state_flips: int   # max bits to flip per flip_inductor_state action
-    action_weights: List[float]  # 10-element weights: [flip_01, move_switch,
+    action_weights: List[float]  # 11-element weights: [flip_01, move_switch,
                                  #   flip_inductor, flip_inductor_value,
                                  #   perturb_caps, flip_switch_state,
                                  #   add_cap_pair, remove_cap_pair, perturb_pair_caps,
-                                 #   flip_inductor_state]
+                                 #   flip_inductor_state, flip_via]
 
     # Paths
     virtuoso_config: str   # path to the Virtuoso engine config YAML
@@ -102,6 +102,21 @@ class SAConfig:
     # to filter specs before computing cost.  Helps when the optimiser produces
     # a design whose states are "swapped" relative to the spec ordering.
     dynamic_state_assignment: bool = True
+
+    # Via-ground pixel hyperparameters
+    n_max_vias:         int = 0  # maximum number of type-4 (via) pixels allowed
+    n_init_vias:        int = 0  # via pixels to place in the initial design
+    via_flip_max_count: int = 3  # max vias to add or remove per flip_via action
+
+    # Random-range overrides for initial design generation.
+    # When set, the actual initial counts are sampled uniformly from [min, max]
+    # instead of using the fixed point values above.  -1 = use the fixed value.
+    n_switches_min:          int = -1
+    n_switches_max:          int = -1
+    n_initial_inductors_min: int = -1
+    n_initial_inductors_max: int = -1
+    n_init_vias_min:         int = -1
+    n_init_vias_max:         int = -1
 
     @classmethod
     def from_dict(cls, d: dict) -> "SAConfig":
@@ -136,7 +151,7 @@ class SAConfig:
             max_switch_state_flips   = int(sa.get("max_switch_state_flips", 1)),
             max_inductor_state_flips = int(sa.get("max_inductor_state_flips", 1)),
             action_weights = [float(w) for w in sa.get(
-                "action_weights", [1.0] * 10)],
+                "action_weights", [1.0] * 11)],
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
@@ -144,6 +159,17 @@ class SAConfig:
             seed                      = d.get("seed"),
             require_4_connected       = bool(d.get("require_4_connected", False)),
             dynamic_state_assignment  = bool(d.get("dynamic_state_assignment", True)),
+
+            n_max_vias         = int(grid.get("n_max_vias", 0)),
+            n_init_vias        = int(grid.get("n_init_vias", 0)),
+            via_flip_max_count = int(sa.get("via_flip_max_count", 3)),
+
+            n_switches_min          = int(grid.get("n_switches_min",          -1)),
+            n_switches_max          = int(grid.get("n_switches_max",          -1)),
+            n_initial_inductors_min = int(grid.get("n_initial_inductors_min", -1)),
+            n_initial_inductors_max = int(grid.get("n_initial_inductors_max", -1)),
+            n_init_vias_min         = int(grid.get("n_init_vias_min",         -1)),
+            n_init_vias_max         = int(grid.get("n_init_vias_max",         -1)),
         )
 
 
@@ -304,12 +330,25 @@ class SwitchableFilterSA:
     def _generate_initial_design(self) -> DesignState:
         cfg = self.cfg
         effective_max_cap_pairs = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0
+
+        # Randomly sample initial counts when a range is configured.
+        sw_lo  = cfg.n_switches_min          if cfg.n_switches_min          >= 0 else cfg.n_switches
+        sw_hi  = cfg.n_switches_max          if cfg.n_switches_max          >= 0 else cfg.n_switches
+        ind_lo = cfg.n_initial_inductors_min if cfg.n_initial_inductors_min >= 0 else cfg.n_initial_inductors
+        ind_hi = cfg.n_initial_inductors_max if cfg.n_initial_inductors_max >= 0 else cfg.n_initial_inductors
+        via_lo = cfg.n_init_vias_min         if cfg.n_init_vias_min         >= 0 else cfg.n_init_vias
+        via_hi = cfg.n_init_vias_max         if cfg.n_init_vias_max         >= 0 else cfg.n_init_vias
+
+        init_n_switches    = self.rng.randint(sw_lo,  sw_hi)
+        init_n_inductors   = self.rng.randint(ind_lo, ind_hi)
+        init_n_vias        = self.rng.randint(via_lo, via_hi)
+
         design = generate_random_design(
             rows                = cfg.rows,
             cols                = cfg.cols,
-            n_switches          = cfg.n_switches,
+            n_switches          = init_n_switches,
             max_inductors       = cfg.max_inductors,
-            n_initial_inductors = cfg.n_initial_inductors,
+            n_initial_inductors = init_n_inductors,
             n_states            = cfg.n_states,
             cap_min             = cfg.cap_min,
             cap_max             = cfg.cap_max,
@@ -321,6 +360,8 @@ class SwitchableFilterSA:
             cap_pair_max        = cfg.cap_pair_max,
             cap_pair_min_dist   = cfg.cap_pair_min_dist,
             cap_pair_max_dist   = cfg.cap_pair_max_dist,
+            n_init_vias         = init_n_vias,
+            max_vias            = cfg.n_max_vias,
         )
         if design is None:
             raise RuntimeError(
@@ -364,10 +405,12 @@ class SwitchableFilterSA:
                 cap_pair_max_dist         = cfg.cap_pair_max_dist,
                 max_switch_state_flips    = cfg.max_switch_state_flips,
                 max_inductor_state_flips  = cfg.max_inductor_state_flips,
+                max_vias                  = cfg.n_max_vias,
+                via_flip_max_count        = cfg.via_flip_max_count,
             )
             if candidate is None:
                 continue
-            if not is_feasible(candidate.matrix, cfg.n_switches, cfg.max_inductors):
+            if not is_feasible(candidate.matrix, candidate.n_switches, cfg.max_inductors, max_vias=cfg.n_max_vias):
                 continue
             # Deduplicate by matrix + inductor_values fingerprint
             key = (

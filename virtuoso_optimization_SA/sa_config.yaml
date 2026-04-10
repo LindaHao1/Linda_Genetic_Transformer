@@ -30,6 +30,17 @@ grid:
   max_inductors: 10     # maximum number of inductor pixels (type 2) allowed
   n_initial_inductors: 4  # number of inductor pixels to place in the initial random design
                           # (capped at max_inductors; SA can add/remove inductors freely)
+
+  # Optional ranges for randomly sampling initial counts.
+  # When set, the initial design is generated with a count drawn uniformly
+  # from [min, max] instead of the fixed value above.  Omit (or set equal to
+  # the fixed value) to keep the original fixed-count behaviour.
+  n_switches_min: 2
+  n_switches_max: 6
+  n_initial_inductors_min: 0
+  n_initial_inductors_max: 8
+  n_init_vias_min: 0
+  n_init_vias_max: 4
   n_states: 3           # number of filter states (= number of switch-state vectors)
 
   # Switch series capacitance range (Farads)
@@ -38,6 +49,10 @@ grid:
 
   # Number of discrete inductance choices in inductor_translation_table (config.yaml)
   n_inductor_values: 4
+
+  # Via-ground pixels (type 4): always shorted to GND in simulation
+  n_max_vias: 5          # maximum number of via-ground pixels allowed
+  n_init_vias: 2         # via-ground pixels to place in the initial random design (used when no range set)
 
   # Cap pixel pairs: inter-pixel coupling capacitors (axis-aligned, type-1 endpoints only)
   enable_cap_pairs: false    # set to true to enable cap-pair features (initial + SA actions)
@@ -69,12 +84,18 @@ filter_specs:
       - [8.0e9,  14.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
+    passband_weight: 1.0
+    stopband_weight: 1.0
     # Decoupling: must also attenuate at states 1 and 2 passbands (24 GHz, 40 GHz)
     cross_stopband_regions:
       - [22.0e9, 26.0e9]
       - [38.0e9, 42.0e9]
     cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
+    enable_s11_cost:           false       # set true to add S11 reflection penalties
+    s11_passband_max_db:       -30.0       # want low S11 in passband (good match)
+    s11_stopband_min_db:       -10.0       # want high S11 in stopband (high reflection)
+    s11_cross_stopband_min_db: -10.0
 
   - state_index:     1
     passband:        [22.0e9, 26.0e9]      # 24 GHz centre, ±2 GHz bandwidth
@@ -84,12 +105,18 @@ filter_specs:
       - [26.0e9, 32.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
+    passband_weight: 1.0
+    stopband_weight: 1.0
     # Decoupling: must also attenuate at states 0 and 2 passbands (7 GHz, 40 GHz)
     cross_stopband_regions:
       - [6.0e9,  8.0e9]
       - [38.0e9, 42.0e9]
     cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -30.0
+    s11_stopband_min_db:       -10.0
+    s11_cross_stopband_min_db: -10.0
 
   - state_index:     2
     passband:        [38.0e9, 42.0e9]      # 40 GHz centre, ±2 GHz bandwidth
@@ -99,12 +126,18 @@ filter_specs:
       - [42.0e9, 50.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
+    passband_weight: 1.0
+    stopband_weight: 1.0
     # Decoupling: must also attenuate at states 0 and 1 passbands (7 GHz, 24 GHz)
     cross_stopband_regions:
       - [6.0e9,  8.0e9]
       - [22.0e9, 26.0e9]
     cross_stopband_max_db: -20.0
     cross_stopband_weight: 1.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -30.0
+    s11_stopband_min_db:       -10.0
+    s11_cross_stopband_min_db: -10.0
 
 # ---------------------------------------------------------------------------
 # SIMULATED ANNEALING PARAMETERS
@@ -125,12 +158,13 @@ sa:
   cap_sigma:      50.0e-15   # Gaussian noise std for cap perturbation (50 fF)
   max_switch_state_flips:   3  # max bits to flip per flip_switch_state action (k drawn from [1, max])
   max_inductor_state_flips: 3  # max bits to flip per flip_inductor_state action (k drawn from [1, max])
+  via_flip_max_count: 3        # max vias to add or remove per flip_via action
 
   # Per-action sampling weights (relative, not required to sum to 1)
   # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
   #         perturb_caps, flip_switch_state,
-  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state]
-  action_weights: [4.0, 2.0, 1.0, 4.0,    4.0, 8.0,     3.0, 3.0, 3.0, 16.0]
+  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
+  action_weights: [4.0, 4.0, 1.0, 4.0, 8.0, 8.0, 3.0, 3.0, 3.0, 8.0, 8.0]
 
 # Random seed (set to null for non-deterministic)
 seed: 45

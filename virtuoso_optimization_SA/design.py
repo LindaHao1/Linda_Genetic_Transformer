@@ -69,6 +69,11 @@ class DesignState:
         return sum(v == 2 for row in self.matrix for v in row)
 
     @property
+    def n_vias(self) -> int:
+        """Count via-ground pixels (type 4) in the matrix."""
+        return sum(v == 4 for row in self.matrix for v in row)
+
+    @property
     def n_states(self) -> int:
         return len(self.switch_states)
 

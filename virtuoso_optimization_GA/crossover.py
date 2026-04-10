@@ -37,6 +37,7 @@ from virtuoso_optimization_SA.feasibility import (
 )
 
 
+
 # ---------------------------------------------------------------------------
 # Position → index lookup helpers
 # ---------------------------------------------------------------------------
@@ -102,16 +103,18 @@ def _fix_inductors(
 
 def _fix_switches(
     matrix: List[List[int]],
-    n_switches_required: int,
+    min_switches: int,
+    max_switches: int,
     rng: random.Random,
 ) -> None:
     """
     Repair switches in-place:
     1. Remove switch pixels (type 3) that violate the spacing rule
        (any type-2 or type-3 neighbour).
-    2. Adjust switch count to exactly n_switches_required:
-       - If below: randomly place switches on eligible type-1 interior pixels.
-       - If above: randomly remove the excess switches.
+    2. Adjust switch count to be within [min_switches, max_switches]:
+       - If above max: randomly remove the excess switches.
+       - If below min: randomly place switches on eligible type-1 interior pixels.
+       - If within range: leave the count as-is.
     """
     rows = len(matrix)
     cols = len(matrix[0])
@@ -139,15 +142,15 @@ def _fix_switches(
     ]
     n_current = len(sw_positions)
 
-    if n_current > n_switches_required:
+    if n_current > max_switches:
         # Remove excess randomly
         rng.shuffle(sw_positions)
-        for r, c in sw_positions[:n_current - n_switches_required]:
+        for r, c in sw_positions[:n_current - max_switches]:
             matrix[r][c] = 1
 
-    elif n_current < n_switches_required:
-        # Add missing switches at eligible type-1 interior pixels
-        need = n_switches_required - n_current
+    elif n_current < min_switches:
+        # Add switches up to min_switches
+        need = min_switches - n_current
         eligible = [
             (r, c)
             for r in range(rows)
@@ -162,6 +165,44 @@ def _fix_switches(
             if _can_place_switch_at(matrix, r, c):
                 matrix[r][c] = 3
                 placed += 1
+
+
+def _fix_vias(
+    matrix: List[List[int]],
+    max_vias: int,
+    rng: random.Random,
+) -> None:
+    """
+    Repair via pixels (type 4) in-place:
+    1. Remove type-4 pixels whose 8-neighbourhood contains any non-{0,1} pixel.
+    2. If the count still exceeds max_vias, randomly remove the excess.
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    # Pass 1: spacing violations
+    violators = []
+    for r in range(rows):
+        for c in range(cols):
+            if matrix[r][c] == 4:
+                for nr, nc in _neighbours_8(r, c, rows, cols):
+                    if matrix[nr][nc] not in (0, 1):
+                        violators.append((r, c))
+                        break
+    rng.shuffle(violators)
+    for r, c in violators:
+        if matrix[r][c] == 4:
+            matrix[r][c] = 1
+
+    # Pass 2: count trim
+    via_positions = [
+        (r, c) for r in range(rows) for c in range(cols) if matrix[r][c] == 4
+    ]
+    excess = len(via_positions) - max_vias
+    if excess > 0:
+        rng.shuffle(via_positions)
+        for r, c in via_positions[:excess]:
+            matrix[r][c] = 1
 
 
 def _fix_connectivity(
@@ -356,12 +397,14 @@ def crossover_zig_zag(
     parent1: DesignState,
     parent2: DesignState,
     rng: random.Random,
-    n_switches_required: int,
+    min_switches: int,
+    max_switches: int,
     max_inductors: int,
     n_states: int,
     cap_min: float,
     cap_max: float,
     n_inductor_values: int = 4,
+    max_vias: int = 0,
 ) -> Optional[DesignState]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -398,12 +441,14 @@ def crossover_zig_zag(
 
     # --- Repair pipeline ---
     _fix_inductors(child_matrix, max_inductors, rng)
-    _fix_switches(child_matrix, n_switches_required, rng)
+    _fix_switches(child_matrix, min_switches, max_switches, rng)
+    if max_vias > 0:
+        _fix_vias(child_matrix, max_vias, rng)
     if not _fix_connectivity(child_matrix, rng):
         return None
 
     # --- Final feasibility gate ---
-    if not is_feasible(child_matrix, n_switches_required, max_inductors):
+    if not is_feasible(child_matrix, 0, max_inductors, min_switches=min_switches, max_switches=max_switches, max_vias=max_vias):
         return None
 
     # --- Inherit continuous/discrete values from parents ---

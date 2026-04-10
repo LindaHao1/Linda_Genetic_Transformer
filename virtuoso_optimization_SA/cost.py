@@ -68,6 +68,16 @@ def get_s21_db(path: str | Path) -> Tuple[np.ndarray, np.ndarray]:
     return ntwk.f, ntwk.s_db[:, 1, 0]
 
 
+def get_s11_db(path: str | Path) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Convenience wrapper: load an s2p file and return (freqs_Hz, S11_dB).
+
+    S11 is the reflection coefficient at port 1 (row=0, col=0).
+    """
+    ntwk = load_s2p(path)
+    return ntwk.f, ntwk.s_db[:, 0, 0]
+
+
 # ---------------------------------------------------------------------------
 # Filter specification dataclass
 # ---------------------------------------------------------------------------
@@ -85,11 +95,19 @@ class FilterStateSpec:
     stopband_regions : list of (f_start, f_stop) tuples in Hz — reject regions.
     stopband_max_db  : maximum acceptable S21 in stopband (dB).  Penalty if above.
     weight           : scale factor for this state's contribution to total cost.
+    passband_weight  : fusion weight for the passband penalty component.
+    stopband_weight  : fusion weight for the stopband penalty component.
     cross_stopband_regions : passbands of *other* states — this state must attenuate
                              there to encourage fully decoupled operation.  Penalty if
                              S21 exceeds cross_stopband_max_db in any of these regions.
     cross_stopband_max_db  : attenuation target for cross-state regions (dB).
-    cross_stopband_weight  : extra weight applied only to the cross-state penalty term.
+    cross_stopband_weight  : fusion weight for the cross-state penalty component.
+    enable_s11_cost        : when True, add S11-based reflection penalties to the cost.
+    s11_passband_max_db    : S11 in the passband should be at or below this (dB).
+                             Penalty if S11 > s11_passband_max_db (want low reflection).
+    s11_stopband_min_db    : S11 in stopbands should be at or above this (dB).
+                             Penalty if S11 < s11_stopband_min_db (want high reflection).
+    s11_cross_stopband_min_db : same as s11_stopband_min_db but for cross-state bands.
     """
     state_index:           int
     passband:              Tuple[float, float]
@@ -97,9 +115,16 @@ class FilterStateSpec:
     stopband_regions:      List[Tuple[float, float]] = field(default_factory=list)
     stopband_max_db:       float = -15.0
     weight:                float = 1.0
+    passband_weight:       float = 1.0
+    stopband_weight:       float = 1.0
     cross_stopband_regions: List[Tuple[float, float]] = field(default_factory=list)
     cross_stopband_max_db:  float = -20.0
     cross_stopband_weight:  float = 1.0
+    # S11 reflection-coefficient targets
+    enable_s11_cost:           bool  = False
+    s11_passband_max_db:       float = -30.0
+    s11_stopband_min_db:       float = -10.0
+    s11_cross_stopband_min_db: float = -10.0
 
 
 # ---------------------------------------------------------------------------
@@ -107,21 +132,34 @@ class FilterStateSpec:
 # ---------------------------------------------------------------------------
 
 def compute_state_cost(
-    freqs:    List[float],
+    freqs:         List[float],
     s21_db_values: List[float],
-    spec:     FilterStateSpec,
+    spec:          FilterStateSpec,
+    s11_db_values: Optional[List[float]] = None,
 ) -> float:
     """
-    Compute asymmetric mean-absolute-error cost for one state.
+    Compute asymmetric weighted-composite cost for one state.
 
-    Only penalise responses *worse* than the target:
+    S21 penalties (always active):
       - passband:  penalty when S21(f) <  passband_min_db
       - stopband:  penalty when S21(f) >  stopband_max_db
-    The penalty at each frequency point is the absolute violation (dB),
-    averaged over all evaluated points.
+      - cross-state: penalty when S21(f) > cross_stopband_max_db
+
+    S11 penalties (active when spec.enable_s11_cost is True and s11_db_values
+    is provided).  Reuses the same per-state fusion weights:
+      - passband:  penalty when S11(f) >  s11_passband_max_db   (too much reflection)
+      - stopband:  penalty when S11(f) <  s11_stopband_min_db   (not enough reflection)
+      - cross-state: penalty when S11(f) < s11_cross_stopband_min_db
+
+    Each penalty class is normalised by its own point count.  The S21 and S11
+    components are summed to form the final state cost.
     """
-    total    = 0.0
-    n_points = 0
+    pb_total = 0.0
+    pb_count = 0
+    sb_total = 0.0
+    sb_count = 0
+    cs_total = 0.0
+    cs_count = 0
     pb_lo, pb_hi = spec.passband
 
     for f, s21 in zip(freqs, s21_db_values):
@@ -129,27 +167,72 @@ def compute_state_cost(
         if pb_lo <= f <= pb_hi:
             shortfall = spec.passband_min_db - s21
             if shortfall > 0:
-                total += 2 * shortfall
-            n_points += 1
+                pb_total += shortfall
+            pb_count += 1
 
         # Stopband penalty
         for sb_lo, sb_hi in spec.stopband_regions:
             if sb_lo <= f <= sb_hi:
                 excess = s21 - spec.stopband_max_db
                 if excess > 0:
-                    total += excess
-                n_points += 1
+                    sb_total += excess
+                sb_count += 1
 
         # Cross-state decoupling penalty
         for cs_lo, cs_hi in spec.cross_stopband_regions:
             if cs_lo <= f <= cs_hi:
                 excess = s21 - spec.cross_stopband_max_db
                 if excess > 0:
-                    total += 0.5 * excess * spec.cross_stopband_weight
-                n_points += 1
+                    cs_total += excess
+                cs_count += 1
 
-    mean_abs = total / n_points if n_points > 0 else 0.0
-    return mean_abs * spec.weight
+    mean_pb = pb_total / pb_count if pb_count > 0 else 0.0
+    mean_sb = sb_total / sb_count if sb_count > 0 else 0.0
+    mean_cs = cs_total / cs_count if cs_count > 0 else 0.0
+
+    s21_cost = (
+        spec.passband_weight * mean_pb
+        + spec.stopband_weight * mean_sb
+        + spec.cross_stopband_weight * mean_cs
+    ) * spec.weight
+
+    # --- S11 cost (optional) ---
+    s11_cost = 0.0
+    if spec.enable_s11_cost and s11_db_values is not None:
+        s11_pb_total, s11_pb_count = 0.0, 0
+        s11_sb_total, s11_sb_count = 0.0, 0
+        s11_cs_total, s11_cs_count = 0.0, 0
+        for f, s11 in zip(freqs, s11_db_values):
+            # Passband: penalise if S11 is too high (too much reflection in pass band)
+            if pb_lo <= f <= pb_hi:
+                excess = s11 - spec.s11_passband_max_db
+                if excess > 0:
+                    s11_pb_total += excess
+                s11_pb_count += 1
+            # Stopband: penalise if S11 is too low (not enough reflection in stop band)
+            for sb_lo, sb_hi in spec.stopband_regions:
+                if sb_lo <= f <= sb_hi:
+                    shortfall = spec.s11_stopband_min_db - s11
+                    if shortfall > 0:
+                        s11_sb_total += shortfall
+                    s11_sb_count += 1
+            # Cross-state band: penalise if S11 is too low
+            for cs_lo, cs_hi in spec.cross_stopband_regions:
+                if cs_lo <= f <= cs_hi:
+                    shortfall = spec.s11_cross_stopband_min_db - s11
+                    if shortfall > 0:
+                        s11_cs_total += shortfall
+                    s11_cs_count += 1
+        s11_mean_pb = s11_pb_total / s11_pb_count if s11_pb_count > 0 else 0.0
+        s11_mean_sb = s11_sb_total / s11_sb_count if s11_sb_count > 0 else 0.0
+        s11_mean_cs = s11_cs_total / s11_cs_count if s11_cs_count > 0 else 0.0
+        s11_cost = (
+            spec.passband_weight * s11_mean_pb
+            + spec.stopband_weight * s11_mean_sb
+            + spec.cross_stopband_weight * s11_mean_cs
+        ) * spec.weight
+
+    return s21_cost + s11_cost
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +273,8 @@ def compute_total_cost(
 
         try:
             freqs, s21_db_vals = get_s21_db(s2p_path)
-            total += compute_state_cost(freqs, s21_db_vals, spec)
+            _, s11_db_vals     = get_s11_db(s2p_path)
+            total += compute_state_cost(freqs, s21_db_vals, spec, s11_db_values=s11_db_vals)
         except Exception as exc:  # noqa: BLE001
             print(f"  [cost] WARNING: failed to parse {s2p_path}: {exc}")
             total += _FAIL_PENALTY * spec.weight
@@ -217,22 +301,26 @@ def _build_cost_matrix(
     n = len(specs)
     matrix = np.full((n, n), _FAIL_PENALTY)
 
-    loaded: List[Optional[Tuple[np.ndarray, np.ndarray]]] = []
+    loaded: List[Optional[Tuple]] = []
     for path in s2p_paths[:n]:
         if path is None or not Path(path).exists():
             loaded.append(None)
         else:
             try:
-                loaded.append(get_s21_db(path))
+                freqs, s21_db_vals = get_s21_db(path)
+                _, s11_db_vals     = get_s11_db(path)
+                loaded.append((freqs, s21_db_vals, s11_db_vals))
             except Exception:  # noqa: BLE001
                 loaded.append(None)
 
     for sim_idx, data in enumerate(loaded):
         if data is None:
             continue
-        freqs, s21_db_vals = data
+        freqs, s21_db_vals, s11_db_vals = data
         for spec_idx, spec in enumerate(specs):
-            matrix[sim_idx, spec_idx] = compute_state_cost(freqs, s21_db_vals, spec)
+            matrix[sim_idx, spec_idx] = compute_state_cost(
+                freqs, s21_db_vals, spec, s11_db_values=s11_db_vals
+            )
 
     return matrix
 
@@ -334,8 +422,14 @@ def specs_from_config(filter_specs_cfg: list) -> List[FilterStateSpec]:
             stopband_regions       = sb_regions,
             stopband_max_db        = float(entry.get("stopband_max_db",      -15.0)),
             weight                 = float(entry.get("weight",                 1.0)),
+            passband_weight        = float(entry.get("passband_weight",        1.0)),
+            stopband_weight        = float(entry.get("stopband_weight",        1.0)),
             cross_stopband_regions = cs_regions,
             cross_stopband_max_db  = float(entry.get("cross_stopband_max_db", -20.0)),
             cross_stopband_weight  = float(entry.get("cross_stopband_weight",  1.0)),
+            enable_s11_cost           = bool(entry.get("enable_s11_cost",           False)),
+            s11_passband_max_db       = float(entry.get("s11_passband_max_db",       -30.0)),
+            s11_stopband_min_db       = float(entry.get("s11_stopband_min_db",       -10.0)),
+            s11_cross_stopband_min_db = float(entry.get("s11_cross_stopband_min_db", -10.0)),
         ))
     return specs
