@@ -32,6 +32,7 @@ from virtuoso_optimization_SA.design import DesignState
 from virtuoso_optimization_SA.feasibility import (
     _can_place_switch_at,
     _neighbours_8,
+    _special_pixel_too_close,
     check_connectivity,
     is_feasible,
 )
@@ -66,21 +67,19 @@ def _fix_inductors(
     """
     Repair inductors in-place:
     1. Remove all inductors (type 2) that violate the spacing rule
-       (any type-2 or type-3 neighbour).
+       (Chebyshev distance < 3 to any other type-2 or type-3 pixel).
     2. If the count still exceeds max_inductors, randomly remove the excess.
     """
     rows = len(matrix)
     cols = len(matrix[0])
 
-    # Pass 1: spacing violations
+    # Pass 1: spacing violations — check 5×5 box (Chebyshev distance ≤ 2)
     violators = []
     for r in range(rows):
         for c in range(cols):
             if matrix[r][c] == 2:
-                for nr, nc in _neighbours_8(r, c, rows, cols):
-                    if matrix[nr][nc] in (2, 3):
-                        violators.append((r, c))
-                        break
+                if _special_pixel_too_close(matrix, r, c):
+                    violators.append((r, c))
     # Remove in random order to avoid order bias
     rng.shuffle(violators)
     for r, c in violators:
@@ -110,7 +109,7 @@ def _fix_switches(
     """
     Repair switches in-place:
     1. Remove switch pixels (type 3) that violate the spacing rule
-       (any type-2 or type-3 neighbour).
+       (Chebyshev distance < 3 to any other type-2 or type-3 pixel).
     2. Adjust switch count to be within [min_switches, max_switches]:
        - If above max: randomly remove the excess switches.
        - If below min: randomly place switches on eligible type-1 interior pixels.
@@ -119,15 +118,13 @@ def _fix_switches(
     rows = len(matrix)
     cols = len(matrix[0])
 
-    # Pass 1: spacing violations
+    # Pass 1: spacing violations — check 5×5 box (Chebyshev distance ≤ 2)
     violators = []
     for r in range(rows):
         for c in range(cols):
             if matrix[r][c] == 3:
-                for nr, nc in _neighbours_8(r, c, rows, cols):
-                    if matrix[nr][nc] in (2, 3):
-                        violators.append((r, c))
-                        break
+                if _special_pixel_too_close(matrix, r, c):
+                    violators.append((r, c))
     rng.shuffle(violators)
     for r, c in violators:
         if matrix[r][c] == 3:

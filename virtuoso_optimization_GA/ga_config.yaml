@@ -65,11 +65,11 @@ filter_specs:
     cross_stopband_regions:
       - [14.0e9, 55.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 2.0
+    cross_stopband_weight: 3.0
     enable_s11_cost:           true       # set true to add S11 reflection penalties
-    s11_passband_max_db:       -30.0       # want low S11 in passband (good match)
-    s11_stopband_min_db:       -2.0       # want high S11 in stopband (high reflection)
-    s11_cross_stopband_min_db: -2.0
+    s11_passband_max_db:       -20.0       # want low S11 in passband (good match)
+    s11_stopband_min_db:       -0.0       # want high S11 in stopband (high reflection)
+    s11_cross_stopband_min_db: -0.0
 
   - state_index:     1
     passband:        [22.0e9, 26.0e9]      # 24 GHz centre, ±2 GHz bandwidth
@@ -85,11 +85,11 @@ filter_specs:
       - [6.0e9,  14.0e9]
       - [32.0e9, 55.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 1.0
+    cross_stopband_weight: 3.0
     enable_s11_cost:           true
-    s11_passband_max_db:       -30.0
-    s11_stopband_min_db:       -2.0
-    s11_cross_stopband_min_db: -2.0
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
 
   - state_index:     2
     passband:        [38.0e9, 42.0e9]      # 40 GHz centre, ±2 GHz bandwidth
@@ -105,11 +105,11 @@ filter_specs:
       - [6.0e9,  32.0e9]
       - [50.0e9, 55.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 1.0
+    cross_stopband_weight: 3.0
     enable_s11_cost:           true
-    s11_passband_max_db:       -30.0
-    s11_stopband_min_db:       -10.0
-    s11_cross_stopband_min_db: -10.0
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
 
 # ---------------------------------------------------------------------------
 # GENETIC ALGORITHM PARAMETERS
@@ -118,7 +118,7 @@ ga:
   # Population scheduling: starts at pop_size_start, decrements by pop_size_step
   # every (n_gen // n_steps) generations until reaching pop_size_end.
   pop_size_start:  100    # initial population size
-  pop_size_end:    30    # final population size
+  pop_size_end:    40    # final population size
   pop_size_step:   10    # decrement per schedule step
   elite_fraction:  0.20  # n_elite = max(3, round(current_pop_size * elite_fraction))
   n_gen:    100          # total number of generations
@@ -131,7 +131,7 @@ ga:
 
   # Selection
   selection:       "tournament"
-  tournament_size: 3
+  tournament_size: 5
 
   # Parallel simulation workers (one Virtuoso instance per worker)
   n_parallel: 5
@@ -151,7 +151,7 @@ ga:
   # State-wise champion elitism: preserve the best design per filter state
   # so crossover can mix frequency-specific experts.
   use_state_champions: true
-  p_champion_parent: 0.3        # probability that p1 is forced to be a state champion
+  p_champion_parent: 0.5        # probability that p1 is forced to be a state champion
   dynamic_state_assignment: true  # use Hungarian algorithm to assign sim states → specs
 
   # Best-design exploitation: each generation, fire N switch-state-only mutations
@@ -161,7 +161,7 @@ ga:
   # flip_inductor_state (idx 9) are active; all structural actions are 0.
   # [flip_01, move_switch, flip_inductor, flip_inductor_value,
   #  perturb_caps, flip_switch_state, add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
-  exploitation_action_weights: [0, 0, 0, 0, 0, 4.0, 0, 0, 0, 4.0, 8.0]
+  exploitation_action_weights: [0, 4.0, 0, 0, 0, 4.0, 0, 0, 0, 4.0, 2.0]
 
 # Random seed (set to null for non-deterministic)
 seed: 42

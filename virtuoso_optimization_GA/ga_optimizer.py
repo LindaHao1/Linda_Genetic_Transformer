@@ -40,6 +40,7 @@ import yaml
 from virtuoso_optimization_SA.actions import random_action
 from virtuoso_optimization_SA.cost import (
     compute_total_cost, compute_total_cost_dynamic, compute_state_cost, get_s21_db,
+    compute_cost_breakdown,
     specs_from_config, FilterStateSpec,
 )
 from virtuoso_optimization_SA.design import DesignState
@@ -284,18 +285,20 @@ class SwitchableFilterGA:
             population = self._init_population()
             print(f"[GA] Evaluating initial population ...")
             if cfg.use_state_champions:
-                costs, init_per_state_costs = self._evaluate_batch_with_state_costs(
+                costs, init_per_state_costs, init_sim_data = self._evaluate_batch_with_state_costs(
                     engine, population, gen_idx=-1
                 )
             else:
-                costs = self._evaluate_batch(engine, population, gen_idx=-1)
+                costs, init_sim_data = self._evaluate_batch(engine, population, gen_idx=-1)
                 init_per_state_costs = []
 
             best_idx    = min(range(len(costs)), key=lambda i: costs[i])
             best_design = population[best_idx].copy()
             best_cost   = costs[best_idx]
             best_sim_tag = f"gen-1_ind{best_idx}"
-            self._save_best(best_design, best_cost, generation=-1, sim_tag=best_sim_tag)
+            best_s2p_files, best_assignment = init_sim_data[best_idx]
+            self._save_best(best_design, best_cost, generation=-1, sim_tag=best_sim_tag,
+                            s2p_files=best_s2p_files, assignment=best_assignment)
             self._save_population_snapshot(population, costs, gen=-1)
 
             # --- State champion initialisation (reuses simulation data, no extra runs) ---
@@ -477,7 +480,7 @@ class SwitchableFilterGA:
                 # 5. Evaluate all new individuals in one batch
                 to_evaluate = offspring + immigrants + exploit_candidates
                 if cfg.use_state_champions:
-                    new_costs, new_per_state = self._evaluate_batch_with_state_costs(
+                    new_costs, new_per_state, new_sim_data = self._evaluate_batch_with_state_costs(
                         engine, to_evaluate, gen_idx=gen
                     )
                     # Update state champions from newly evaluated individuals
@@ -488,7 +491,7 @@ class SwitchableFilterGA:
                                 state_champion_total_costs[si] = new_costs[local_idx]
                                 state_champions[si] = to_evaluate[local_idx].copy()
                 else:
-                    new_costs = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
+                    new_costs, new_sim_data = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
                 offspring_costs  = new_costs[:len(offspring)]
                 immigrant_costs  = new_costs[len(offspring):len(offspring) + len(immigrants)]
                 exploit_costs    = new_costs[len(offspring) + len(immigrants):]
@@ -512,10 +515,14 @@ class SwitchableFilterGA:
                     if gen_best_idx >= carried_count:
                         best_local_idx = gen_best_idx - carried_count
                         best_sim_tag   = f"gen{gen}_ind{best_local_idx}"
+                        best_s2p_files, best_assignment = new_sim_data[best_local_idx]
                     else:
                         best_sim_tag = f"elite/carried_gen{gen}_slot{gen_best_idx}"
+                        # Carried elite: s2p files not in new_sim_data; skip breakdown
+                        best_s2p_files, best_assignment = [], None
                     self._save_best(best_design, best_cost, generation=gen,
-                                    sim_tag=best_sim_tag)
+                                    sim_tag=best_sim_tag,
+                                    s2p_files=best_s2p_files, assignment=best_assignment)
 
                 # Stats
                 diversity = _population_diversity(population)
@@ -618,20 +625,23 @@ class SwitchableFilterGA:
         engine: "ParallelVirtuosoEngine",
         individuals: List[DesignState],
         gen_idx: int,
-    ) -> List[float]:
+    ) -> Tuple[List[float], List[Tuple[List, Optional[List[int]]]]]:
+        """Returns (costs, sim_data) where sim_data[i] = (s2p_files, assignment)."""
         if not individuals:
-            return []
+            return [], []
         overrides = [
             self._build_override(d, gen_idx, i)
             for i, d in enumerate(individuals)
         ]
         results = engine.run_batch(overrides)
         costs: List[float] = []
+        sim_data: List[Tuple[List, Optional[List[int]]]] = []
         for r in results:
             c, assignment = self._cost_from_result(r)
             costs.append(c)
+            sim_data.append((r.s_param_files if r.success else [], assignment))
             self._write_sim_results(r, c, assignment)
-        return costs
+        return costs, sim_data
 
     def _cost_from_result(
         self, result: "RunResult"
@@ -710,17 +720,18 @@ class SwitchableFilterGA:
         engine: "ParallelVirtuosoEngine",
         individuals: List[DesignState],
         gen_idx: int,
-    ) -> Tuple[List[float], List[List[float]]]:
+    ) -> Tuple[List[float], List[List[float]], List[Tuple[List, Optional[List[int]]]]]:
         """
-        Like _evaluate_batch but also returns per-state costs.
+        Like _evaluate_batch but also returns per-state costs and sim data.
 
         Returns
         -------
         costs           : List[float]         — total cost per individual
         per_state_costs : List[List[float]]   — [individual_idx][spec_idx]
+        sim_data        : List[(s2p_files, assignment)] — one entry per individual
         """
         if not individuals:
-            return [], []
+            return [], [], []
         overrides = [
             self._build_override(d, gen_idx, i)
             for i, d in enumerate(individuals)
@@ -728,12 +739,14 @@ class SwitchableFilterGA:
         results = engine.run_batch(overrides)
         costs: List[float] = []
         per_state_costs: List[List[float]] = []
+        sim_data: List[Tuple[List, Optional[List[int]]]] = []
         for r in results:
             c, assignment = self._cost_from_result(r)
             costs.append(c)
             per_state_costs.append(self._per_state_costs_from_result(r, assignment))
+            sim_data.append((r.s_param_files if r.success else [], assignment))
             self._write_sim_results(r, c, assignment)
-        return costs, per_state_costs
+        return costs, per_state_costs, sim_data
 
     # ------------------------------------------------------------------
     # Persistence & plotting
@@ -745,13 +758,25 @@ class SwitchableFilterGA:
         cost: float,
         generation: int,
         sim_tag: str = "",
+        s2p_files: Optional[List] = None,
+        assignment: Optional[List[int]] = None,
     ) -> None:
         sim_dir = str(self.output_dir / "sims" / sim_tag) if sim_tag else ""
+
+        # Compute cost breakdown when s2p files are available
+        breakdown: Optional[List[dict]] = None
+        if s2p_files:
+            try:
+                breakdown = compute_cost_breakdown(s2p_files, self.specs, assignment)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [GA] WARNING: cost breakdown failed: {exc}")
+
         data = {
             "generation":            generation,
             "sim_tag":               sim_tag,
             "sim_dir":               sim_dir,
             "cost":                  cost,
+            "cost_breakdown":        breakdown,
             "matrix":                design.matrix,
             "switch_states":         design.switch_states,
             "cap_values":            design.cap_values,
@@ -761,6 +786,43 @@ class SwitchableFilterGA:
         path = self.output_dir / "best_design.json"
         path.write_text(json.dumps(data, indent=2))
         print(f"  [GA] Best design saved → {path}  cost={cost:.4f}  sim={sim_tag}")
+
+        # Print breakdown table
+        if breakdown:
+            self._print_cost_breakdown(breakdown)
+
+    @staticmethod
+    def _print_cost_breakdown(breakdown: List[dict]) -> None:
+        """Print a formatted cost breakdown table to stdout."""
+        has_s11 = any(b.get("s11_passband", 0) + b.get("s11_stopband", 0) + b.get("s11_crossband", 0) > 0
+                      for b in breakdown)
+        header = (
+            f"  {'Spec':>4}  {'Passband(GHz)':>14}  "
+            f"{'S21-PB':>8}  {'S21-SB':>8}  {'S21-CB':>8}"
+        )
+        if has_s11:
+            header += f"  {'S11-PB':>8}  {'S11-SB':>8}  {'S11-CB':>8}"
+        header += f"  {'State':>8}"
+        print(f"  {'─'*len(header.rstrip())}")
+        print(header)
+        print(f"  {'─'*len(header.rstrip())}")
+        for b in breakdown:
+            pb_ghz = f"{b['passband_hz'][0]/1e9:.0f}–{b['passband_hz'][1]/1e9:.0f}"
+            row = (
+                f"  {b['spec_idx']:>4}  {pb_ghz:>14}  "
+                f"{b['s21_passband']:>8.4f}  {b['s21_stopband']:>8.4f}  {b['s21_crossband']:>8.4f}"
+            )
+            if has_s11:
+                row += (
+                    f"  {b['s11_passband']:>8.4f}  {b['s11_stopband']:>8.4f}  {b['s11_crossband']:>8.4f}"
+                )
+            row += f"  {b['total']:>8.4f}"
+            print(row)
+        total = sum(b["total"] for b in breakdown)
+        print(f"  {'─'*len(header.rstrip())}")
+        ncols = 3 + (3 if has_s11 else 0)
+        pad = "  " + " "*4 + "  " + " "*14 + "  " + "  ".join([" "*8]*ncols) + "  "
+        print(f"{pad}{total:>8.4f}  (total)")
 
     def _log_generation(
         self,

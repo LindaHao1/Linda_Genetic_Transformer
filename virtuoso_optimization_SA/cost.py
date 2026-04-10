@@ -236,6 +236,171 @@ def compute_state_cost(
 
 
 # ---------------------------------------------------------------------------
+# Per-state cost breakdown (individual components)
+# ---------------------------------------------------------------------------
+
+def compute_state_cost_breakdown(
+    freqs:         List[float],
+    s21_db_values: List[float],
+    spec:          FilterStateSpec,
+    s11_db_values: Optional[List[float]] = None,
+) -> dict:
+    """
+    Like compute_state_cost but returns a dict with every sub-component instead
+    of a single scalar.  Keys:
+
+      s21_passband_raw    — mean S21 shortfall below passband_min_db  (unweighted)
+      s21_stopband_raw    — mean S21 excess  above stopband_max_db    (unweighted)
+      s21_crossband_raw   — mean S21 excess  above cross_stopband_max_db (unweighted)
+      s21_passband        — weighted passband penalty   (raw * passband_weight * weight)
+      s21_stopband        — weighted stopband penalty   (raw * stopband_weight * weight)
+      s21_crossband       — weighted crossband penalty  (raw * cross_stopband_weight * weight)
+      s11_passband_raw    — mean S11 excess  above s11_passband_max_db (unweighted, 0 if disabled)
+      s11_stopband_raw    — mean S11 shortfall below s11_stopband_min_db (unweighted, 0 if disabled)
+      s11_crossband_raw   — mean S11 shortfall below s11_cross_stopband_min_db (unweighted, 0 if disabled)
+      s11_passband        — weighted S11 passband penalty
+      s11_stopband        — weighted S11 stopband penalty
+      s11_crossband       — weighted S11 crossband penalty
+      total               — sum of all weighted components (== compute_state_cost(...))
+    """
+    pb_total, pb_count = 0.0, 0
+    sb_total, sb_count = 0.0, 0
+    cs_total, cs_count = 0.0, 0
+    pb_lo, pb_hi = spec.passband
+
+    for f, s21 in zip(freqs, s21_db_values):
+        if pb_lo <= f <= pb_hi:
+            shortfall = spec.passband_min_db - s21
+            if shortfall > 0:
+                pb_total += shortfall
+            pb_count += 1
+        for sb_lo, sb_hi in spec.stopband_regions:
+            if sb_lo <= f <= sb_hi:
+                excess = s21 - spec.stopband_max_db
+                if excess > 0:
+                    sb_total += excess
+                sb_count += 1
+        for cs_lo, cs_hi in spec.cross_stopband_regions:
+            if cs_lo <= f <= cs_hi:
+                excess = s21 - spec.cross_stopband_max_db
+                if excess > 0:
+                    cs_total += excess
+                cs_count += 1
+
+    mean_pb = pb_total / pb_count if pb_count > 0 else 0.0
+    mean_sb = sb_total / sb_count if sb_count > 0 else 0.0
+    mean_cs = cs_total / cs_count if cs_count > 0 else 0.0
+
+    s21_pb  = spec.passband_weight       * mean_pb * spec.weight
+    s21_sb  = spec.stopband_weight       * mean_sb * spec.weight
+    s21_cs  = spec.cross_stopband_weight * mean_cs * spec.weight
+
+    # --- S11 breakdown ---
+    s11_pb_raw = s11_sb_raw = s11_cs_raw = 0.0
+    s11_pb_w   = s11_sb_w   = s11_cs_w   = 0.0
+    if spec.enable_s11_cost and s11_db_values is not None:
+        s11_pb_total, s11_pb_count = 0.0, 0
+        s11_sb_total, s11_sb_count = 0.0, 0
+        s11_cs_total, s11_cs_count = 0.0, 0
+        for f, s11 in zip(freqs, s11_db_values):
+            if pb_lo <= f <= pb_hi:
+                excess = s11 - spec.s11_passband_max_db
+                if excess > 0:
+                    s11_pb_total += excess
+                s11_pb_count += 1
+            for sb_lo, sb_hi in spec.stopband_regions:
+                if sb_lo <= f <= sb_hi:
+                    shortfall = spec.s11_stopband_min_db - s11
+                    if shortfall > 0:
+                        s11_sb_total += shortfall
+                    s11_sb_count += 1
+            for cs_lo, cs_hi in spec.cross_stopband_regions:
+                if cs_lo <= f <= cs_hi:
+                    shortfall = spec.s11_cross_stopband_min_db - s11
+                    if shortfall > 0:
+                        s11_cs_total += shortfall
+                    s11_cs_count += 1
+        s11_pb_raw = s11_pb_total / s11_pb_count if s11_pb_count > 0 else 0.0
+        s11_sb_raw = s11_sb_total / s11_sb_count if s11_sb_count > 0 else 0.0
+        s11_cs_raw = s11_cs_total / s11_cs_count if s11_cs_count > 0 else 0.0
+        s11_pb_w = spec.passband_weight       * s11_pb_raw * spec.weight
+        s11_sb_w = spec.stopband_weight       * s11_sb_raw * spec.weight
+        s11_cs_w = spec.cross_stopband_weight * s11_cs_raw * spec.weight
+
+    total = s21_pb + s21_sb + s21_cs + s11_pb_w + s11_sb_w + s11_cs_w
+    return {
+        "s21_passband_raw":  mean_pb,
+        "s21_stopband_raw":  mean_sb,
+        "s21_crossband_raw": mean_cs,
+        "s21_passband":      s21_pb,
+        "s21_stopband":      s21_sb,
+        "s21_crossband":     s21_cs,
+        "s11_passband_raw":  s11_pb_raw,
+        "s11_stopband_raw":  s11_sb_raw,
+        "s11_crossband_raw": s11_cs_raw,
+        "s11_passband":      s11_pb_w,
+        "s11_stopband":      s11_sb_w,
+        "s11_crossband":     s11_cs_w,
+        "total":             total,
+    }
+
+
+def compute_cost_breakdown(
+    s2p_paths:  List[Optional[Path]],
+    specs:      List[FilterStateSpec],
+    assignment: Optional[List[int]] = None,
+) -> List[dict]:
+    """
+    Compute per-spec cost breakdowns for a design.
+
+    Parameters
+    ----------
+    s2p_paths  : one s2p file per *simulated* state (in simulation order).
+    specs      : FilterStateSpec list (in spec order).
+    assignment : assignment[spec_idx] = sim_idx from dynamic assignment,
+                 or None to use spec.state_index (static).
+
+    Returns
+    -------
+    List of dicts (one per spec, in spec order) with keys from
+    compute_state_cost_breakdown plus ``spec_index`` and ``passband_hz``.
+    Returns an entry with ``total=1e9`` for failed/missing simulations.
+    """
+    _FAIL = 1e9
+    results = []
+    for spec_idx, spec in enumerate(specs):
+        sim_idx = assignment[spec_idx] if assignment is not None else spec.state_index
+        entry: dict = {
+            "spec_idx":   spec_idx,
+            "passband_hz": list(spec.passband),
+        }
+        if sim_idx >= len(s2p_paths) or s2p_paths[sim_idx] is None:
+            entry.update({k: _FAIL for k in (
+                "s21_passband_raw", "s21_stopband_raw", "s21_crossband_raw",
+                "s21_passband", "s21_stopband", "s21_crossband",
+                "s11_passband_raw", "s11_stopband_raw", "s11_crossband_raw",
+                "s11_passband", "s11_stopband", "s11_crossband", "total",
+            )})
+        else:
+            try:
+                freqs, s21_db_vals = get_s21_db(s2p_paths[sim_idx])
+                _, s11_db_vals     = get_s11_db(s2p_paths[sim_idx])
+                bd = compute_state_cost_breakdown(freqs, s21_db_vals, spec,
+                                                  s11_db_values=s11_db_vals)
+                entry.update(bd)
+            except Exception as exc:  # noqa: BLE001
+                print(f"  [cost] WARNING: breakdown failed for {s2p_paths[sim_idx]}: {exc}")
+                entry.update({k: _FAIL for k in (
+                    "s21_passband_raw", "s21_stopband_raw", "s21_crossband_raw",
+                    "s21_passband", "s21_stopband", "s21_crossband",
+                    "s11_passband_raw", "s11_stopband_raw", "s11_crossband_raw",
+                    "s11_passband", "s11_stopband", "s11_crossband", "total",
+                )})
+        results.append(entry)
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Total cost over all states
 # ---------------------------------------------------------------------------
 

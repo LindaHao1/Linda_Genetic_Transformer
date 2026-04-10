@@ -5,10 +5,13 @@ Design rules
 ------------
 a. Connectivity:     8-connected path (no 0 pixels) from the feed pixel in col 0
                      to the feed pixel in col N-1.
-b. Switch spacing:   No other switch (3) or inductor (2) may be in the 8-neighbourhood
-                     of any switch pixel.
-c. Inductor spacing: No other inductor (2) or switch (3) may be in the 8-neighbourhood
-                     of any inductor pixel.
+b/c. Special spacing: Every pair of switch (3) and/or inductor (2) pixels must have
+                     Chebyshev distance ≥ 3, i.e. max(|Δrow|, |Δcol|) ≥ 3.
+                     Diagonal counts as 1, so this forbids a 5×5 box around each
+                     special pixel from containing any other special pixel.
+                     The old 8-neighbour check (distance ≥ 2) was too weak — it
+                     allowed two switches separated by a single pixel, which still
+                     leaves insufficient physical clearance.
 d. Inductor count:   Total number of type-2 pixels ≤ max_inductors.
 e. Switch count:     Total number of type-3 pixels == n_switches_required.
 f. Feed columns:     Exactly one non-zero pixel in col 0 AND in col N-1.
@@ -110,30 +113,38 @@ def check_connectivity_4way(matrix: List[List[int]]) -> bool:
     return check_connectivity(matrix, four_connected=True)
 
 
-def check_spacing(matrix: List[List[int]], pixel_type: int) -> bool:
+def check_special_pixel_spacing(matrix: List[List[int]], min_dist: int = 3) -> bool:
     """
-    Rules b/c: for every pixel of ``pixel_type``, none of its 8-neighbours
-    may be a switch (3) or an inductor (2).
+    Rules b/c: every pair of switch (3) and/or inductor (2) pixels must have
+    Chebyshev distance ≥ min_dist, where Chebyshev distance = max(|Δrow|, |Δcol|).
+
+    This is stricter than the old 8-neighbour check (which only enforced distance ≥ 2).
+    With min_dist=3 the forbidden zone around each special pixel is a 5×5 box.
     """
     rows = len(matrix)
     cols = len(matrix[0])
-    for r in range(rows):
-        for c in range(cols):
-            if matrix[r][c] == pixel_type:
-                for nr, nc in _neighbours_8(r, c, rows, cols):
-                    if matrix[nr][nc] in (2, 3):
-                        return False
+    # Collect all special pixel positions once
+    specials = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if matrix[r][c] in (2, 3)
+    ]
+    for i, (r1, c1) in enumerate(specials):
+        for r2, c2 in specials[i + 1:]:
+            if max(abs(r1 - r2), abs(c1 - c2)) < min_dist:
+                return False
     return True
 
 
 def check_switch_spacing(matrix: List[List[int]]) -> bool:
-    """Rule b: switches must not neighbour other switches or inductors."""
-    return check_spacing(matrix, 3)
+    """Rule b: switches must be at Chebyshev distance ≥ 3 from all other special pixels."""
+    return check_special_pixel_spacing(matrix)
 
 
 def check_inductor_spacing(matrix: List[List[int]]) -> bool:
-    """Rule c: inductors must not neighbour other inductors or switches."""
-    return check_spacing(matrix, 2)
+    """Rule c: inductors must be at Chebyshev distance ≥ 3 from all other special pixels."""
+    return check_special_pixel_spacing(matrix)
 
 
 def check_inductor_count(matrix: List[List[int]], max_inductors: int) -> bool:
@@ -224,8 +235,7 @@ def is_feasible(
     return (
         check_feed_columns(matrix)
         and check_connectivity(matrix, four_connected=four_connected)
-        and check_switch_spacing(matrix)
-        and check_inductor_spacing(matrix)
+        and check_special_pixel_spacing(matrix)   # covers both switch and inductor spacing
         and check_inductor_count(matrix, max_inductors)
         and sw_ok
         and via_ok
@@ -391,6 +401,31 @@ def is_feasible_no_switch_count(
 # Can a given cell host a switch (type-3) safely?
 # ---------------------------------------------------------------------------
 
+def _special_pixel_too_close(
+    matrix: List[List[int]],
+    r: int,
+    c: int,
+    min_dist: int = 3,
+) -> bool:
+    """
+    Return True if any existing special pixel (type 2 or 3) is within Chebyshev
+    distance < min_dist of (r, c).  Used by placement helpers.
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+    r_lo = max(0, r - (min_dist - 1))
+    r_hi = min(rows - 1, r + (min_dist - 1))
+    c_lo = max(0, c - (min_dist - 1))
+    c_hi = min(cols - 1, c + (min_dist - 1))
+    for nr in range(r_lo, r_hi + 1):
+        for nc in range(c_lo, c_hi + 1):
+            if nr == r and nc == c:
+                continue
+            if matrix[nr][nc] in (2, 3):
+                return True
+    return False
+
+
 def _can_place_switch_at(
     matrix: List[List[int]],
     r: int,
@@ -398,18 +433,14 @@ def _can_place_switch_at(
 ) -> bool:
     """
     Return True if placing a switch at (r, c) would not violate rule b.
+    Enforces Chebyshev distance ≥ 3 from all other special pixels (types 2, 3).
     Assumes the cell is currently type 1 (metal).
     Also checks that this cell is not in the feed columns.
     """
-    rows = len(matrix)
     cols = len(matrix[0])
-    # Feed columns are reserved; do not place switches there
     if c == 0 or c == cols - 1:
         return False
-    for nr, nc in _neighbours_8(r, c, rows, cols):
-        if matrix[nr][nc] in (2, 3):
-            return False
-    return True
+    return not _special_pixel_too_close(matrix, r, c)
 
 
 def _can_place_inductor_at(
@@ -419,16 +450,13 @@ def _can_place_inductor_at(
 ) -> bool:
     """
     Return True if placing an inductor at (r, c) would not violate rule c.
+    Enforces Chebyshev distance ≥ 3 from all other special pixels (types 2, 3).
     Assumes the cell is currently type 1 (metal).
     """
-    rows = len(matrix)
     cols = len(matrix[0])
     if c == 0 or c == cols - 1:
         return False
-    for nr, nc in _neighbours_8(r, c, rows, cols):
-        if matrix[nr][nc] in (2, 3):
-            return False
-    return True
+    return not _special_pixel_too_close(matrix, r, c)
 
 
 def _can_place_via_at(
