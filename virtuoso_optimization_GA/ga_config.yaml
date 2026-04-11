@@ -17,7 +17,7 @@
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
 
 # Root directory for all GA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_indefinite_init_count"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_block_hybrid"
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE  (matches sa_config.yaml)
@@ -128,6 +128,10 @@ ga:
   # Operators
   p_crossover: 0.7       # probability of applying crossover (vs. cloning fitter parent)
   p_mutation:  0.7       # probability of applying a mutation to each offspring
+  crossover_method: "block"  # "zig_zag" | "weighted_clustering" | "block"
+  n_centroids: 4         # max cluster centroids for weighted_clustering; actual count drawn randomly from [2, n_centroids] each call
+  block_min_size: 5      # minimum block width/height for block crossover
+  block_max_size: 15     # maximum block width/height for block crossover
 
   # Selection
   selection:       "tournament"

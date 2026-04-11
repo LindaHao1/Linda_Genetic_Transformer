@@ -47,6 +47,8 @@ from virtuoso_optimization_SA.design import DesignState
 from virtuoso_optimization_SA.feasibility import generate_random_design, is_feasible
 
 from .crossover import crossover_zig_zag
+from .crossover_weighted_clustering import crossover_weighted_clustering
+from .crossover_block import crossover_block
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -105,6 +107,12 @@ class GAConfig:
     n_max_vias:         int    # maximum number of type-4 (via) pixels allowed
     via_flip_max_count: int    # max vias to add or remove per flip_via action
 
+    # Crossover method
+    crossover_method: str   # "zig_zag" | "weighted_clustering" | "block"
+    n_centroids:      int   # max cluster centroids for weighted_clustering (actual count drawn randomly in [2, n_centroids])
+    block_min_size:   int   # minimum block width/height for block crossover
+    block_max_size:   int   # maximum block width/height for block crossover
+
     # Paths
     virtuoso_config: str
     output_dir:      str
@@ -158,6 +166,11 @@ class GAConfig:
 
             n_max_vias         = int(grid.get("n_max_vias", 0)),
             via_flip_max_count = int(ga.get("via_flip_max_count", 3)),
+
+            crossover_method = str(ga.get("crossover_method", "zig_zag")),
+            n_centroids      = int(ga.get("n_centroids", 3)),
+            block_min_size   = int(ga.get("block_min_size", 5)),
+            block_max_size   = int(ga.get("block_max_size", 15)),
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
@@ -403,18 +416,32 @@ class SwitchableFilterGA:
                     # Crossover
                     did_crossover = self.rng.random() < cfg.p_crossover
                     if did_crossover:
-                        child = crossover_zig_zag(
-                            p1, p2,
+                        _crossover_kwargs = dict(
+                            parent1      = p1,
+                            parent2      = p2,
                             rng          = self.rng,
                             min_switches = cfg.min_switches,
                             max_switches = cfg.max_switches,
-                            max_inductors       = cfg.max_inductors,
-                            n_states            = cfg.n_states,
-                            cap_min             = cfg.cap_min,
-                            cap_max             = cfg.cap_max,
-                            n_inductor_values   = cfg.n_inductor_values,
-                            max_vias            = cfg.n_max_vias,
+                            max_inductors      = cfg.max_inductors,
+                            n_states           = cfg.n_states,
+                            cap_min            = cfg.cap_min,
+                            cap_max            = cfg.cap_max,
+                            n_inductor_values  = cfg.n_inductor_values,
+                            max_vias           = cfg.n_max_vias,
                         )
+                        if cfg.crossover_method == "weighted_clustering":
+                            child = crossover_weighted_clustering(
+                                **_crossover_kwargs,
+                                n_centroids_max = cfg.n_centroids,
+                            )
+                        elif cfg.crossover_method == "block":
+                            child = crossover_block(
+                                **_crossover_kwargs,
+                                block_min_size = cfg.block_min_size,
+                                block_max_size = cfg.block_max_size,
+                            )
+                        else:
+                            child = crossover_zig_zag(**_crossover_kwargs)
                         if child is None:
                             continue   # crossover failed — retry
                     else:
