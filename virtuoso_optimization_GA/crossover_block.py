@@ -20,7 +20,6 @@ Algorithm
 
 from __future__ import annotations
 
-import copy
 import random
 from typing import Dict, List, Optional, Tuple
 
@@ -34,12 +33,145 @@ from .crossover import (
     _fix_switches,
     _fix_vias,
 )
+from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 from .crossover_weighted_clustering import (
     _fix_feed_cols,
     _inherit_values_clustered,
 )
 
 _MAX_PLACEMENT_ATTEMPTS = 20
+
+
+def _inherit_cap_pairs_block(
+    child_matrix: List[List[int]],
+    parent_base: DesignState,
+    parent_donor: DesignState,
+    base_row: int,
+    base_col: int,
+    donor_row: int,
+    donor_col: int,
+    h: int,
+    w: int,
+    max_cap_pairs: int,
+    min_dist: int,
+    max_dist: int,
+    rng: random.Random,
+) -> Tuple[List[List[List[int]]], List[float]]:
+    """
+    Inherit cap pixel pairs for a block crossover child, respecting the spatial
+    transformation applied by the block swap.
+
+    The block region [base_row:base_row+h, base_col:base_col+w] in the child
+    was overwritten by the donor's block [donor_row:donor_row+h, donor_col:donor_col+w].
+    The offset that maps donor block coords → child coords is:
+        (base_row - donor_row, base_col - donor_col)
+
+    Strategy
+    --------
+    Base parent caps:
+      - Both endpoints outside the base block → keep as-is.
+      - One endpoint inside the base block (partial) → translate that endpoint
+        by the *reverse* offset (donor_row - base_row, donor_col - base_col);
+        i.e. map the base-block cell to where the donor version lives, then
+        apply the forward offset.  Net effect: the inside endpoint stays at the
+        same child position (the donor filled it), so it is translated by 0 —
+        which means we translate it by (donor_row - base_row, donor_col - base_col)
+        then back by (base_row - donor_row, base_col - donor_col) = no change.
+        Simpler formulation: translate the inside endpoint by (0, 0) — i.e. keep
+        it at its base position, but it is now occupied by donor content so it
+        may be invalid.  We keep the pair and let filter_valid_pairs decide.
+      - Both endpoints inside the base block → drop (overwritten by donor).
+
+    Donor parent caps:
+      - Endpoints inside the donor block → translate by (base_row - donor_row,
+        base_col - donor_col) to map to the child position.
+      - Endpoints outside the donor block → keep at their original position
+        (they don't exist in the child, so drop them).
+      - Mixed (one in, one out) → translate the inside endpoint, keep the
+        outside endpoint at its original position.  If either translated
+        endpoint goes out of bounds, drop the pair.
+
+    After collecting all candidate pairs, deduplicate by canonical endpoint key
+    (average value if same pair appears from both parents), validate via
+    filter_valid_pairs, shuffle, trim to max_cap_pairs.
+    """
+    if max_cap_pairs == 0:
+        return [], []
+
+    rows = len(child_matrix)
+    cols = len(child_matrix[0])
+
+    dr_offset = base_row - donor_row
+    dc_offset = base_col - donor_col
+
+    def _in_base_block(r: int, c: int) -> bool:
+        return base_row <= r < base_row + h and base_col <= c < base_col + w
+
+    def _in_donor_block(r: int, c: int) -> bool:
+        return donor_row <= r < donor_row + h and donor_col <= c < donor_col + w
+
+    def _in_bounds(r: int, c: int) -> bool:
+        return 0 <= r < rows and 0 <= c < cols
+
+    # Canonical key for deduplication
+    def _key(ep1: List[int], ep2: List[int]) -> Tuple:
+        a, b = tuple(ep1), tuple(ep2)
+        return (min(a, b), max(a, b))
+
+    pair_pool: Dict[Tuple, float] = {}
+
+    # --- Base parent caps ---
+    for pair, val in zip(parent_base.cap_pixel_pairs, parent_base.cap_pair_values):
+        (r1, c1), (r2, c2) = pair[0], pair[1]
+        in1 = _in_base_block(r1, c1)
+        in2 = _in_base_block(r2, c2)
+        if in1 and in2:
+            continue  # fully inside overwritten region — drop
+        # Keep partial or fully-outside pairs; let filter_valid_pairs validate
+        k = _key(pair[0], pair[1])
+        if k not in pair_pool:
+            pair_pool[k] = val
+
+    # --- Donor parent caps ---
+    for pair, val in zip(parent_donor.cap_pixel_pairs, parent_donor.cap_pair_values):
+        (r1, c1), (r2, c2) = pair[0], pair[1]
+        in1 = _in_donor_block(r1, c1)
+        in2 = _in_donor_block(r2, c2)
+        if not in1 and not in2:
+            continue  # fully outside donor block — not transplanted into child
+
+        # Translate endpoints that are inside the donor block
+        nr1 = r1 + dr_offset if in1 else r1
+        nc1 = c1 + dc_offset if in1 else c1
+        nr2 = r2 + dr_offset if in2 else r2
+        nc2 = c2 + dc_offset if in2 else c2
+
+        if not _in_bounds(nr1, nc1) or not _in_bounds(nr2, nc2):
+            continue  # translated out of grid — drop
+
+        k = _key([nr1, nc1], [nr2, nc2])
+        if k in pair_pool:
+            pair_pool[k] = (pair_pool[k] + val) / 2.0
+        else:
+            pair_pool[k] = val
+
+    if not pair_pool:
+        return [], []
+
+    candidate_pairs = [[[k[0][0], k[0][1]], [k[1][0], k[1][1]]] for k in pair_pool]
+    candidate_values = [pair_pool[k] for k in pair_pool]
+
+    valid_pairs, valid_values = filter_valid_pairs(
+        child_matrix, candidate_pairs, candidate_values, min_dist, max_dist
+    )
+
+    combined = list(zip(valid_pairs, valid_values))
+    rng.shuffle(combined)
+    combined = combined[:max_cap_pairs]
+    if not combined:
+        return [], []
+    result_pairs, result_values = zip(*combined)
+    return list(result_pairs), list(result_values)
 
 
 def crossover_block(
@@ -56,6 +188,9 @@ def crossover_block(
     max_vias: int = 0,
     block_min_size: int = 5,
     block_max_size: int = 15,
+    max_cap_pairs: int = 0,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> Optional[DesignState]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -190,12 +325,31 @@ def crossover_block(
             )
         )
 
+        # Inherit cap pixel pairs, translating them with the block transformation
+        cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs_block(
+            child_matrix,
+            base_parent,
+            donor_parent,
+            base_row,
+            base_col,
+            donor_row,
+            donor_col,
+            h,
+            w,
+            max_cap_pairs,
+            cap_pair_min_dist,
+            cap_pair_max_dist,
+            rng,
+        )
+
         return DesignState(
             matrix                 = child_matrix,
             switch_states          = switch_states,
             cap_values             = cap_values,
             inductor_values        = inductor_values,
             inductor_switch_states = inductor_switch_states,
+            cap_pixel_pairs        = cap_pixel_pairs,
+            cap_pair_values        = cap_pair_values,
         )
 
     return None  # all placement attempts exhausted

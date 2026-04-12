@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from .design import DesignState
 from .feasibility import (
-    _build_other_interior_cells,
+    _build_other_path_cells,
     _can_place_inductor_at,
     _can_place_switch_at,
     _can_place_via_at,
@@ -616,8 +616,8 @@ def action_add_cap_pair(
     max_search: int = 300,
 ) -> tuple:
     """
-    Find two type-1 interior pixels that form a valid axis-aligned cap pair
-    and add it to the design.
+    Find two type-1 interior pixels that form a valid cap pair (axis-aligned
+    or diagonal) and add it to the design.
 
     Returns (mutated copy, info_dict), or (None, None) if already at the cap
     pair limit or no valid pair can be found within ``max_search`` attempts.
@@ -628,25 +628,37 @@ def action_add_cap_pair(
     rows = state.rows
     cols = state.cols
 
-    metal_pixels = [
+    # Pre-enumerate all type-1 pixel pairs within Chebyshev distance range,
+    # including diagonal and off-diagonal directions.
+    metal_set = {
         (r, c)
         for r in range(rows)
         for c in range(1, cols - 1)
         if state.matrix[r][c] == 1
-    ]
-    if len(metal_pixels) < 2:
+    }
+    if len(metal_set) < 2:
         return None, None
 
     existing = state.cap_pixel_pairs
-    # Pre-build the set of all existing pair interior cells (for clearance check)
-    existing_interior = _build_other_interior_cells(existing)
+    existing_path_cells = _build_other_path_cells(existing)
 
-    for _ in range(max_search):
-        a, b = rng.sample(metal_pixels, 2)
-        r1, c1 = a
-        r2, c2 = b
-        if r1 != r2 and c1 != c2:
-            continue  # diagonal — skip
+    candidates = []
+    for (r1, c1) in metal_set:
+        for dr in range(0, cap_pair_max_dist + 1):
+            dc_range = range(
+                -cap_pair_max_dist if dr > 0 else 1,
+                cap_pair_max_dist + 1,
+            )
+            for dc in dc_range:
+                if max(dr, abs(dc)) < cap_pair_min_dist:
+                    continue
+                if max(dr, abs(dc)) > cap_pair_max_dist:
+                    continue
+                if (r1 + dr, c1 + dc) in metal_set:
+                    candidates.append(((r1, c1), (r1 + dr, c1 + dc)))
+
+    rng.shuffle(candidates)
+    for (r1, c1), (r2, c2) in candidates[:max_search]:
         candidate = [[r1, c1], [r2, c2]]
         rev_candidate = [[r2, c2], [r1, c1]]
         if candidate in existing or rev_candidate in existing:
@@ -654,7 +666,7 @@ def action_add_cap_pair(
         if not check_cap_pair_valid(
             state.matrix, candidate,
             cap_pair_min_dist, cap_pair_max_dist,
-            existing_interior,
+            existing_path_cells,
         ):
             continue
         new = state.copy()

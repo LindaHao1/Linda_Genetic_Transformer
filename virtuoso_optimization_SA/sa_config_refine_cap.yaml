@@ -1,0 +1,143 @@
+# ===========================================================================
+# SA Configuration — Cap-Pair Refinement from Existing Design
+#
+# Starts from a known-good GA result and refines it by tuning cap pixel
+# pairs.  All other actions are given very low probability so the SA
+# focuses almost exclusively on adding/removing/perturbing cap pairs.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Path to the Virtuoso engine base config (shared physical/PDK settings).
+# ---------------------------------------------------------------------------
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+
+# Root directory for all SA outputs
+output_dir: "/disk/mcao53/Sim_engine_results/sa_filter_results_refine_cap"
+
+# ---------------------------------------------------------------------------
+# Load initial design from an existing pixelated config.yaml.
+# When set, random design generation is skipped entirely.
+# ---------------------------------------------------------------------------
+initial_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_indefinite_init_count/sims/gen91_ind6/worker_1/pixsimple_r21c27_ps25p0_gs20p0_frl15frr7_w1/config.yaml"
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE
+# ---------------------------------------------------------------------------
+grid:
+  rows: 21
+  cols: 27
+  n_switches: 2         # matches the loaded design (2 switch pixels)
+  max_inductors: 10
+  n_initial_inductors: 6  # not used (initial design is loaded, not generated)
+  n_states: 3
+
+  # Switch series capacitance range (Farads)
+  cap_min: 200.0e-15
+  cap_max: 1000.0e-15
+
+  n_inductor_values: 4
+
+  # Via-ground pixels
+  n_max_vias: 5
+  n_init_vias: 0
+
+  # Cap pixel pairs — enabled, focus of this refinement run
+  enable_cap_pairs: true
+  max_cap_pairs: 5
+  cap_pair_min: 50.0e-15     # 50 fF
+  cap_pair_max: 1000.0e-15   # 1000 fF
+  cap_pair_sigma: 50.0e-15   # Gaussian noise std for perturbation
+  cap_pair_min_dist: 2       # min Manhattan distance between endpoints
+  cap_pair_max_dist: 3       # max Manhattan distance between endpoints
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATIONS  (same targets as sa_config.yaml)
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [6.0e9, 8.0e9]        # 7 GHz centre, ±1 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [4.0e9,   6.0e9]                   # below passband
+      - [8.0e9,  14.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [14.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true       # set true to add S11 reflection penalties
+    s11_passband_max_db:       -20.0       # want low S11 in passband (good match)
+    s11_stopband_min_db:       -0.0       # want high S11 in stopband (high reflection)
+    s11_cross_stopband_min_db: -0.0
+
+  - state_index:     1
+    passband:        [22.0e9, 26.0e9]      # 24 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [14.0e9, 22.0e9]                   # below passband
+      - [26.0e9, 32.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [6.0e9,  14.0e9]
+      - [32.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+
+  - state_index:     2
+    passband:        [38.0e9, 42.0e9]      # 40 GHz centre, ±2 GHz bandwidth
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9, 38.0e9]                   # below passband
+      - [42.0e9, 50.0e9]                   # above passband
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [6.0e9,  32.0e9]
+      - [50.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+
+# ---------------------------------------------------------------------------
+# SIMULATED ANNEALING PARAMETERS
+# ---------------------------------------------------------------------------
+sa:
+  T_start:  100.0
+  T_end:    0.1
+  n_iter:   1000
+  cooling:  "linear"
+
+  n_parallel: 4
+
+  # Action parameters
+  n_regular_flip: 25
+  cap_sigma:      50.0e-15
+  max_switch_state_flips:   3
+  max_inductor_state_flips: 3
+  via_flip_max_count: 3
+
+  # Per-action sampling weights — cap-pair actions dominant, others very low.
+  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
+  #         perturb_caps, flip_switch_state,
+  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
+  action_weights: [0.5, 0.5, 0.1, 0.5, 3.0, 1.0, 8.0, 8.0, 8.0, 1.0, 0.5]
+
+seed: 42
+
+require_4_connected: true #only for initial design
+dynamic_state_assignment: true

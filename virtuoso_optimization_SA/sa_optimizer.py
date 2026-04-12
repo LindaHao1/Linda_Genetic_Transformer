@@ -47,6 +47,26 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Helper: load a DesignState from a pixelated config.yaml
+# ---------------------------------------------------------------------------
+
+def _load_design_from_config(config_path: str | Path) -> DesignState:
+    """Parse a pixelated config.yaml and return the embedded DesignState."""
+    with open(config_path) as f:
+        raw = yaml.safe_load(f)
+    pix = raw["pixelated"]
+    return DesignState(
+        matrix                 = pix["pixel_state_matrix"],
+        switch_states          = pix["state_list"],
+        cap_values             = pix["cap_values"],
+        inductor_values        = pix.get("inductor_values", []),
+        inductor_switch_states = pix.get("inductor_switch_states", []),
+        cap_pixel_pairs        = pix.get("cap_pixel_pairs", []),
+        cap_pair_values        = pix.get("cap_pair_values", []),
+    )
+
+
+# ---------------------------------------------------------------------------
 # SA configuration container
 # ---------------------------------------------------------------------------
 
@@ -102,6 +122,10 @@ class SAConfig:
     # to filter specs before computing cost.  Helps when the optimiser produces
     # a design whose states are "swapped" relative to the spec ordering.
     dynamic_state_assignment: bool = True
+
+    # Optional path to a pixelated config.yaml to load as the starting design.
+    # When set, the random initial design generation is skipped entirely.
+    initial_design_path: Optional[str] = None
 
     # Via-ground pixel hyperparameters
     n_max_vias:         int = 0  # maximum number of type-4 (via) pixels allowed
@@ -170,6 +194,8 @@ class SAConfig:
             n_initial_inductors_max = int(grid.get("n_initial_inductors_max", -1)),
             n_init_vias_min         = int(grid.get("n_init_vias_min",         -1)),
             n_init_vias_max         = int(grid.get("n_init_vias_max",         -1)),
+
+            initial_design_path = str(d["initial_design_path"]) if d.get("initial_design_path") else None,
         )
 
 
@@ -329,6 +355,12 @@ class SwitchableFilterSA:
 
     def _generate_initial_design(self) -> DesignState:
         cfg = self.cfg
+
+        # If an initial design path is provided, load it directly.
+        if cfg.initial_design_path:
+            print(f"[SA] Loading initial design from: {cfg.initial_design_path}")
+            return _load_design_from_config(cfg.initial_design_path)
+
         effective_max_cap_pairs = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0
 
         # Randomly sample initial counts when a range is configured.

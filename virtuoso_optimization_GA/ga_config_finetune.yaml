@@ -1,0 +1,200 @@
+# ===========================================================================
+# GA Configuration — Fine-Tune from Existing Design with Cap Pair Exploration
+#
+# This config seeds 70% of the initial population by mutating a known-good
+# design (finetune_design_path), fills the rest with random designs, and
+# enables cap pixel pair generation and crossover.
+#
+# Run with:
+#   python -m virtuoso_optimization_GA.run_ga \
+#       virtuoso_optimization_GA/ga_config_finetune.yaml
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Path to the Virtuoso engine base config (shared physical/PDK settings).
+# ---------------------------------------------------------------------------
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+
+# Root directory for all GA outputs
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_finetune_cap"
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE
+# ---------------------------------------------------------------------------
+grid:
+  rows: 21
+  cols: 27
+  n_states: 3
+
+  # --- Feasibility constraints ---
+  min_switches: 2
+  max_switches: 6
+  max_inductors: 10
+  n_max_vias: 5
+
+  # --- Initialisation ranges (for the random portion of the population) ---
+  init_min_switches: 2
+  init_max_switches: 4
+  init_min_inductors: 4
+  init_max_inductors: 8
+  init_min_vias: 0
+  init_max_vias: 2
+
+  # Switch series capacitance range (Farads)
+  cap_min: 200.0e-15
+  cap_max: 1000.0e-15
+
+  n_inductor_values: 4
+
+  # --- Cap pixel pairs (enabled for fine-tune exploration) ---
+  enable_cap_pairs:  true
+  max_cap_pairs:     8
+  cap_pair_init_min: 2           # min cap pairs placed in a new random design (range: [2, max_cap_pairs])
+  cap_pair_min:      50.0e-15    # 50 fF
+  cap_pair_max:      1000.0e-15  # 1000 fF
+  cap_pair_sigma:    50.0e-15    # Gaussian noise std for pair perturbation
+  cap_pair_min_dist: 2           # min Chebyshev distance max(|dr|,|dc|) between endpoints
+  cap_pair_max_dist: 3           # max Chebyshev distance max(|dr|,|dc|) between endpoints
+                                 # (diagonal pairs are now allowed in addition to axis-aligned)
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATIONS  (same as ga_config.yaml — 7/24/40 GHz)
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [6.0e9, 8.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [4.0e9,   6.0e9]
+      - [8.0e9,  14.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [14.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+
+  - state_index:     1
+    passband:        [22.0e9, 26.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [14.0e9, 22.0e9]
+      - [26.0e9, 32.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [6.0e9,  14.0e9]
+      - [32.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+
+  - state_index:     2
+    passband:        [38.0e9, 42.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9, 38.0e9]
+      - [42.0e9, 50.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 5.0
+    stopband_weight: 2.0
+    cross_stopband_regions:
+      - [6.0e9,  32.0e9]
+      - [50.0e9, 55.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 3.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS
+# ---------------------------------------------------------------------------
+ga:
+  pop_size_start:  100
+  pop_size_end:    40
+  pop_size_step:   10
+  elite_fraction:  0.20
+  n_gen:    100
+  n_immigrants: 2
+  n_keep_bad:  1
+
+  # Operators
+  p_crossover: 0.7
+  p_mutation:  0.7
+  crossover_method: "block"
+  n_centroids: 4
+  block_min_size: 5
+  block_max_size: 15
+
+  # Selection
+  selection:       "tournament"
+  tournament_size: 5
+
+  n_parallel: 5
+
+  n_regular_flip: 25
+  cap_sigma:      50.0e-15
+  via_flip_max_count: 3
+
+  # Per-action sampling weights — cap-pair actions enabled (non-zero).
+  action_weights:
+    flip_01:             4.0
+    move_switch:         1.0
+    flip_inductor:       1.0
+    flip_inductor_value: 1.0
+    perturb_caps:        1.0
+    flip_switch_state:   1.0
+    add_cap_pair:        8.0
+    remove_cap_pair:     8.0
+    perturb_pair_caps:   3.0
+    flip_inductor_state: 1.0
+    flip_via:            2.0
+
+  use_state_champions: true
+  p_champion_parent: 0.5
+  dynamic_state_assignment: true
+
+  exploitation_n: 5
+  exploitation_action_weights:
+    flip_01:             0.0
+    move_switch:         4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   4.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 4.0
+    flip_via:            2.0
+
+  # ---------------------------------------------------------------------------
+  # Fine-tune: seed 70% of the initial population from this existing design.
+  # The remaining 30% are generated randomly.
+  # Set to null or omit to disable fine-tune mode (all-random init).
+  # ---------------------------------------------------------------------------
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_indefinite_init_count/sims/gen91_ind6/worker_1/pixsimple_r21c27_ps25p0_gs20p0_frl15frr7_w1/config.yaml"
+  finetune_seed_ratio: 0.7
+
+  # ---------------------------------------------------------------------------
+  # Plotting
+  # ---------------------------------------------------------------------------
+  feasibility_cost_threshold: 1.0e6  # costs above this are excluded from mean/worst in plots
+  population_plot_top_k: 5           # top-k individual trajectories in ga_population_behavior.png
+
+# Random seed (set to null for non-deterministic)
+seed: 42

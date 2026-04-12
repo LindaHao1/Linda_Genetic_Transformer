@@ -1,0 +1,224 @@
+# ============================================================
+# Virtuoso Pixel Engine — Default Configuration
+#
+# ── Simulation Modes ──────────────────────────────────────
+#
+#   layout_pixel  (default)
+#     Full layout-based simulation.  Uses NMOS + MIM capacitor
+#     placed in Virtuoso, exported to GDS, and extracted by EMX.
+#     Spectre re-inserts device models and sweeps the gate voltage.
+#     Tunable parameters: nmos.*, mim_cap.*
+#     Cell name example: pixel_nmos_w3u_l80n_nf4_miml10u_mimw10u
+#
+#   simplified_pixel
+#     Compact-model simulation.  Only the top metal (pixel_layer)
+#     and ground shield (gnd_layer) are drawn — no transistor
+#     layout.  EMX extracts a 3-port S-parameter (PIX_OUT, VSS,
+#     CENTER).  Spectre connects CENTER to a switch circuit:
+#       ON : CENTER → cap_value → r_on → GND
+#       OFF: CENTER → cap_value → r_off → c_off → GND
+#     Tunable parameters: layout.pixel_size, switch_model.*
+#     Cell name example: simplepix_ps35p0_cap1e-12_ron3_roff260_coff8e-14
+#
+#   pixelated_design_simple
+#     Full NxM pixel-grid simulation for a switchable RF filter.
+#     Pixel types: 0=ground, 1=metal, 2=inductor, 3=switch.
+#     EMX extracts a multi-port S-parameter; Python generates one
+#     Spectre testbench per switch state and runs them.
+#     Output: one .s2p file per state (2-port: PIX_IN → PIX_OUT).
+#     Tunable parameters: pixelated.*, switch_model.*, layout.pixel_size
+#     Cell name example: pixsimple_r3c5_ps35p0_fr1
+#
+# ── Adding Future Modes ────────────────────────────────────
+#   See the "Adding New Modes" section in engine.py.
+# ============================================================
+
+# ── Active simulation mode ───────────────────────────────────────────────────
+# Set to "layout_pixel", "simplified_pixel", or "pixelated_design_simple".
+# Can be overridden per-run: engine.run({"mode": "pixelated_design_simple"})
+mode: "pixelated_design_simple"
+
+# ============================================================
+# PROJECT SETTINGS
+# ============================================================
+project:
+  lib_name: "pySim"
+  pdk_lib: "tsmcN65"
+  # All runs land under this folder; sub-dir is auto-generated
+  # from the tunable params (e.g. pixel_nmos_w3u_l80n_nf4_miml10u_mimw10u)
+  parent_output_dir: "/disk/mcao53/Sim_engine_results/pixel_results"
+  # Virtuoso must be started from this directory (cds.lib + PDK configured)
+  virtuoso_dir: "/disk/mcao53/Sim_engine_results"
+  # X display for headless Virtuoso (Xvfb must be running on this display
+  # before the engine starts — launch it in a separate tmux session:
+  #   Xvfb :99 -screen 0 1024x768x24 -extension XKEYBOARD &
+  display: ":99"
+
+# ============================================================
+# TUNABLE PARAMETERS — layout_pixel mode
+# These define the unique cell name for layout_pixel runs.
+# ============================================================
+nmos:
+  width: "3u"      # wr — e.g. "3u", "6u", "9u"
+  length: "80n"    # lr — e.g. "80n", "100n"
+  fingers: 4       # nr — integer
+  cell_layout: "nmos_rf"     # cell name used in layout instantiation
+  cell_spectre: "nmos_rf"    # cell name used in Spectre netlist re-insertion
+
+mim_cap:
+  length: "12u"    # lt — layout geometry AND Spectre re-insertion
+  width: "12u"     # wt — layout geometry AND Spectre re-insertion
+  total_c: "1p"    # approximate total capacitance (informational label)
+  cell_layout: "mimcap_um_rf"       # cell name for layout instantiation
+  cell_spectre: "mimcap_um_sin_rf"  # cell name for Spectre netlist re-insertion
+
+# ============================================================
+# TUNABLE PARAMETERS — simplified_pixel mode
+# These define the unique cell name and switch behavior.
+# ============================================================
+switch_model:
+  # Series coupling capacitance (models pixel-stack AC coupling, in Farads)
+  cap_value: "1e-12"
+
+  # ON state: transistor in conduction — low-impedance path
+  # Imaginary contribution is small and can be neglected at these frequencies.
+  r_on: 3           # ohm
+
+  # OFF state: transistor open — high-impedance path
+  r_off: 260        # ohm  (drain-source leakage resistance)
+  c_off: "8e-14"    # F    (drain-source parasitic capacitance, ~80 fF)
+
+# ============================================================
+# LAYOUT GEOMETRY — shared by all modes
+# ============================================================
+layout:
+  pixel_size: 30.0   # um — metal patch size (top layer); may be > grid_size for overlap
+  grid_size: 25.0    # um — pitch between pixel centres (pixelated_design_simple only)
+                     #      pixel_size > grid_size creates intentional pixel overlap
+  gnd_layer: "M4"
+  pixel_layer: "AP"
+  via_size: 3.8      # um — via stack area half-size (layout_pixel mode only)
+  gnd_y_extension: 10.0  # um — ground plane extension beyond pixel grid in ±Y
+                          #      (pixelated_design_simple only)
+
+# ============================================================
+# SIMULATION — shared frequency sweep settings
+# ============================================================
+simulation:
+  # Gate voltage sweep for layout_pixel mode
+  control_voltages: [1.0, 0.0]   # V_gate values (on → off)
+
+  # EMX EM extraction sweep
+  emx_freq_start: 0
+  emx_freq_stop: "70e9"
+  emx_freq_step: "1e9"
+  emx_parallel_threads: 8
+
+  # Spectre SP analysis
+  spectre_freq_start: "0G"
+  spectre_freq_stop: "70G"
+  spectre_freq_step: "1G"
+
+# ============================================================
+# TUNABLE PARAMETERS — pixelated_design_simple mode
+#
+# pixel_state_matrix: 2D grid of pixel types
+#   0 — ground layer only (M4, no central port)
+#   1 — top + ground layer (M9 + M4, no central port)
+#   2 — top + ground + inductor central port (IND_<i>, connected to inductor_s1p)
+#   3 — top + ground + switch central port (SW_<i>, ON/OFF per state)
+#
+# state_list: list of binary switch-state vectors (1=ON, 0=OFF).
+#   Length = number of simulation states.
+#   Each inner list length = number of type-3 (switch) pixels.
+#
+# cap_values: per-switch series capacitance (F).
+#   Length = number of type-3 pixels (row-first order).
+#
+# feedline: horizontal metal trace at feedline_row that forms the I/O path.
+#   PIX_IN port at left end, PIX_OUT port at right end.
+#
+# inductor_s1p: path to a 1-port S-parameter file for all inductor pixels.
+#   Choose from: 100nH, 200nH, 400nH, 800nH active inductance files.
+#
+# switch_model parameters (r_on, r_off, c_off) are shared with simplified_pixel.
+#
+# Output: one .s2p file per state (2-port: PIX_IN → PIX_OUT).
+# Cell name example: pixsimple_r3c5_ps35p0_fr1
+# ============================================================
+pixelated:
+  # 3×5 example: outer rows = reflectors, middle row = active filter
+  pixel_state_matrix:
+    - [1, 1, 2, 1, 0]
+    - [0, 3, 1, 3, 1]
+    - [0, 0, 2, 1, 0]
+
+  # 4 states for 2 switches: all combinations of ON/OFF
+  state_list:
+    - [0, 0]   # both OFF
+    - [1, 0]   # SW_0 ON, SW_1 OFF
+    - [0, 1]   # SW_0 OFF, SW_1 ON
+    - [1, 1]   # both ON
+
+  # Per-switch series coupling capacitance (same order as SW_* ports, row-first)
+  cap_values: [1.0e-12, 1.0e-12]
+
+  # Feedline configuration
+  feedline:
+    feedline_row: 1        # Deprecated, now controleld by matrix, 0-indexed row where the feedline runs (middle row here)
+    feedline_width: 10.2    # um — metal width of the feedline trace
+    feedline_padding: 10.0 # um — extension beyond pixel-grid edge for port placement
+
+  # Global translation table: integer index → inductor s1p file path.
+  # Index 0 = 100nH, 1 = 200nH, 2 = 400nH, 3 = 800nH.
+  # Used by the SA optimiser to assign a distinct inductance value per inductor pixel.
+  inductor_translation_table:
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/100nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/400nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/800nH_active_inductance.s1p"
+
+  # Per-inductor value index (one entry per type-2 pixel, in row-first order).
+  # Each integer is an index into inductor_translation_table above.
+  # Length must equal the number of type-2 pixels in pixel_state_matrix.
+  inductor_values: [1, 2]   # 1 = 200nH (matches the single type-2 pixel in the example matrix)
+
+  # Per-inductor ON/OFF control per state (switchable inductor).
+  # Outer list length = number of states (must match state_list).
+  # Inner list length = number of type-2 (inductor) pixels (row-first order).
+  # 1 = inductor active (connected to s1p nport); 0 = open circuit (1 TΩ to GND).
+  # Omit this key entirely (or set to []) to keep all inductors ON in all states.
+  # inductor_switch_states:
+  #   - [1, 1]   # state 0: both inductors ON
+  #   - [1, 0]   # state 1: IND_0 ON, IND_1 OFF
+  #   - [0, 1]   # state 2: IND_0 OFF, IND_1 ON
+  #   - [1, 1]   # state 3: both ON
+
+  # Kept for single-inductor / legacy use.  Ignored when inductor_values is present.
+  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+
+  # Capacitor pixel pairs — state-independent capacitors bridging two pixels.
+  # Each entry is [[row1, col1], [row2, col2]] (row/col match pixel_state_matrix).
+  # A port CP_{i}A is created at pixel (row1, col1) and CP_{i}B at (row2, col2);
+  # Spectre connects them with a capacitor of value cap_pair_values[i].
+  # Both pixels must have type > 0 (metal present).
+  # Leave empty ([]) when not used.
+  cap_pixel_pairs: []   # e.g. [[[0,1],[1,2]], [[0,3],[2,3]]]
+  cap_pair_values: []   # e.g. [1.0e-12, 2.0e-12]
+
+# ============================================================
+# PARALLEL ENGINE SETTINGS
+# ============================================================
+parallel:
+  # Number of concurrent Virtuoso workers for ParallelVirtuosoEngine.
+  # Each worker gets its own Virtuoso process, library, and output folder.
+  # Worker N uses lib_name "{lib_name}_wN" and output dir "{parent_output_dir}/worker_N/"
+  num_workers: 2
+
+# ============================================================
+# FIXED PATHS
+# ============================================================
+paths:
+  proc_file: "/disk/mcao53/Project65/proc65/RC_IRCX_CRN65G+_1P9M+UT-ALRDL_6X1Z1U_MiM_typical.proc"
+  tsmc_models: "/disk/TSMC65GP_PDK/MSRF_General_Purpose_Plus/PDK/CadenceOA/tn65cmsp018k3_1_0c/models/spectre/crn65gplus_2d5_lk_v1d0.scs"
+  emx_binary: "/cae/apps/data/cadence-2025/installs/EMX20251/bin/emx"

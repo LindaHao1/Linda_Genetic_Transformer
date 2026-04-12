@@ -248,16 +248,39 @@ def is_feasible(
 
 def _pair_interior_cells(pair: List[List[int]]) -> List[Tuple[int, int]]:
     """
-    Return the cells strictly between the two endpoints of an axis-aligned pair
+    Return the cells strictly between the two endpoints of a cap pair
     (exclusive of the endpoints themselves).
+
+    For axis-aligned pairs: cells along the shared row or column.
+    For diagonal / off-diagonal pairs: cells along the Bresenham path
+    between the two endpoints (stepping by sign(dr), sign(dc) each step
+    along the dominant axis, rounding the minor axis).
     """
     (r1, c1), (r2, c2) = pair[0], pair[1]
     if r1 == r2:
         c_lo, c_hi = min(c1, c2), max(c1, c2)
         return [(r1, c) for c in range(c_lo + 1, c_hi)]
-    else:
+    if c1 == c2:
         r_lo, r_hi = min(r1, r2), max(r1, r2)
         return [(r, c1) for r in range(r_lo + 1, r_hi)]
+
+    # General (diagonal / off-diagonal) case
+    dr = r2 - r1
+    dc = c2 - c1
+    steps = max(abs(dr), abs(dc))
+    cells: List[Tuple[int, int]] = []
+    for i in range(1, steps):
+        r = r1 + round(i * dr / steps)
+        c = c1 + round(i * dc / steps)
+        if (r, c) not in cells:
+            cells.append((r, c))
+    return cells
+
+
+def _pair_all_cells(pair: List[List[int]]) -> List[Tuple[int, int]]:
+    """Return the full path of a cap pair: both endpoints plus all interior cells."""
+    (r1, c1), (r2, c2) = pair[0], pair[1]
+    return [(r1, c1), (r2, c2)] + _pair_interior_cells(pair)
 
 
 def check_cap_pair_valid(
@@ -265,82 +288,98 @@ def check_cap_pair_valid(
     pair: List[List[int]],
     min_dist: int = 2,
     max_dist: int = 3,
-    other_pair_interior_cells: Optional[set] = None,
+    other_pair_path_cells: Optional[set] = None,
 ) -> bool:
     """
     Return True if a cap pixel pair is valid:
 
     1. Both endpoints must be type-1 (metal) pixels.
-    2. The pair must be axis-aligned (horizontal or vertical only).
-    3. Manhattan distance between endpoints must be in [min_dist, max_dist].
-    4. The cells strictly between the two endpoints (on the axis, exclusive of
-       the endpoints themselves) must ALL be type-0 (ground).  The capacitor
-       must bridge across a pure ground gap — no metal, inductors, or switches
-       in between.
-    5. The cells adjacent to the interior path (±1 row for horizontal,
-       ±1 col for vertical) must contain no inductors (2), switches (3), or
-       interior path cells of any other existing cap pair.
+    2. (removed) — diagonal and off-diagonal pairs are now permitted.
+    3. Chebyshev distance max(|dr|, |dc|) between endpoints must be in
+       [min_dist, max_dist].
+    4. The cells strictly between the two endpoints (exclusive of the
+       endpoints) must contain AT LEAST ONE type-0 (ground) cell.
+    5. Every cell in the full path (both endpoints + all interior cells)
+       must have no special pixels (type 2 or 3) within Chebyshev distance
+       ≤ 1 (i.e. no type-2/3 pixel inside the 3×3 box centred on each
+       path cell).
+    6. The 3×3 corridor swept along the full path must not intersect the
+       full path (endpoints + interior) of any other existing cap pair.
+       This prevents port overlap and ensures clear separation between caps.
+       Applies to all pair orientations (axis-aligned and diagonal).
 
     Parameters
     ----------
-    other_pair_interior_cells : set of (row, col) tuples that are interior path
-        cells of all *other* existing cap pairs.  When provided, rule 5 also
-        rejects clearance cells that coincide with another pair's path.
+    other_pair_path_cells : set of (row, col) tuples covering the full path
+        (endpoints + interior) of all *other* existing cap pairs.  When
+        provided, rule 6 rejects any pair whose 3×3 corridor contains a cell
+        from this set.
     """
     rows = len(matrix)
     cols = len(matrix[0])
     (r1, c1), (r2, c2) = pair[0], pair[1]
-    blocked = other_pair_interior_cells or set()
+    blocked = other_pair_path_cells or set()
 
     # Rule 1: both endpoints must be type 1
     if matrix[r1][c1] != 1 or matrix[r2][c2] != 1:
         return False
 
-    # Rule 2: axis-aligned only
-    if r1 != r2 and c1 != c2:
-        return False
-
-    # Rule 3: distance bounds
-    dist = abs(r2 - r1) + abs(c2 - c1)
+    # Rule 3: Chebyshev distance bounds
+    dist = max(abs(r2 - r1), abs(c2 - c1))
     if dist < min_dist or dist > max_dist:
         return False
 
-    if r1 == r2:
-        # Horizontal pair
-        r = r1
-        c_lo, c_hi = min(c1, c2), max(c1, c2)
-        # Rule 4: interior axis cells must be type 0 (ground only)
-        for c in range(c_lo + 1, c_hi):
-            if matrix[r][c] != 0:
-                return False
-        # Rule 5: adjacent rows must have no type 2/3 and no other pair paths
-        for c in range(c_lo + 1, c_hi):
-            for dr in (-1, 1):
-                nr = r + dr
-                if 0 <= nr < rows:
-                    if matrix[nr][c] in (2, 3):
-                        return False
-                    if (nr, c) in blocked:
-                        return False
-    else:
-        # Vertical pair
-        c = c1
-        r_lo, r_hi = min(r1, r2), max(r1, r2)
-        # Rule 4: interior axis cells must be type 0 (ground only)
-        for r in range(r_lo + 1, r_hi):
-            if matrix[r][c] != 0:
-                return False
-        # Rule 5: adjacent cols must have no type 2/3 and no other pair paths
-        for r in range(r_lo + 1, r_hi):
-            for dc in (-1, 1):
-                nc = c + dc
-                if 0 <= nc < cols:
-                    if matrix[r][nc] in (2, 3):
-                        return False
-                    if (r, nc) in blocked:
+    interior = _pair_interior_cells(pair)
+
+    # Rule 4: interior must contain at least one type-0 (ground) cell
+    if not any(matrix[ir][ic] == 0 for (ir, ic) in interior):
+        return False
+
+    all_path_cells = [(r1, c1), (r2, c2)] + interior
+
+    # Rule 5: every cell in the full path must have no special pixel (type 2
+    # or 3) within Chebyshev distance ≤ 1 (3×3 box).
+    for (pr, pc) in all_path_cells:
+        r_lo = max(0, pr - 1)
+        r_hi = min(rows - 1, pr + 1)
+        c_lo = max(0, pc - 1)
+        c_hi = min(cols - 1, pc + 1)
+        for nr in range(r_lo, r_hi + 1):
+            for nc in range(c_lo, c_hi + 1):
+                if matrix[nr][nc] in (2, 3):
+                    return False
+
+    # Rule 6: the 3×3 corridor around the full path of this pair must not
+    # contain any path cell (endpoint or interior) of another existing pair.
+    if blocked:
+        for (pr, pc) in all_path_cells:
+            r_lo = max(0, pr - 1)
+            r_hi = min(rows - 1, pr + 1)
+            c_lo = max(0, pc - 1)
+            c_hi = min(cols - 1, pc + 1)
+            for nr in range(r_lo, r_hi + 1):
+                for nc in range(c_lo, c_hi + 1):
+                    if (nr, nc) in blocked:
                         return False
 
     return True
+
+
+def _build_other_path_cells(
+    pairs: List[List[List[int]]],
+    exclude_index: int = -1,
+) -> set:
+    """
+    Build the union of full path cells (endpoints + interior) for all pairs
+    *except* the one at ``exclude_index``.  Used to enforce Rule 6 clearance.
+    """
+    cells: set = set()
+    for i, p in enumerate(pairs):
+        if i == exclude_index:
+            continue
+        for cell in _pair_all_cells(p):
+            cells.add(cell)
+    return cells
 
 
 def _build_other_interior_cells(
@@ -348,8 +387,12 @@ def _build_other_interior_cells(
     exclude_index: int = -1,
 ) -> set:
     """
-    Build the union of interior path cells for all pairs *except* the one at
-    ``exclude_index``.  Used to check clearance against other pair paths.
+    Build the union of interior path cells (excluding endpoints) for all pairs
+    *except* the one at ``exclude_index``.
+
+    .. deprecated::
+        Prefer :func:`_build_other_path_cells` which also includes endpoints,
+        giving stronger overlap protection.
     """
     cells: set = set()
     for i, p in enumerate(pairs):
@@ -369,13 +412,13 @@ def filter_valid_pairs(
 ) -> Tuple[List[List[List[int]]], List[float]]:
     """
     Remove any cap pixel pairs that are no longer valid after a matrix mutation.
-    Each pair is checked against the interior cells of all other remaining pairs.
+    Each pair is checked against the full path cells of all other remaining pairs.
     Returns the filtered (pairs, pair_values) lists.
     """
     kept_pairs: List[List[List[int]]] = []
     kept_values: List[float] = []
     for i, (pair, val) in enumerate(zip(pairs, pair_values)):
-        other_cells = _build_other_interior_cells(pairs, exclude_index=i)
+        other_cells = _build_other_path_cells(pairs, exclude_index=i)
         if check_cap_pair_valid(matrix, pair, min_dist, max_dist, other_cells):
             kept_pairs.append(pair)
             kept_values.append(val)
@@ -512,11 +555,12 @@ def generate_random_design(
     rng: random.Random,
     n_inductor_values: int = 4,
     n_initial_inductors: int = 0,
-    p0: float = 0.40,   # probability of type 0 (ground) for interior cells
-    p1: float = 0.60,   # probability of type 1 (metal)
+    p0: float = 0.50,   # probability of type 0 (ground) for interior cells
+    p1: float = 0.50,   # probability of type 1 (metal)
     max_attempts: int = 10_000,
     require_4_connected: bool = False,
     max_cap_pairs: int = 0,
+    cap_pair_init_min: int = 0,
     cap_pair_min: float = 50e-15,
     cap_pair_max: float = 500e-15,
     cap_pair_min_dist: int = 2,
@@ -685,31 +729,45 @@ def generate_random_design(
         cap_pixel_pairs: List[List[List[int]]] = []
         cap_pair_values_list: List[float] = []
         if max_cap_pairs > 0:
-            metal_pixels = [
-                (r, c)
-                for r in range(rows)
-                for c in range(1, cols - 1)
-                if matrix[r][c] == 1
-            ]
-            pair_attempts = 0
-            max_pair_attempts = max_cap_pairs * 200
-            while len(cap_pixel_pairs) < max_cap_pairs and pair_attempts < max_pair_attempts:
-                pair_attempts += 1
-                if len(metal_pixels) < 2:
-                    break
-                a, b = rng.sample(metal_pixels, 2)
-                r1, c1 = a
-                r2, c2 = b
-                if r1 != r2 and c1 != c2:
-                    continue
-                candidate = [[r1, c1], [r2, c2]]
-                if candidate in cap_pixel_pairs or [[r2, c2], [r1, c1]] in cap_pixel_pairs:
-                    continue
-                other_cells = _build_other_interior_cells(cap_pixel_pairs)
-                if not check_cap_pair_valid(matrix, candidate, cap_pair_min_dist, cap_pair_max_dist, other_cells):
-                    continue
-                cap_pixel_pairs.append(candidate)
-                cap_pair_values_list.append(rng.uniform(cap_pair_min, cap_pair_max))
+            # Sample a target count from [cap_pair_init_min, max_cap_pairs]
+            init_min = max(0, min(cap_pair_init_min, max_cap_pairs))
+            target_n_pairs = rng.randint(init_min, max_cap_pairs)
+
+            if target_n_pairs > 0:
+                metal_set = {
+                    (r, c)
+                    for r in range(rows)
+                    for c in range(1, cols - 1)
+                    if matrix[r][c] == 1
+                }
+                candidates: List[Tuple[Tuple[int, int], Tuple[int, int]]] = []
+                for (r1, c1) in metal_set:
+                    # Enumerate all neighbours within Chebyshev distance [min_dist, max_dist].
+                    # Only iterate offsets with dr >= 0 (or dr==0 and dc>0) to avoid
+                    # adding each pair twice.
+                    for dr in range(0, cap_pair_max_dist + 1):
+                        dc_range = range(
+                            -cap_pair_max_dist if dr > 0 else 1,
+                            cap_pair_max_dist + 1,
+                        )
+                        for dc in dc_range:
+                            if max(dr, abs(dc)) < cap_pair_min_dist:
+                                continue
+                            if max(dr, abs(dc)) > cap_pair_max_dist:
+                                continue
+                            if (r1 + dr, c1 + dc) in metal_set:
+                                candidates.append(((r1, c1), (r1 + dr, c1 + dc)))
+
+                rng.shuffle(candidates)
+                for (r1, c1), (r2, c2) in candidates:
+                    if len(cap_pixel_pairs) >= target_n_pairs:
+                        break
+                    candidate = [[r1, c1], [r2, c2]]
+                    other_cells = _build_other_path_cells(cap_pixel_pairs)
+                    if not check_cap_pair_valid(matrix, candidate, cap_pair_min_dist, cap_pair_max_dist, other_cells):
+                        continue
+                    cap_pixel_pairs.append(candidate)
+                    cap_pair_values_list.append(rng.uniform(cap_pair_min, cap_pair_max))
 
         return DesignState(
             matrix                 = matrix,

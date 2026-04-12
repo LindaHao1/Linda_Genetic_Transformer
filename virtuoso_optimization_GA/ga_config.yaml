@@ -48,6 +48,17 @@ grid:
   # Number of discrete inductance choices in inductor_translation_table (config.yaml)
   n_inductor_values: 4
 
+  # --- Cap pixel pairs (disabled; set enable_cap_pairs: true and non-zero action_weights to use) ---
+  enable_cap_pairs:  false
+  max_cap_pairs:     8
+  cap_pair_init_min: 2           # min cap pairs placed in a new random design (range: [2, max_cap_pairs])
+  cap_pair_min:      50.0e-15    # 50 fF
+  cap_pair_max:      1000.0e-15  # 1000 fF
+  cap_pair_sigma:    50.0e-15    # Gaussian noise std for pair perturbation
+  cap_pair_min_dist: 2           # min Chebyshev distance max(|dr|,|dc|) between endpoints
+  cap_pair_max_dist: 3           # max Chebyshev distance max(|dr|,|dc|) between endpoints
+                                 # (diagonal pairs are allowed in addition to axis-aligned)
+
 # ---------------------------------------------------------------------------
 # FILTER TARGET SPECIFICATIONS  (matches sa_config.yaml — 7/24/40 GHz version)
 # ---------------------------------------------------------------------------
@@ -145,12 +156,20 @@ ga:
   cap_sigma:      50.0e-15   # Gaussian noise std for cap perturbation (50 fF)
   via_flip_max_count: 3      # max vias to add or remove per flip_via action
 
-  # Per-action sampling weights (relative)
-  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
-  #         perturb_caps, flip_switch_state,
-  #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
-  # Cap-pair actions are 0.0 — GA does not generate designs with cap pairs.
-  action_weights: [4.0, 2.0, 1.0, 4.0, 4.0, 8.0, 0.0, 0.0, 0.0, 12.0, 2.0]
+  # Per-action sampling weights (relative). Cap-pair actions are 0.0 because
+  # enable_cap_pairs is false — set them to e.g. 3.0 when enabling cap pairs.
+  action_weights:
+    flip_01:             4.0
+    move_switch:         2.0
+    flip_inductor:       1.0
+    flip_inductor_value: 4.0
+    perturb_caps:        4.0
+    flip_switch_state:   8.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 12.0
+    flip_via:            2.0
 
   # State-wise champion elitism: preserve the best design per filter state
   # so crossover can mix frequency-specific experts.
@@ -165,7 +184,24 @@ ga:
   # flip_inductor_state (idx 9) are active; all structural actions are 0.
   # [flip_01, move_switch, flip_inductor, flip_inductor_value,
   #  perturb_caps, flip_switch_state, add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
-  exploitation_action_weights: [0, 4.0, 0, 0, 0, 4.0, 0, 0, 0, 4.0, 2.0]
+  exploitation_action_weights:
+    flip_01:             0.0
+    move_switch:         4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   4.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 4.0
+    flip_via:            2.0
+
+  # ---------------------------------------------------------------------------
+  # Plotting
+  # ---------------------------------------------------------------------------
+  feasibility_cost_threshold: 1.0e6  # costs above this are excluded from mean/worst in plots
+  population_plot_top_k: 5           # top-k individual trajectories in ga_population_behavior.png
 
 # Random seed (set to null for non-deterministic)
 seed: 42

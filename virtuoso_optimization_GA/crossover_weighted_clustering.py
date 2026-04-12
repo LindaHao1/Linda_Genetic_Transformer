@@ -34,6 +34,7 @@ from .crossover import (
     _fix_inductors,
     _fix_switches,
     _fix_vias,
+    _inherit_cap_pairs,
 )
 
 
@@ -187,6 +188,9 @@ def crossover_weighted_clustering(
     n_inductor_values: int = 4,
     max_vias: int = 0,
     n_centroids_max: int = 4,
+    max_cap_pairs: int = 0,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> Optional[DesignState]:
     """
     Produce one child by weighted-clustering crossover of two parent designs.
@@ -289,10 +293,17 @@ def crossover_weighted_clustering(
         )
     )
 
+    # --- Inherit cap pixel pairs from parents ---
+    cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs(
+        child_matrix, parent1, parent2, max_cap_pairs, cap_pair_min_dist, cap_pair_max_dist, rng
+    )
+
     return DesignState(
         matrix                 = child_matrix,
         switch_states          = switch_states,
         cap_values             = cap_values,
         inductor_values        = inductor_values,
         inductor_switch_states = inductor_switch_states,
+        cap_pixel_pairs        = cap_pixel_pairs,
+        cap_pair_values        = cap_pair_values,
     )

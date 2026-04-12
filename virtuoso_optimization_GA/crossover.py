@@ -34,6 +34,7 @@ from virtuoso_optimization_SA.feasibility import (
     _neighbours_8,
     _special_pixel_too_close,
     check_connectivity,
+    filter_valid_pairs,
     is_feasible,
 )
 
@@ -387,6 +388,76 @@ def _inherit_values(
 
 
 # ---------------------------------------------------------------------------
+# Cap pair inheritance helper
+# ---------------------------------------------------------------------------
+
+def _inherit_cap_pairs(
+    child_matrix: List[List[int]],
+    parent1: DesignState,
+    parent2: DesignState,
+    max_cap_pairs: int,
+    min_dist: int,
+    max_dist: int,
+    rng: random.Random,
+) -> Tuple[List[List[List[int]]], List[float]]:
+    """
+    Combine cap pixel pairs from both parents, validate them against the child
+    matrix, and return up to max_cap_pairs valid pairs with inherited values.
+
+    Strategy:
+      1. Pool all pairs from parent1 and parent2 (deduplicated by endpoints).
+      2. For duplicates (same endpoints in both parents), use the average value.
+      3. Run filter_valid_pairs() to drop pairs invalidated by the new matrix.
+      4. Shuffle and trim to max_cap_pairs.
+
+    Returns (cap_pixel_pairs, cap_pair_values).
+    If both parents have no pairs, returns ([], []).
+    """
+    if max_cap_pairs == 0:
+        return [], []
+
+    # Build a dict: canonical endpoint tuple → value (average if both parents have it)
+    pair_pool: Dict[Tuple, float] = {}
+
+    def _key(pair: List[List[int]]) -> Tuple:
+        ep1, ep2 = tuple(pair[0]), tuple(pair[1])
+        return (min(ep1, ep2), max(ep1, ep2))
+
+    for pair, val in zip(parent1.cap_pixel_pairs, parent1.cap_pair_values):
+        k = _key(pair)
+        pair_pool[k] = val
+
+    for pair, val in zip(parent2.cap_pixel_pairs, parent2.cap_pair_values):
+        k = _key(pair)
+        if k in pair_pool:
+            pair_pool[k] = (pair_pool[k] + val) / 2.0  # average
+        else:
+            pair_pool[k] = val
+
+    if not pair_pool:
+        return [], []
+
+    # Convert back to list form for filter_valid_pairs
+    candidate_pairs = [[[k[0][0], k[0][1]], [k[1][0], k[1][1]]] for k in pair_pool]
+    candidate_values = [pair_pool[k] for k in pair_pool]
+
+    # Validate against the child matrix
+    valid_pairs, valid_values = filter_valid_pairs(
+        child_matrix, candidate_pairs, candidate_values, min_dist, max_dist
+    )
+
+    # Shuffle and trim
+    combined = list(zip(valid_pairs, valid_values))
+    rng.shuffle(combined)
+    combined = combined[:max_cap_pairs]
+
+    if not combined:
+        return [], []
+    result_pairs, result_values = zip(*combined)
+    return list(result_pairs), list(result_values)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -402,6 +473,9 @@ def crossover_zig_zag(
     cap_max: float,
     n_inductor_values: int = 4,
     max_vias: int = 0,
+    max_cap_pairs: int = 0,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
 ) -> Optional[DesignState]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -467,10 +541,17 @@ def crossover_zig_zag(
         ind_sw_states_p2=parent2.inductor_switch_states,
     )
 
+    # --- Inherit cap pixel pairs from parents ---
+    cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs(
+        child_matrix, parent1, parent2, max_cap_pairs, cap_pair_min_dist, cap_pair_max_dist, rng
+    )
+
     return DesignState(
         matrix                 = child_matrix,
         switch_states          = switch_states,
         cap_values             = cap_values,
         inductor_values        = inductor_values,
         inductor_switch_states = inductor_switch_states,
+        cap_pixel_pairs        = cap_pixel_pairs,
+        cap_pair_values        = cap_pair_values,
     )

@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import shutil
 import sys
 import time
 from dataclasses import dataclass, asdict
@@ -37,7 +38,8 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-from virtuoso_optimization_SA.actions import random_action
+from virtuoso_optimization_SA.actions import random_action, _ACTION_NAMES
+from virtuoso_optimization_SA.sa_optimizer import _load_design_from_config
 from virtuoso_optimization_SA.cost import (
     compute_total_cost, compute_total_cost_dynamic, compute_state_cost, get_s21_db,
     compute_cost_breakdown,
@@ -54,6 +56,34 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine
     from virtuoso_engine.engine import RunResult
+
+
+# ---------------------------------------------------------------------------
+# Action-weight helpers
+# ---------------------------------------------------------------------------
+
+def _parse_action_weights(val, n_actions: int = len(_ACTION_NAMES)) -> List[float]:
+    """
+    Parse action weights from either a dict or a list.
+
+    Dict form (preferred — readable in YAML):
+        {"flip_01": 4.0, "move_switch": 2.0, ...}
+    List form (legacy — positional, must match _ACTION_NAMES order):
+        [4.0, 2.0, 1.0, ...]
+
+    Dict keys that don't match any action name are silently ignored.
+    Actions missing from the dict default to 0.0.
+    Lists shorter than n_actions are zero-padded; longer lists are truncated.
+    """
+    if isinstance(val, dict):
+        weights = [float(val.get(name, 0.0)) for name in _ACTION_NAMES]
+    else:
+        weights = [float(w) for w in val]
+        if len(weights) < n_actions:
+            weights += [0.0] * (n_actions - len(weights))
+        elif len(weights) > n_actions:
+            weights = weights[:n_actions]
+    return weights
 
 
 # ---------------------------------------------------------------------------
@@ -120,6 +150,24 @@ class GAConfig:
     # Random seed
     seed: Optional[int]
 
+    # Cap pixel pairs
+    enable_cap_pairs:   bool  = False
+    max_cap_pairs:      int   = 0
+    cap_pair_init_min:  int   = 0    # min cap pairs placed in a new random design
+    cap_pair_min:       float = 50e-15
+    cap_pair_max:       float = 1000e-15
+    cap_pair_sigma:     float = 50e-15
+    cap_pair_min_dist:  int   = 2
+    cap_pair_max_dist:  int   = 3
+
+    # Plotting: exclude high-cost (infeasible-performance) designs from mean/worst stats
+    feasibility_cost_threshold: float = 1e6   # costs above this are excluded from filtered stats
+    population_plot_top_k:      int   = 5     # number of top individuals to track per generation
+
+    # Fine-tune: seed initial population from an existing design
+    finetune_design_path: Optional[str] = None  # path to a pixelated config.yaml; None = disabled
+    finetune_seed_ratio:  float = 0.7           # fraction of pop_size_start seeded by mutations of that design
+
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
         ga   = d["ga"]
@@ -155,14 +203,14 @@ class GAConfig:
             n_parallel      = int(ga.get("n_parallel", 4)),
             n_regular_flip  = int(ga.get("n_regular_flip", 3)),
             cap_sigma       = float(ga.get("cap_sigma", 50e-15)),
-            action_weights  = [float(w) for w in ga.get(
-                "action_weights", [1.0, 1.0, 1.0, 1.0, 1.0, 1.0])],
+            action_weights  = _parse_action_weights(ga.get(
+                "action_weights", {n: 1.0 for n in _ACTION_NAMES})),
             use_state_champions      = bool(ga.get("use_state_champions", True)),
             p_champion_parent        = float(ga.get("p_champion_parent", 0.0)),
             dynamic_state_assignment = bool(ga.get("dynamic_state_assignment", True)),
             exploitation_n               = int(ga.get("exploitation_n", 0)),
-            exploitation_action_weights  = [float(w) for w in ga.get(
-                "exploitation_action_weights", [0]*11)],
+            exploitation_action_weights  = _parse_action_weights(ga.get(
+                "exploitation_action_weights", {})),
 
             n_max_vias         = int(grid.get("n_max_vias", 0)),
             via_flip_max_count = int(ga.get("via_flip_max_count", 3)),
@@ -171,6 +219,21 @@ class GAConfig:
             n_centroids      = int(ga.get("n_centroids", 3)),
             block_min_size   = int(ga.get("block_min_size", 5)),
             block_max_size   = int(ga.get("block_max_size", 15)),
+
+            enable_cap_pairs   = bool(grid.get("enable_cap_pairs", False)),
+            max_cap_pairs      = int(grid.get("max_cap_pairs", 0)),
+            cap_pair_init_min  = int(grid.get("cap_pair_init_min", 2)),
+            cap_pair_min       = float(grid.get("cap_pair_min", 50e-15)),
+            cap_pair_max       = float(grid.get("cap_pair_max", 1000e-15)),
+            cap_pair_sigma     = float(grid.get("cap_pair_sigma", 50e-15)),
+            cap_pair_min_dist  = int(grid.get("cap_pair_min_dist", 2)),
+            cap_pair_max_dist  = int(grid.get("cap_pair_max_dist", 3)),
+
+            feasibility_cost_threshold = float(ga.get("feasibility_cost_threshold", 1e6)),
+            population_plot_top_k      = int(ga.get("population_plot_top_k", 5)),
+
+            finetune_design_path = str(ga["finetune_design_path"]) if ga.get("finetune_design_path") else None,
+            finetune_seed_ratio  = float(ga.get("finetune_seed_ratio", 0.7)),
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
@@ -256,6 +319,10 @@ class SwitchableFilterGA:
         self.output_dir = Path(self.cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "population").mkdir(exist_ok=True)
+
+        # Save config snapshots for future reference
+        shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
+        shutil.copy2(self.cfg.virtuoso_config, self.output_dir / "virtuoso_config_snapshot.yaml")
 
         self._progress: List[dict] = []
 
@@ -347,17 +414,23 @@ class SwitchableFilterGA:
                 if cfg.exploitation_n > 0:
                     for _ in range(cfg.exploitation_n):
                         mutated, _ = random_action(
-                            state              = best_design,
-                            n_regular_flip     = cfg.n_regular_flip,
-                            max_inductors      = cfg.max_inductors,
-                            cap_min            = cfg.cap_min,
-                            cap_max            = cfg.cap_max,
-                            cap_sigma          = cfg.cap_sigma,
-                            rng                = self.rng,
-                            n_inductor_values  = cfg.n_inductor_values,
-                            action_weights     = cfg.exploitation_action_weights,
-                            max_vias           = cfg.n_max_vias,
-                            via_flip_max_count = cfg.via_flip_max_count,
+                            state                    = best_design,
+                            n_regular_flip           = cfg.n_regular_flip,
+                            max_inductors            = cfg.max_inductors,
+                            cap_min                  = cfg.cap_min,
+                            cap_max                  = cfg.cap_max,
+                            cap_sigma                = cfg.cap_sigma,
+                            rng                      = self.rng,
+                            n_inductor_values        = cfg.n_inductor_values,
+                            action_weights           = cfg.exploitation_action_weights,
+                            max_cap_pairs            = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
+                            cap_pair_min             = cfg.cap_pair_min,
+                            cap_pair_max             = cfg.cap_pair_max,
+                            cap_pair_sigma           = cfg.cap_pair_sigma,
+                            cap_pair_min_dist        = cfg.cap_pair_min_dist,
+                            cap_pair_max_dist        = cfg.cap_pair_max_dist,
+                            max_vias                 = cfg.n_max_vias,
+                            via_flip_max_count       = cfg.via_flip_max_count,
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias):
                             exploit_candidates.append(mutated)
@@ -428,6 +501,9 @@ class SwitchableFilterGA:
                             cap_max            = cfg.cap_max,
                             n_inductor_values  = cfg.n_inductor_values,
                             max_vias           = cfg.n_max_vias,
+                            max_cap_pairs      = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
+                            cap_pair_min_dist  = cfg.cap_pair_min_dist,
+                            cap_pair_max_dist  = cfg.cap_pair_max_dist,
                         )
                         if cfg.crossover_method == "weighted_clustering":
                             child = crossover_weighted_clustering(
@@ -462,17 +538,23 @@ class SwitchableFilterGA:
                     }
                     if self.rng.random() < cfg.p_mutation:
                         mutated, mut_info = random_action(
-                            state              = child,
-                            n_regular_flip     = cfg.n_regular_flip,
-                            max_inductors      = cfg.max_inductors,
-                            cap_min            = cfg.cap_min,
-                            cap_max            = cfg.cap_max,
-                            cap_sigma          = cfg.cap_sigma,
-                            rng                = self.rng,
-                            n_inductor_values  = cfg.n_inductor_values,
-                            action_weights     = cfg.action_weights,
-                            max_vias           = cfg.n_max_vias,
-                            via_flip_max_count = cfg.via_flip_max_count,
+                            state                    = child,
+                            n_regular_flip           = cfg.n_regular_flip,
+                            max_inductors            = cfg.max_inductors,
+                            cap_min                  = cfg.cap_min,
+                            cap_max                  = cfg.cap_max,
+                            cap_sigma                = cfg.cap_sigma,
+                            rng                      = self.rng,
+                            n_inductor_values        = cfg.n_inductor_values,
+                            action_weights           = cfg.action_weights,
+                            max_cap_pairs            = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
+                            cap_pair_min             = cfg.cap_pair_min,
+                            cap_pair_max             = cfg.cap_pair_max,
+                            cap_pair_sigma           = cfg.cap_pair_sigma,
+                            cap_pair_min_dist        = cfg.cap_pair_min_dist,
+                            cap_pair_max_dist        = cfg.cap_pair_max_dist,
+                            max_vias                 = cfg.n_max_vias,
+                            via_flip_max_count       = cfg.via_flip_max_count,
                         )
                         if mutated is not None:
                             child = mutated
@@ -500,6 +582,12 @@ class SwitchableFilterGA:
                         n_inductor_values   = cfg.n_inductor_values,
                         n_init_vias         = self.rng.randint(cfg.init_min_vias, cfg.init_max_vias),
                         max_vias            = cfg.n_max_vias,
+                        max_cap_pairs       = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
+                        cap_pair_init_min   = cfg.cap_pair_init_min if cfg.enable_cap_pairs else 0,
+                        cap_pair_min        = cfg.cap_pair_min,
+                        cap_pair_max        = cfg.cap_pair_max,
+                        cap_pair_min_dist   = cfg.cap_pair_min_dist,
+                        cap_pair_max_dist   = cfg.cap_pair_max_dist,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -557,12 +645,26 @@ class SwitchableFilterGA:
                 worst_cost = max(costs)
                 elapsed    = time.time() - start_time
 
+                # Filtered stats: exclude very high costs (poor RF performance)
+                thresh = cfg.feasibility_cost_threshold
+                feasible_costs = [c for c in costs if c < thresh]
+                if feasible_costs:
+                    feasible_mean_cost  = sum(feasible_costs) / len(feasible_costs)
+                    feasible_worst_cost = max(feasible_costs)
+                else:
+                    feasible_mean_cost  = mean_cost
+                    feasible_worst_cost = worst_cost
+
                 self._log_generation(gen, best_cost, best_sim_tag, mean_cost,
                                      worst_cost, diversity, elapsed,
-                                     offspring_mutation_log)
+                                     offspring_mutation_log,
+                                     pop_costs=costs,
+                                     feasible_mean_cost=feasible_mean_cost,
+                                     feasible_worst_cost=feasible_worst_cost)
                 self._save_progress()
                 self._save_population_snapshot(population, costs, gen=gen)
                 self._plot_progress()
+                self._plot_population_behavior()
 
                 if cfg.use_state_champions:
                     sc_costs_str = "  ".join(
@@ -606,7 +708,54 @@ class SwitchableFilterGA:
     def _init_population(self) -> List[DesignState]:
         cfg = self.cfg
         population: List[DesignState] = []
-        for i in range(cfg.pop_size_start):
+        effective_max_cap_pairs = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0
+
+        # --- Phase 1: fine-tune seeding (optional) ---
+        if cfg.finetune_design_path:
+            seed_design = _load_design_from_config(cfg.finetune_design_path)
+            n_seeded = round(cfg.pop_size_start * cfg.finetune_seed_ratio)
+            print(f"[GA] Fine-tune mode: seeding {n_seeded}/{cfg.pop_size_start} "
+                  f"individuals by mutating {cfg.finetune_design_path}")
+            _MAX_SEED_RETRIES = 200
+            for i in range(n_seeded):
+                mutant = None
+                for _ in range(_MAX_SEED_RETRIES):
+                    candidate, _ = random_action(
+                        state                    = seed_design,
+                        n_regular_flip           = cfg.n_regular_flip,
+                        max_inductors            = cfg.max_inductors,
+                        cap_min                  = cfg.cap_min,
+                        cap_max                  = cfg.cap_max,
+                        cap_sigma                = cfg.cap_sigma,
+                        rng                      = self.rng,
+                        n_inductor_values        = cfg.n_inductor_values,
+                        action_weights           = cfg.action_weights,
+                        max_cap_pairs            = effective_max_cap_pairs,
+                        cap_pair_min             = cfg.cap_pair_min,
+                        cap_pair_max             = cfg.cap_pair_max,
+                        cap_pair_sigma           = cfg.cap_pair_sigma,
+                        cap_pair_min_dist        = cfg.cap_pair_min_dist,
+                        cap_pair_max_dist        = cfg.cap_pair_max_dist,
+                        max_switch_state_flips   = 3,
+                        max_inductor_state_flips = 3,
+                        max_vias                 = cfg.n_max_vias,
+                        via_flip_max_count       = cfg.via_flip_max_count,
+                    )
+                    if candidate is not None:
+                        mutant = candidate
+                        break
+                if mutant is None:
+                    raise RuntimeError(
+                        f"Failed to generate seeded individual {i} after "
+                        f"{_MAX_SEED_RETRIES} retries. Check action weights and seed design."
+                    )
+                population.append(mutant)
+        else:
+            n_seeded = 0
+
+        # --- Phase 2: random individuals ---
+        n_random = cfg.pop_size_start - n_seeded
+        for i in range(n_random):
             design = generate_random_design(
                 rows                = cfg.rows,
                 cols                = cfg.cols,
@@ -620,10 +769,16 @@ class SwitchableFilterGA:
                 n_inductor_values   = cfg.n_inductor_values,
                 n_init_vias         = self.rng.randint(cfg.init_min_vias, cfg.init_max_vias),
                 max_vias            = cfg.n_max_vias,
+                max_cap_pairs       = effective_max_cap_pairs,
+                cap_pair_init_min   = cfg.cap_pair_init_min if cfg.enable_cap_pairs else 0,
+                cap_pair_min        = cfg.cap_pair_min,
+                cap_pair_max        = cfg.cap_pair_max,
+                cap_pair_min_dist   = cfg.cap_pair_min_dist,
+                cap_pair_max_dist   = cfg.cap_pair_max_dist,
             )
             if design is None:
                 raise RuntimeError(
-                    f"Failed to generate individual {i} of the initial population. "
+                    f"Failed to generate random individual {i} of the initial population. "
                     "Relax grid parameters."
                 )
             population.append(design)
@@ -861,6 +1016,9 @@ class SwitchableFilterGA:
         diversity: float,
         elapsed: float,
         mutation_log: Optional[List[dict]] = None,
+        pop_costs: Optional[List[float]] = None,
+        feasible_mean_cost: Optional[float] = None,
+        feasible_worst_cost: Optional[float] = None,
     ) -> None:
         # Summarise mutation action counts for compact reporting
         mutation_counts: Dict[str, int] = {}
@@ -876,18 +1034,21 @@ class SwitchableFilterGA:
                     mutation_counts[action_name] = mutation_counts.get(action_name, 0) + 1
 
         self._progress.append({
-            "gen":              gen,
-            "best_cost":        best_cost,
-            "best_sim_tag":     best_sim_tag,
-            "mean_cost":        mean_cost,
-            "worst_cost":       worst_cost,
-            "diversity":        diversity,
-            "elapsed_s":        elapsed,
-            "n_offspring":      len(mutation_log) if mutation_log is not None else None,
-            "n_crossover":      n_crossover,
-            "n_mutated":        n_mutated,
-            "mutation_counts":  mutation_counts,
-            "mutations":        mutation_log if mutation_log is not None else [],
+            "gen":                  gen,
+            "best_cost":            best_cost,
+            "best_sim_tag":         best_sim_tag,
+            "mean_cost":            mean_cost,
+            "worst_cost":           worst_cost,
+            "feasible_mean_cost":   feasible_mean_cost if feasible_mean_cost is not None else mean_cost,
+            "feasible_worst_cost":  feasible_worst_cost if feasible_worst_cost is not None else worst_cost,
+            "pop_costs":            list(pop_costs) if pop_costs is not None else [],
+            "diversity":            diversity,
+            "elapsed_s":            elapsed,
+            "n_offspring":          len(mutation_log) if mutation_log is not None else None,
+            "n_crossover":          n_crossover,
+            "n_mutated":            n_mutated,
+            "mutation_counts":      mutation_counts,
+            "mutations":            mutation_log if mutation_log is not None else [],
         })
 
     def _save_progress(self) -> None:
@@ -925,17 +1086,20 @@ class SwitchableFilterGA:
         except ImportError:
             return   # matplotlib not available — skip silently
 
-        gens       = [e["gen"]        for e in self._progress]
-        best_costs = [e["best_cost"]  for e in self._progress]
-        mean_costs = [e["mean_cost"]  for e in self._progress]
-        worst_costs = [e["worst_cost"] for e in self._progress]
-        diversity  = [e["diversity"]  for e in self._progress]
+        gens        = [e["gen"]                 for e in self._progress]
+        best_costs  = [e["best_cost"]            for e in self._progress]
+        mean_costs  = [e["feasible_mean_cost"]   for e in self._progress]
+        worst_costs = [e["feasible_worst_cost"]  for e in self._progress]
+        diversity   = [e["diversity"]            for e in self._progress]
 
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
 
+        thresh = self.cfg.feasibility_cost_threshold
         ax1.plot(gens, best_costs,  label="best",  linewidth=2, color="tab:green")
-        ax1.plot(gens, mean_costs,  label="mean",  linewidth=1.5, color="tab:blue", linestyle="--")
-        ax1.plot(gens, worst_costs, label="worst", linewidth=1, color="tab:red", linestyle=":")
+        ax1.plot(gens, mean_costs,  label=f"mean (cost<{thresh:.0e})",
+                 linewidth=1.5, color="tab:blue", linestyle="--")
+        ax1.plot(gens, worst_costs, label=f"worst (cost<{thresh:.0e})",
+                 linewidth=1, color="tab:red", linestyle=":")
         ax1.set_ylabel("Cost")
         ax1.set_title("GA Convergence — Switchable Filter")
         ax1.legend()
@@ -950,6 +1114,87 @@ class SwitchableFilterGA:
 
         fig.tight_layout()
         fig.savefig(self.output_dir / "ga_progress.png", dpi=120)
+        plt.close(fig)
+
+    def _plot_population_behavior(self) -> None:
+        """Save population behavior plots: cost density heatmap + top-k trajectories."""
+        if not self._progress or not any(e.get("pop_costs") for e in self._progress):
+            return
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            import matplotlib.colors as mcolors
+            import numpy as np
+        except ImportError:
+            return
+
+        gens = [e["gen"] for e in self._progress]
+        all_pop_costs = [e.get("pop_costs", []) for e in self._progress]
+        thresh = self.cfg.feasibility_cost_threshold
+        k = self.cfg.population_plot_top_k
+
+        # Clip costs at threshold for display
+        all_clipped = [
+            [min(c, thresh) for c in pc] for pc in all_pop_costs
+        ]
+
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 9), sharex=True)
+
+        # --- Panel 1: Cost density heatmap ---
+        # Determine common y-axis range from non-empty generations
+        all_vals = [c for pc in all_clipped for c in pc]
+        if all_vals:
+            y_min = min(all_vals)
+            y_max = max(all_vals)
+            n_bins = 40
+            bin_edges = np.linspace(y_min, y_max, n_bins + 1)
+            heatmap = np.zeros((n_bins, len(gens)))
+            for gi, pc in enumerate(all_clipped):
+                if pc:
+                    counts, _ = np.histogram(pc, bins=bin_edges)
+                    heatmap[:, gi] = counts
+
+            # Use LogNorm to handle wide count ranges; add 1 to avoid log(0)
+            norm = mcolors.LogNorm(vmin=1, vmax=max(heatmap.max(), 1))
+            im = ax1.imshow(
+                heatmap,
+                aspect="auto",
+                origin="lower",
+                extent=[gens[0] - 0.5, gens[-1] + 0.5, y_min, y_max],
+                norm=norm,
+                cmap="YlOrRd",
+            )
+            fig.colorbar(im, ax=ax1, label="Individual count")
+        ax1.set_ylabel("Cost")
+        ax1.set_title("Population Cost Density per Generation")
+
+        # --- Panel 2: Top-k trajectories ---
+        colors = plt.cm.viridis(np.linspace(0.2, 0.9, k))
+        for rank in range(k):
+            traj = []
+            traj_gens = []
+            for gi, pc in enumerate(all_pop_costs):
+                if len(pc) > rank:
+                    sorted_costs = sorted(pc)
+                    traj.append(sorted_costs[rank])
+                    traj_gens.append(gens[gi])
+            if not traj:
+                continue
+            lw = 2.0 if rank == 0 else 1.2
+            alpha = 1.0 if rank == 0 else 0.55
+            label = f"Top-{rank+1}"
+            ax2.plot(traj_gens, traj, color=colors[rank], linewidth=lw,
+                     alpha=alpha, label=label)
+
+        ax2.set_xlabel("Generation")
+        ax2.set_ylabel("Cost")
+        ax2.set_title(f"Top-{k} Individual Trajectories")
+        ax2.legend(loc="upper right", fontsize="small")
+        ax2.grid(True, alpha=0.4)
+
+        fig.tight_layout()
+        fig.savefig(self.output_dir / "ga_population_behavior.png", dpi=120)
         plt.close(fig)
 
 
