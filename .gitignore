@@ -8,3 +8,5 @@ optimization_simulations*
 .vscode
 Inductor_spar/Simulated_Active_inductance.zip
 .claude
+
+pixel_gui_designer/gui_settings.json

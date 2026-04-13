@@ -14,10 +14,10 @@
 # ---------------------------------------------------------------------------
 # Path to the Virtuoso engine base config (shared physical/PDK settings).
 # ---------------------------------------------------------------------------
-virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_reduced_inductor_set.yaml"
 
 # Root directory for all GA outputs (progress log, best design, sim results)
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_block_hybrid"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_single_ind_2"
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE  (matches sa_config.yaml)
@@ -46,12 +46,14 @@ grid:
   cap_max: 1000.0e-15   # 1000 fF
 
   # Number of discrete inductance choices in inductor_translation_table (config.yaml)
-  n_inductor_values: 4
+  n_inductor_values: 2
+  single_inductor_value: true  # if true, all inductors share the same value index
 
   # --- Cap pixel pairs (disabled; set enable_cap_pairs: true and non-zero action_weights to use) ---
-  enable_cap_pairs:  false
+  enable_cap_pairs:  true
   max_cap_pairs:     8
-  cap_pair_init_min: 2           # min cap pairs placed in a new random design (range: [2, max_cap_pairs])
+  cap_pair_init_min: 0           # min cap pairs placed in a new random design
+  cap_pair_init_max: 4           # max cap pairs placed in a new random design (-1 or omit = use max_cap_pairs)
   cap_pair_min:      50.0e-15    # 50 fF
   cap_pair_max:      1000.0e-15  # 1000 fF
   cap_pair_sigma:    50.0e-15    # Gaussian noise std for pair perturbation
@@ -71,12 +73,12 @@ filter_specs:
       - [8.0e9,  14.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
-    passband_weight: 5.0
-    stopband_weight: 2.0
+    passband_weight: 3.0
+    stopband_weight: 1.0
     cross_stopband_regions:
-      - [14.0e9, 55.0e9]
+      - [14.0e9, 65.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 3.0
+    cross_stopband_weight: 1.0
     enable_s11_cost:           true       # set true to add S11 reflection penalties
     s11_passband_max_db:       -20.0       # want low S11 in passband (good match)
     s11_stopband_min_db:       -0.0       # want high S11 in stopband (high reflection)
@@ -90,13 +92,13 @@ filter_specs:
       - [26.0e9, 32.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
-    passband_weight: 5.0
-    stopband_weight: 2.0
+    passband_weight: 3.0
+    stopband_weight: 1.0
     cross_stopband_regions:
       - [6.0e9,  14.0e9]
-      - [32.0e9, 55.0e9]
+      - [32.0e9, 65.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 3.0
+    cross_stopband_weight: 1.0
     enable_s11_cost:           true
     s11_passband_max_db:       -20.0
     s11_stopband_min_db:       -0.0
@@ -110,13 +112,13 @@ filter_specs:
       - [42.0e9, 50.0e9]                   # above passband
     stopband_max_db: -25.0
     weight: 1.0
-    passband_weight: 5.0
-    stopband_weight: 2.0
+    passband_weight: 3.0
+    stopband_weight: 1.0
     cross_stopband_regions:
       - [6.0e9,  32.0e9]
-      - [50.0e9, 55.0e9]
+      - [50.0e9, 65.0e9]
     cross_stopband_max_db: -20.0
-    cross_stopband_weight: 3.0
+    cross_stopband_weight: 1.0
     enable_s11_cost:           true
     s11_passband_max_db:       -20.0
     s11_stopband_min_db:       -0.0
@@ -128,9 +130,9 @@ filter_specs:
 ga:
   # Population scheduling: starts at pop_size_start, decrements by pop_size_step
   # every (n_gen // n_steps) generations until reaching pop_size_end.
-  pop_size_start:  100    # initial population size
+  pop_size_start:  200    # initial population size
   pop_size_end:    40    # final population size
-  pop_size_step:   10    # decrement per schedule step
+  pop_size_step:   20    # decrement per schedule step
   elite_fraction:  0.20  # n_elite = max(3, round(current_pop_size * elite_fraction))
   n_gen:    100          # total number of generations
   n_immigrants: 2        # fresh random designs injected every generation
@@ -141,8 +143,8 @@ ga:
   p_mutation:  0.7       # probability of applying a mutation to each offspring
   crossover_method: "block"  # "zig_zag" | "weighted_clustering" | "block"
   n_centroids: 4         # max cluster centroids for weighted_clustering; actual count drawn randomly from [2, n_centroids] each call
-  block_min_size: 5      # minimum block width/height for block crossover
-  block_max_size: 15     # maximum block width/height for block crossover
+  block_min_size: 10    # minimum block width/height for block crossover
+  block_max_size: 20     # maximum block width/height for block crossover
 
   # Selection
   selection:       "tournament"
@@ -162,13 +164,13 @@ ga:
     flip_01:             4.0
     move_switch:         2.0
     flip_inductor:       1.0
-    flip_inductor_value: 4.0
+    flip_inductor_value: 2.0
     perturb_caps:        4.0
     flip_switch_state:   8.0
-    add_cap_pair:        0.0
-    remove_cap_pair:     0.0
-    perturb_pair_caps:   0.0
-    flip_inductor_state: 12.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 8.0
     flip_via:            2.0
 
   # State-wise champion elitism: preserve the best design per filter state
@@ -189,11 +191,11 @@ ga:
     move_switch:         4.0
     flip_inductor:       0.0
     flip_inductor_value: 0.0
-    perturb_caps:        0.0
+    perturb_caps:        4.0
     flip_switch_state:   4.0
     add_cap_pair:        0.0
     remove_cap_pair:     0.0
-    perturb_pair_caps:   0.0
+    perturb_pair_caps:   4.0
     flip_inductor_state: 4.0
     flip_via:            2.0
 

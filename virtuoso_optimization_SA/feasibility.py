@@ -554,6 +554,7 @@ def generate_random_design(
     cap_max: float,
     rng: random.Random,
     n_inductor_values: int = 4,
+    single_inductor_value: bool = False,
     n_initial_inductors: int = 0,
     p0: float = 0.50,   # probability of type 0 (ground) for interior cells
     p1: float = 0.50,   # probability of type 1 (metal)
@@ -561,6 +562,7 @@ def generate_random_design(
     require_4_connected: bool = False,
     max_cap_pairs: int = 0,
     cap_pair_init_min: int = 0,
+    cap_pair_init_max: int = -1,
     cap_pair_min: float = 50e-15,
     cap_pair_max: float = 500e-15,
     cap_pair_min_dist: int = 2,
@@ -704,7 +706,11 @@ def generate_random_design(
         cap_values = [rng.uniform(cap_min, cap_max) for _ in range(n_switches)]
 
         n_ind = sum(v == 2 for row in matrix for v in row)
-        inductor_values = [rng.randint(0, n_inductor_values - 1) for _ in range(n_ind)]
+        if single_inductor_value and n_ind > 0:
+            shared_val = rng.randint(0, n_inductor_values - 1)
+            inductor_values = [shared_val] * n_ind
+        else:
+            inductor_values = [rng.randint(0, n_inductor_values - 1) for _ in range(n_ind)]
 
         # Inductor switch states: random ON/OFF per inductor per state.
         # Enforce all-distinct rows when 2^n_ind >= n_states.
@@ -729,9 +735,11 @@ def generate_random_design(
         cap_pixel_pairs: List[List[List[int]]] = []
         cap_pair_values_list: List[float] = []
         if max_cap_pairs > 0:
-            # Sample a target count from [cap_pair_init_min, max_cap_pairs]
+            # Sample a target count from [cap_pair_init_min, cap_pair_init_max]
+            # cap_pair_init_max defaults to max_cap_pairs when -1 (unset)
             init_min = max(0, min(cap_pair_init_min, max_cap_pairs))
-            target_n_pairs = rng.randint(init_min, max_cap_pairs)
+            init_max = max_cap_pairs if cap_pair_init_max < 0 else min(cap_pair_init_max, max_cap_pairs)
+            target_n_pairs = rng.randint(init_min, init_max)
 
             if target_n_pairs > 0:
                 metal_set = {

@@ -154,6 +154,7 @@ class GAConfig:
     enable_cap_pairs:   bool  = False
     max_cap_pairs:      int   = 0
     cap_pair_init_min:  int   = 0    # min cap pairs placed in a new random design
+    cap_pair_init_max:  int   = -1   # max cap pairs placed in a new random design (-1 = use max_cap_pairs)
     cap_pair_min:       float = 50e-15
     cap_pair_max:       float = 1000e-15
     cap_pair_sigma:     float = 50e-15
@@ -167,6 +168,9 @@ class GAConfig:
     # Fine-tune: seed initial population from an existing design
     finetune_design_path: Optional[str] = None  # path to a pixelated config.yaml; None = disabled
     finetune_seed_ratio:  float = 0.7           # fraction of pop_size_start seeded by mutations of that design
+
+    # Inductor constraint: force all inductors to share one value index
+    single_inductor_value: bool = False
 
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
@@ -222,7 +226,8 @@ class GAConfig:
 
             enable_cap_pairs   = bool(grid.get("enable_cap_pairs", False)),
             max_cap_pairs      = int(grid.get("max_cap_pairs", 0)),
-            cap_pair_init_min  = int(grid.get("cap_pair_init_min", 2)),
+            cap_pair_init_min  = int(grid.get("cap_pair_init_min", 0)),
+            cap_pair_init_max  = int(grid.get("cap_pair_init_max", -1)),
             cap_pair_min       = float(grid.get("cap_pair_min", 50e-15)),
             cap_pair_max       = float(grid.get("cap_pair_max", 1000e-15)),
             cap_pair_sigma     = float(grid.get("cap_pair_sigma", 50e-15)),
@@ -235,6 +240,8 @@ class GAConfig:
             finetune_design_path = str(ga["finetune_design_path"]) if ga.get("finetune_design_path") else None,
             finetune_seed_ratio  = float(ga.get("finetune_seed_ratio", 0.7)),
 
+            single_inductor_value = bool(grid.get("single_inductor_value", False)),
+
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
 
@@ -246,6 +253,17 @@ class GAConfig:
 # Selection helpers
 # ---------------------------------------------------------------------------
 
+def _tournament_select_idx(
+    population: List[DesignState],
+    costs: List[float],
+    k: int,
+    rng: random.Random,
+) -> int:
+    """Return the index of the fittest individual from a random tournament of size k."""
+    indices = rng.sample(range(len(population)), min(k, len(population)))
+    return min(indices, key=lambda i: costs[i])
+
+
 def _tournament_select(
     population: List[DesignState],
     costs: List[float],
@@ -253,9 +271,7 @@ def _tournament_select(
     rng: random.Random,
 ) -> DesignState:
     """Return the fittest individual from a random tournament of size k."""
-    indices = rng.sample(range(len(population)), min(k, len(population)))
-    best_idx = min(indices, key=lambda i: costs[i])
-    return population[best_idx]
+    return population[_tournament_select_idx(population, costs, k, rng)]
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +335,7 @@ class SwitchableFilterGA:
         self.output_dir = Path(self.cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "population").mkdir(exist_ok=True)
+        (self.output_dir / "state_best").mkdir(exist_ok=True)
 
         # Save config snapshots for future reference
         shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
@@ -381,6 +398,11 @@ class SwitchableFilterGA:
                             s2p_files=best_s2p_files, assignment=best_assignment)
             self._save_population_snapshot(population, costs, gen=-1)
 
+            # Parallel list tracking the sim tag of each population member
+            population_sim_tags: List[Optional[str]] = [
+                f"gen-1_ind{i}" for i in range(len(population))
+            ]
+
             # --- State champion initialisation (reuses simulation data, no extra runs) ---
             # state_champion_costs      : per-state cost (used only to decide which champion wins)
             # state_champion_total_costs: total cost of the champion (used in population costs list)
@@ -388,6 +410,7 @@ class SwitchableFilterGA:
             state_champions: List[Optional[DesignState]] = [None] * n_specs
             state_champion_costs: List[float]       = [1e9] * n_specs   # per-state
             state_champion_total_costs: List[float] = [1e9] * n_specs   # total
+            state_champion_sim_tags: List[Optional[str]] = [None] * n_specs
             if cfg.use_state_champions and init_per_state_costs:
                 for ind_idx, psc in enumerate(init_per_state_costs):
                     for si, sc in enumerate(psc):
@@ -395,6 +418,26 @@ class SwitchableFilterGA:
                             state_champion_costs[si]       = sc
                             state_champion_total_costs[si] = costs[ind_idx]
                             state_champions[si] = population[ind_idx].copy()
+                            state_champion_sim_tags[si] = f"gen-1_ind{ind_idx}"
+                            self._save_state_best(
+                                state_idx      = si,
+                                design         = population[ind_idx],
+                                per_state_cost = sc,
+                                total_cost     = costs[ind_idx],
+                                generation     = -1,
+                                sim_tag        = f"gen-1_ind{ind_idx}",
+                                provenance     = {
+                                    "generation":            -1,
+                                    "sim_tag":               f"gen-1_ind{ind_idx}",
+                                    "used_crossover":        False,
+                                    "crossover_method":      None,
+                                    "parent1_sim_tag":       None,
+                                    "parent2_sim_tag":       None,
+                                    "parent1_from_champion": None,
+                                    "mutation_action":       None,
+                                    "mutation_description":  "selected from random initial population",
+                                },
+                            )
 
             print(f"[GA] Initial best cost: {best_cost:.4f}")
 
@@ -431,6 +474,7 @@ class SwitchableFilterGA:
                             cap_pair_max_dist        = cfg.cap_pair_max_dist,
                             max_vias                 = cfg.n_max_vias,
                             via_flip_max_count       = cfg.via_flip_max_count,
+                            single_inductor_value    = cfg.single_inductor_value,
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias):
                             exploit_candidates.append(mutated)
@@ -449,6 +493,7 @@ class SwitchableFilterGA:
                 # 2b. State champion pool (deduplicated against global elites)
                 sc_pool: List[DesignState] = []
                 sc_pool_costs: List[float] = []
+                sc_pool_sim_tags: List[Optional[str]] = []
                 if cfg.use_state_champions:
                     sc_budget = max(0, current_pop_size - current_n_elite - len(kept_bad))
                     for si, champ in enumerate(state_champions):
@@ -458,6 +503,7 @@ class SwitchableFilterGA:
                             sc_pool.append(champ.copy())
                             # Use total cost so the population costs list stays on the same scale
                             sc_pool_costs.append(state_champion_total_costs[si])
+                            sc_pool_sim_tags.append(state_champion_sim_tags[si])
 
                 # 3. Produce regular offspring via crossover + mutation
                 offspring: List[DesignState] = []
@@ -480,11 +526,16 @@ class SwitchableFilterGA:
                         p1 = champ.copy()
                         p1_from_champion = True
                         p1_cost_override = state_champion_total_costs[si_chosen]
+                        p1_sim_tag = state_champion_sim_tags[si_chosen]
                     else:
-                        p1 = _tournament_select(population, costs, cfg.tournament_size, self.rng)
+                        p1_idx = _tournament_select_idx(population, costs, cfg.tournament_size, self.rng)
+                        p1 = population[p1_idx]
                         p1_from_champion = False
                         p1_cost_override = None
-                    p2 = _tournament_select(population, costs, cfg.tournament_size, self.rng)
+                        p1_sim_tag = population_sim_tags[p1_idx]
+                    p2_idx = _tournament_select_idx(population, costs, cfg.tournament_size, self.rng)
+                    p2 = population[p2_idx]
+                    p2_sim_tag = population_sim_tags[p2_idx]
 
                     # Crossover
                     did_crossover = self.rng.random() < cfg.p_crossover
@@ -504,6 +555,7 @@ class SwitchableFilterGA:
                             max_cap_pairs      = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
                             cap_pair_min_dist  = cfg.cap_pair_min_dist,
                             cap_pair_max_dist  = cfg.cap_pair_max_dist,
+                            single_inductor_value = cfg.single_inductor_value,
                         )
                         if cfg.crossover_method == "weighted_clustering":
                             child = crossover_weighted_clustering(
@@ -525,8 +577,8 @@ class SwitchableFilterGA:
                         if p1_from_champion and p1_cost_override is not None:
                             p1_cost = p1_cost_override
                         else:
-                            p1_cost = costs[population.index(p1)] if p1 in population else 1e9
-                        p2_cost = costs[population.index(p2)] if p2 in population else 1e9
+                            p1_cost = costs[p1_idx] if not p1_from_champion else 1e9
+                        p2_cost = costs[p2_idx]
                         child = (p1 if p1_cost <= p2_cost else p2).copy()
 
                     # Mutation
@@ -534,6 +586,8 @@ class SwitchableFilterGA:
                         "offspring_idx":    len(offspring),
                         "crossover":        did_crossover,
                         "p1_from_champion": p1_from_champion,
+                        "p1_sim_tag":       p1_sim_tag,
+                        "p2_sim_tag":       p2_sim_tag,
                         "mutation":         None,
                     }
                     if self.rng.random() < cfg.p_mutation:
@@ -555,6 +609,7 @@ class SwitchableFilterGA:
                             cap_pair_max_dist        = cfg.cap_pair_max_dist,
                             max_vias                 = cfg.n_max_vias,
                             via_flip_max_count       = cfg.via_flip_max_count,
+                            single_inductor_value    = cfg.single_inductor_value,
                         )
                         if mutated is not None:
                             child = mutated
@@ -584,10 +639,12 @@ class SwitchableFilterGA:
                         max_vias            = cfg.n_max_vias,
                         max_cap_pairs       = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0,
                         cap_pair_init_min   = cfg.cap_pair_init_min if cfg.enable_cap_pairs else 0,
+                        cap_pair_init_max   = cfg.cap_pair_init_max if cfg.enable_cap_pairs else 0,
                         cap_pair_min        = cfg.cap_pair_min,
                         cap_pair_max        = cfg.cap_pair_max,
                         cap_pair_min_dist   = cfg.cap_pair_min_dist,
                         cap_pair_max_dist   = cfg.cap_pair_max_dist,
+                        single_inductor_value = cfg.single_inductor_value,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -605,6 +662,44 @@ class SwitchableFilterGA:
                                 state_champion_costs[si]       = sc
                                 state_champion_total_costs[si] = new_costs[local_idx]
                                 state_champions[si] = to_evaluate[local_idx].copy()
+                                new_sim_tag = f"gen{gen}_ind{local_idx}"
+                                state_champion_sim_tags[si] = new_sim_tag
+                                # Build provenance from offspring mutation log if available
+                                if local_idx < len(offspring_mutation_log):
+                                    entry = offspring_mutation_log[local_idx]
+                                    _prov = {
+                                        "generation":            gen,
+                                        "sim_tag":               new_sim_tag,
+                                        "used_crossover":        entry.get("crossover", False),
+                                        "crossover_method":      cfg.crossover_method if entry.get("crossover") else None,
+                                        "parent1_sim_tag":       entry.get("p1_sim_tag"),
+                                        "parent2_sim_tag":       entry.get("p2_sim_tag"),
+                                        "parent1_from_champion": entry.get("p1_from_champion"),
+                                        "mutation_action":       entry["mutation"].get("action") if entry.get("mutation") else None,
+                                        "mutation_description":  entry["mutation"].get("description") if entry.get("mutation") else None,
+                                    }
+                                else:
+                                    _kind = "immigrant" if local_idx < len(offspring) + len(immigrants) else "exploit candidate"
+                                    _prov = {
+                                        "generation":            gen,
+                                        "sim_tag":               new_sim_tag,
+                                        "used_crossover":        False,
+                                        "crossover_method":      None,
+                                        "parent1_sim_tag":       None,
+                                        "parent2_sim_tag":       None,
+                                        "parent1_from_champion": None,
+                                        "mutation_action":       None,
+                                        "mutation_description":  _kind,
+                                    }
+                                self._save_state_best(
+                                    state_idx      = si,
+                                    design         = to_evaluate[local_idx],
+                                    per_state_cost = sc,
+                                    total_cost     = new_costs[local_idx],
+                                    generation     = gen,
+                                    sim_tag        = new_sim_tag,
+                                    provenance     = _prov,
+                                )
                 else:
                     new_costs, new_sim_data = self._evaluate_batch(engine, to_evaluate, gen_idx=gen)
                 offspring_costs  = new_costs[:len(offspring)]
@@ -614,6 +709,20 @@ class SwitchableFilterGA:
                 # 6. Assemble new population: elites | state_champs | kept_bad | offspring | immigrants | exploit
                 population = elites + sc_pool + kept_bad + offspring + immigrants + exploit_candidates
                 costs      = elite_costs + sc_pool_costs + kept_bad_costs + offspring_costs + immigrant_costs + exploit_costs
+
+                # Rebuild population_sim_tags in parallel with the same segment ordering
+                _kept_bad_tags = [population_sim_tags[i] for i in (chosen if cfg.n_keep_bad > 0 and kept_bad else [])]
+                _n_off = len(offspring)
+                _n_imm = len(immigrants)
+                _n_exp = len(exploit_candidates)
+                population_sim_tags = (
+                    [population_sim_tags[i] for i in sorted_indices[:current_n_elite]]
+                    + sc_pool_sim_tags
+                    + _kept_bad_tags
+                    + [f"gen{gen}_ind{j}" for j in range(_n_off)]
+                    + [f"gen{gen}_ind{_n_off + j}" for j in range(_n_imm)]
+                    + [f"gen{gen}_ind{_n_off + _n_imm + j}" for j in range(_n_exp)]
+                )
 
                 if exploit_candidates:
                     print(f"[GA] gen {gen:4d}  exploit: {len(exploit_candidates)} candidates, "
@@ -713,6 +822,9 @@ class SwitchableFilterGA:
         # --- Phase 1: fine-tune seeding (optional) ---
         if cfg.finetune_design_path:
             seed_design = _load_design_from_config(cfg.finetune_design_path)
+            # Normalize seed design if single_inductor_value is enabled
+            if cfg.single_inductor_value and seed_design.inductor_values:
+                seed_design.inductor_values = [seed_design.inductor_values[0]] * len(seed_design.inductor_values)
             n_seeded = round(cfg.pop_size_start * cfg.finetune_seed_ratio)
             print(f"[GA] Fine-tune mode: seeding {n_seeded}/{cfg.pop_size_start} "
                   f"individuals by mutating {cfg.finetune_design_path}")
@@ -740,6 +852,7 @@ class SwitchableFilterGA:
                         max_inductor_state_flips = 3,
                         max_vias                 = cfg.n_max_vias,
                         via_flip_max_count       = cfg.via_flip_max_count,
+                        single_inductor_value    = cfg.single_inductor_value,
                     )
                     if candidate is not None:
                         mutant = candidate
@@ -771,10 +884,12 @@ class SwitchableFilterGA:
                 max_vias            = cfg.n_max_vias,
                 max_cap_pairs       = effective_max_cap_pairs,
                 cap_pair_init_min   = cfg.cap_pair_init_min if cfg.enable_cap_pairs else 0,
+                cap_pair_init_max   = cfg.cap_pair_init_max if cfg.enable_cap_pairs else 0,
                 cap_pair_min        = cfg.cap_pair_min,
                 cap_pair_max        = cfg.cap_pair_max,
                 cap_pair_min_dist   = cfg.cap_pair_min_dist,
                 cap_pair_max_dist   = cfg.cap_pair_max_dist,
+                single_inductor_value = cfg.single_inductor_value,
             )
             if design is None:
                 raise RuntimeError(
@@ -972,6 +1087,36 @@ class SwitchableFilterGA:
         # Print breakdown table
         if breakdown:
             self._print_cost_breakdown(breakdown)
+
+    def _save_state_best(
+        self,
+        state_idx: int,
+        design: "DesignState",
+        per_state_cost: float,
+        total_cost: float,
+        generation: int,
+        sim_tag: str,
+        provenance: dict,
+    ) -> None:
+        """Save the best design found so far for a specific filter state index."""
+        sim_dir = str(self.output_dir / "sims" / sim_tag) if sim_tag else ""
+        data = {
+            "state_idx":             state_idx,
+            "generation":            generation,
+            "sim_tag":               sim_tag,
+            "sim_dir":               sim_dir,
+            "per_state_cost":        per_state_cost,
+            "total_cost":            total_cost,
+            "provenance":            provenance,
+            "matrix":                design.matrix,
+            "switch_states":         design.switch_states,
+            "cap_values":            design.cap_values,
+            "inductor_values":       design.inductor_values,
+            "inductor_switch_states": design.inductor_switch_states,
+        }
+        path = self.output_dir / "state_best" / f"state_{state_idx}_best.json"
+        path.write_text(json.dumps(data, indent=2))
+        print(f"  [GA] State {state_idx} best saved → cost={per_state_cost:.4f}  sim={sim_tag}")
 
     @staticmethod
     def _print_cost_breakdown(breakdown: List[dict]) -> None:

@@ -113,8 +113,7 @@ class DesignState:
             "state_list":         self.switch_states,
             "cap_values":         self.cap_values,
         }
-        if self.inductor_values:
-            cfg["inductor_values"] = self.inductor_values
+        cfg["inductor_values"] = self.inductor_values  # always emit, even [] — prevents base config bleed-through via deep_merge
         if self.inductor_switch_states:
             cfg["inductor_switch_states"] = self.inductor_switch_states
         if self.cap_pixel_pairs:

@@ -66,6 +66,7 @@ The Xvfb virtual display must already be running on the configured display
 from __future__ import annotations
 
 import copy
+import shutil
 import string
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -303,6 +304,9 @@ class VirtuosoPixelEngine:
             )
         else:
             print(f"{self._lp}[run] No S-parameter files found — skipping plots.")
+
+        # --- Optional cleanup of intermediate files ---
+        self._cleanup_run_dir(cfg, emx_dir, log_dir)
 
         return RunResult(
             cell_name=cell_name,
@@ -779,6 +783,50 @@ class VirtuosoPixelEngine:
             inductor_state_list  = pd.get("inductor_switch_states"),
         )
         return [p for p in s2p_paths if p is not None]
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def _cleanup_run_dir(self, cfg: dict, emx_dir: Path, log_dir: Path) -> None:
+        """
+        Delete intermediate simulation files if ``cleanup.delete_intermediate_files``
+        is enabled in the config.
+
+        What is deleted:
+          - ``logs/`` directory entirely (Virtuoso/EMX log files).
+          - Everything in ``emx_results/`` **except** ``*.s2p`` files.
+            This removes the EMX multi-port SNP, Spectre netlists (.scs),
+            Spectre PSF directories, and any other EMX scratch output.
+
+        What is kept:
+          - ``emx_results/*.s2p`` — the final per-state S-parameter files
+            used by GA/SA optimisers.
+          - All other run_dir files (config.yaml, generated_layout.il,
+            generated_sim.il, plots/).
+        """
+        if not cfg.get("cleanup", {}).get("delete_intermediate_files", False):
+            return
+
+        # Delete logs directory
+        if log_dir.exists():
+            shutil.rmtree(log_dir, ignore_errors=True)
+            print(f"{self._lp}[cleanup] Deleted {log_dir}")
+
+        # In emx_results: delete everything except *.s2p files
+        if emx_dir.exists():
+            deleted = []
+            for item in list(emx_dir.iterdir()):
+                if item.is_file() and item.suffix.lower() == ".s2p":
+                    continue  # keep final s2p outputs
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                    deleted.append(item.name + "/")
+                else:
+                    item.unlink(missing_ok=True)
+                    deleted.append(item.name)
+            if deleted:
+                print(f"{self._lp}[cleanup] emx_results: removed {deleted}")
 
     # ------------------------------------------------------------------
     # Helpers

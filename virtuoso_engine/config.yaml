@@ -207,6 +207,17 @@ pixelated:
   cap_pair_values: []   # e.g. [1.0e-12, 2.0e-12]
 
 # ============================================================
+# CLEANUP SETTINGS
+# ============================================================
+cleanup:
+  # When true, delete intermediate files after each simulation run:
+  #   - logs/ directory (Virtuoso/EMX log files)
+  #   - emx_results/* except *.s2p files (EMX .snp, Spectre .scs, PSF dirs)
+  # The final per-state *.s2p files in emx_results/ are always kept.
+  # Enable in long optimization runs to avoid accumulating gigabytes of scratch files.
+  delete_intermediate_files: true
+
+# ============================================================
 # PARALLEL ENGINE SETTINGS
 # ============================================================
 parallel:

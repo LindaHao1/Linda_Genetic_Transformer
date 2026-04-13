@@ -43,3 +43,12 @@ notice we include 3 hyperparameters for vias. n_max n_init and actions flip max 
 ### Cost function update
 
 This cost function aim to combine the S21 with S11 cost. For a lossy network optimizing S21 might not be efficient. We want to add the S11 optimization into the loss function. In S11 we want the pass band to go to negative infinity as much as possible (no reflection so we can aim a lower target like-30db). And stop band and cross bands to be closs to zero (as much reflection) . Please implement this cost using a similar way to the current s21 cost and add that to the s21. For each state. We can add S21 + S11 cost, reusing the same weight defined.
+
+
+# updates
+
+we want to save the best design for each state (indicies) (configuration).
+Whenever we have a best design, can we record how it came? The action led to it? or the hybird, who hybrid this design, how?
+
+Design optimization constraints: We want to have an option to enable a single inductor value during optimization. All the inductors will share the same inductor value during initialization and optimization. And when we flip and change inductor values, we have to ensure all inductor value changes. In the hybrid. If this optin is turned on, it will randomly inherit one of the parent inductor values if this option is turned on.
+

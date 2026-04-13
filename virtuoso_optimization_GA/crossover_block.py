@@ -191,6 +191,7 @@ def crossover_block(
     max_cap_pairs: int = 0,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    single_inductor_value: bool = False,
 ) -> Optional[DesignState]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -324,6 +325,12 @@ def crossover_block(
                 ind_sw_states_p2=parent2.inductor_switch_states,
             )
         )
+
+        # Enforce single inductor value: randomly inherit one parent's shared value
+        if single_inductor_value and inductor_values:
+            donor = rng.choice([parent1, parent2])
+            val = donor.inductor_values[0] if donor.inductor_values else rng.randint(0, n_inductor_values - 1)
+            inductor_values = [val] * len(inductor_values)
 
         # Inherit cap pixel pairs, translating them with the block transformation
         cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs_block(

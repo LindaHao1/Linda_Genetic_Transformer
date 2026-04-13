@@ -476,6 +476,7 @@ def crossover_zig_zag(
     max_cap_pairs: int = 0,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    single_inductor_value: bool = False,
 ) -> Optional[DesignState]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -540,6 +541,12 @@ def crossover_zig_zag(
         ind_sw_states_p1=parent1.inductor_switch_states,
         ind_sw_states_p2=parent2.inductor_switch_states,
     )
+
+    # Enforce single inductor value: randomly inherit one parent's shared value
+    if single_inductor_value and inductor_values:
+        donor = rng.choice([parent1, parent2])
+        val = donor.inductor_values[0] if donor.inductor_values else rng.randint(0, n_inductor_values - 1)
+        inductor_values = [val] * len(inductor_values)
 
     # --- Inherit cap pixel pairs from parents ---
     cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs(

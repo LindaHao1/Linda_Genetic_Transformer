@@ -191,6 +191,7 @@ def action_flip_inductor(
     n_inductor_values: int = 4,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    single_inductor_value: bool = False,
 ) -> tuple:
     """
     Either add an inductor (type 1 → 2) or remove one (type 2 → 1).
@@ -231,7 +232,10 @@ def action_flip_inductor(
             return None, None
         # Insert a random inductor value at the correct row-first position
         idx = _inductor_row_first_index(new.matrix, r, c)
-        val = rng.randint(0, n_inductor_values - 1)
+        if single_inductor_value and new.inductor_values:
+            val = new.inductor_values[0]  # inherit the shared value from existing inductors
+        else:
+            val = rng.randint(0, n_inductor_values - 1)
         new.inductor_values.insert(idx, val)
         # Keep inductor_switch_states in sync (new inductor defaults to ON in all states).
         # If the list was empty (all-ON convention), initialize it now so the explicit
@@ -403,6 +407,7 @@ def action_flip_inductor_value(
     state: DesignState,
     n_inductor_values: int,
     rng: random.Random,
+    single_inductor_value: bool = False,
 ) -> tuple:
     """
     Pick a random type-2 (inductor) pixel and change its entry in
@@ -441,15 +446,24 @@ def action_flip_inductor_value(
     while len(new.inductor_values) < len(ind_positions):
         new.inductor_values.append(0)
     new_val = rng.choice(choices)
-    new.inductor_values[local_idx] = new_val
-    info = {
-        "action": "flip_inductor_value",
-        "description": f"Changed inductor at ({r},{c}) value index {current_val} → {new_val}",
-        "position": {"row": r, "col": c},
-        "inductor_list_index": local_idx,
-        "old_value_index": current_val,
-        "new_value_index": new_val,
-    }
+    if single_inductor_value:
+        new.inductor_values = [new_val] * len(ind_positions)
+        info = {
+            "action": "flip_inductor_value",
+            "description": f"Changed ALL inductor values to index {new_val} (single_inductor_value mode)",
+            "old_value_index": current_val,
+            "new_value_index": new_val,
+        }
+    else:
+        new.inductor_values[local_idx] = new_val
+        info = {
+            "action": "flip_inductor_value",
+            "description": f"Changed inductor at ({r},{c}) value index {current_val} → {new_val}",
+            "position": {"row": r, "col": c},
+            "inductor_list_index": local_idx,
+            "old_value_index": current_val,
+            "new_value_index": new_val,
+        }
     return new, info
 
 
@@ -803,6 +817,7 @@ def _dispatch_action(
     max_inductor_state_flips: int,
     max_vias: int = 0,
     via_flip_max_count: int = 3,
+    single_inductor_value: bool = False,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -822,9 +837,11 @@ def _dispatch_action(
             state, max_inductors, rng, n_inductor_values,
             cap_pair_min_dist=cap_pair_min_dist,
             cap_pair_max_dist=cap_pair_max_dist,
+            single_inductor_value=single_inductor_value,
         )
     elif action_name == "flip_inductor_value":
-        return action_flip_inductor_value(state, n_inductor_values, rng)
+        return action_flip_inductor_value(state, n_inductor_values, rng,
+                                          single_inductor_value=single_inductor_value)
     elif action_name == "perturb_caps":
         return action_perturb_caps(state, cap_sigma, cap_min, cap_max, rng)
     elif action_name == "flip_switch_state":
@@ -868,6 +885,7 @@ def random_action(
     max_inductor_state_flips: int = 1,
     max_vias: int = 0,
     via_flip_max_count: int = 3,
+    single_inductor_value: bool = False,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -921,6 +939,7 @@ def random_action(
         max_inductor_state_flips=max_inductor_state_flips,
         max_vias=max_vias,
         via_flip_max_count=via_flip_max_count,
+        single_inductor_value=single_inductor_value,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.
