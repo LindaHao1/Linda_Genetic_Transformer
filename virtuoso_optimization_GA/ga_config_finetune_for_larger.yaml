@@ -1,0 +1,5 @@
+# ===========================================================================
+# GA Config — 27×33 grid, pixel_size=25 um, grid_size=20 um, fine-tune
+# Backward-compat entry point. Full config lives in configs/27x33/.
+# ===========================================================================
+_base_: configs/27x33/ps25_gs20_finetune.yaml

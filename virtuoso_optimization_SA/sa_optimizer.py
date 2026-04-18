@@ -31,7 +31,7 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import yaml
+from virtuoso_engine.config_loader import load_config
 
 from .actions import random_action
 from .cost import compute_total_cost, compute_total_cost_dynamic, specs_from_config, FilterStateSpec
@@ -52,8 +52,7 @@ if TYPE_CHECKING:
 
 def _load_design_from_config(config_path: str | Path) -> DesignState:
     """Parse a pixelated config.yaml and return the embedded DesignState."""
-    with open(config_path) as f:
-        raw = yaml.safe_load(f)
+    raw = load_config(config_path)
     pix = raw["pixelated"]
     return DesignState(
         matrix                 = pix["pixel_state_matrix"],
@@ -102,7 +101,7 @@ class SAConfig:
     cap_sigma:                float
     max_switch_state_flips:   int   # max bits to flip per flip_switch_state action
     max_inductor_state_flips: int   # max bits to flip per flip_inductor_state action
-    action_weights: List[float]  # 11-element weights: [flip_01, move_switch,
+    action_weights: List[float]  # 11-element weights: [flip_01, modify_switch,
                                  #   flip_inductor, flip_inductor_value,
                                  #   perturb_caps, flip_switch_state,
                                  #   add_cap_pair, remove_cap_pair, perturb_pair_caps,
@@ -228,8 +227,7 @@ class SwitchableFilterSA:
 
     def __init__(self, config_path: str | Path) -> None:
         self.config_path = Path(config_path)
-        with self.config_path.open() as f:
-            raw = yaml.safe_load(f)
+        raw = load_config(self.config_path)
 
         self.cfg      = SAConfig.from_dict(raw)
         self.specs    = specs_from_config(raw["filter_specs"])

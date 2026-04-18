@@ -73,6 +73,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+from virtuoso_engine.config_loader import load_config
 
 from .runner import PersistentVirtuosoRunner, VirtuosoResult
 from .plotter import plot_s11_results, plot_s2p_results
@@ -834,8 +835,7 @@ class VirtuosoPixelEngine:
 
     @staticmethod
     def _load_yaml(path: Path) -> dict:
-        with path.open() as f:
-            return yaml.safe_load(f)
+        return load_config(path)
 
 
 # ---------------------------------------------------------------------------

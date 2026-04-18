@@ -3,16 +3,16 @@ crossover.py — Zig-zag crossover operator for the switchable-filter GA.
 
 Algorithm
 ---------
-1. Pick a base cut column c in [1, cols-2] uniformly at random.
-2. For each row apply a zig-zag offset (±1), producing a jagged boundary.
-3. Build the child matrix:
-      child[r][:cut_r]   ← parent1.matrix[r][:cut_r]   (left half)
-      child[r][cut_r:]   ← parent2.matrix[r][cut_r:]   (right half)
-4. Repair the child in order:
+1. Randomly choose orientation: "vertical" (column cut) or "horizontal" (row cut).
+2. Pick a base cut position uniformly at random within safe bounds.
+3. Build a Markovian jagged boundary: each step has 0.95 probability of continuing
+   in the same direction, 0.05 probability of choosing a new random direction.
+4. Build the child matrix by splitting at the jagged boundary.
+5. Repair the child in order:
       a. Fix inductors  — remove spacing violators, then trim to max_inductors
       b. Fix switches   — remove spacing violators, then adjust count to exact target
-      c. Fix connectivity — bridge disconnected halves along a free interior row
-5. Final full feasibility check; return None if still invalid.
+      c. Fix connectivity — bridge disconnected halves along a free interior row/col
+6. Final full feasibility check; return None if still invalid.
 
 Cap / inductor value inheritance
 ----------------------------------
@@ -387,6 +387,103 @@ def _inherit_values(
     return switch_states, cap_values, inductor_values, inductor_switch_states
 
 
+def _inherit_values_horizontal(
+    child_matrix: List[List[int]],
+    cut_rows: List[int],           # cut_rows[c] = first row taken from parent2
+    parent1: DesignState,
+    parent2: DesignState,
+    sw_map_p1: Dict[Tuple[int, int], int],
+    sw_map_p2: Dict[Tuple[int, int], int],
+    ind_map_p1: Dict[Tuple[int, int], int],
+    ind_map_p2: Dict[Tuple[int, int], int],
+    n_states: int,
+    cap_min: float,
+    cap_max: float,
+    n_inductor_values: int,
+    rng: random.Random,
+    ind_sw_states_p1: List[List[int]] = (),
+    ind_sw_states_p2: List[List[int]] = (),
+) -> Tuple[List[List[int]], List[float], List[int], List[List[int]]]:
+    """
+    Like _inherit_values() but for a horizontal (row-direction) cut.
+
+    Inheritance rule:
+      - Component at (r, c) with r <  cut_rows[c]  → was in parent1's half
+      - Component at (r, c) with r >= cut_rows[c]  → was in parent2's half
+    """
+    rows = len(child_matrix)
+    cols = len(child_matrix[0])
+
+    switch_states: List[List[int]] = [[] for _ in range(n_states)]
+    cap_values:    List[float]     = []
+    inductor_values: List[int]     = []
+
+    p1_has_ind_sw = len(ind_sw_states_p1) > 0
+    p2_has_ind_sw = len(ind_sw_states_p2) > 0
+    inductor_switch_states: List[List[int]] = [[] for _ in range(n_states)]
+
+    for r in range(rows):
+        for c in range(cols):
+            v = child_matrix[r][c]
+
+            if v == 3:  # switch
+                from_p1 = r < cut_rows[c]
+                if from_p1 and (r, c) in sw_map_p1:
+                    p_idx = sw_map_p1[(r, c)]
+                    cap_values.append(parent1.cap_values[p_idx])
+                    for si in range(n_states):
+                        if p_idx < len(parent1.switch_states[si]):
+                            switch_states[si].append(parent1.switch_states[si][p_idx])
+                        else:
+                            switch_states[si].append(rng.randint(0, 1))
+                elif (not from_p1) and (r, c) in sw_map_p2:
+                    p_idx = sw_map_p2[(r, c)]
+                    cap_values.append(parent2.cap_values[p_idx])
+                    for si in range(n_states):
+                        if p_idx < len(parent2.switch_states[si]):
+                            switch_states[si].append(parent2.switch_states[si][p_idx])
+                        else:
+                            switch_states[si].append(rng.randint(0, 1))
+                else:
+                    cap_values.append(rng.uniform(cap_min, cap_max))
+                    for si in range(n_states):
+                        switch_states[si].append(rng.randint(0, 1))
+
+            elif v == 2:  # inductor
+                from_p1 = r < cut_rows[c]
+                if from_p1 and (r, c) in ind_map_p1:
+                    p_idx = ind_map_p1[(r, c)]
+                    val = (parent1.inductor_values[p_idx]
+                           if p_idx < len(parent1.inductor_values)
+                           else rng.randint(0, n_inductor_values - 1))
+                    inductor_values.append(val)
+                    for si in range(n_states):
+                        if p1_has_ind_sw and p_idx < len(ind_sw_states_p1[si]):
+                            inductor_switch_states[si].append(ind_sw_states_p1[si][p_idx])
+                        else:
+                            inductor_switch_states[si].append(rng.randint(0, 1))
+                elif (not from_p1) and (r, c) in ind_map_p2:
+                    p_idx = ind_map_p2[(r, c)]
+                    val = (parent2.inductor_values[p_idx]
+                           if p_idx < len(parent2.inductor_values)
+                           else rng.randint(0, n_inductor_values - 1))
+                    inductor_values.append(val)
+                    for si in range(n_states):
+                        if p2_has_ind_sw and p_idx < len(ind_sw_states_p2[si]):
+                            inductor_switch_states[si].append(ind_sw_states_p2[si][p_idx])
+                        else:
+                            inductor_switch_states[si].append(rng.randint(0, 1))
+                else:
+                    inductor_values.append(rng.randint(0, n_inductor_values - 1))
+                    for si in range(n_states):
+                        inductor_switch_states[si].append(rng.randint(0, 1))
+
+    if not inductor_values:
+        inductor_switch_states = []
+
+    return switch_states, cap_values, inductor_values, inductor_switch_states
+
+
 # ---------------------------------------------------------------------------
 # Cap pair inheritance helper
 # ---------------------------------------------------------------------------
@@ -458,6 +555,40 @@ def _inherit_cap_pairs(
 
 
 # ---------------------------------------------------------------------------
+# Markovian path helper
+# ---------------------------------------------------------------------------
+
+_MARKOV_P_SAME = 0.95  # probability of continuing in the same direction
+
+
+def _zig_zag_markov_path(
+    n_steps: int,
+    base_cut: int,
+    lo: int,
+    hi: int,
+    rng: random.Random,
+) -> List[int]:
+    """
+    Generate a jagged cut-position path of length n_steps using a Markovian walk.
+
+    Starting from base_cut, each step has _MARKOV_P_SAME probability of continuing
+    in the same direction and (1 - _MARKOV_P_SAME) probability of choosing a new
+    random direction from {-1, 0, +1}.  All positions are clamped to [lo, hi].
+    """
+    direction = rng.choice([-1, 0, 1])
+    pos = base_cut
+    positions: List[int] = []
+    for _ in range(n_steps):
+        positions.append(max(lo, min(hi, pos)))
+        if rng.random() < _MARKOV_P_SAME:
+            pos += direction
+        else:
+            direction = rng.choice([-1, 0, 1])
+            pos += direction
+    return positions
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -477,12 +608,16 @@ def crossover_zig_zag(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
-) -> Optional[DesignState]:
+) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by zig-zag crossover of two parent designs.
 
-    Returns a valid DesignState, or None if the repair pipeline fails to
-    produce a feasible design.
+    Randomly chooses between a vertical cut (column-based, left/right halves) and a
+    horizontal cut (row-based, top/bottom halves).  The jagged boundary is generated
+    using a Markovian walk with probability _MARKOV_P_SAME of continuing direction.
+
+    Returns (child, params) where child is a valid DesignState (or None if the repair
+    pipeline fails) and params is a dict describing the crossover parameters used.
     """
     rows = parent1.rows
     cols = parent1.cols
@@ -493,23 +628,40 @@ def crossover_zig_zag(
     ind_map_p1 = _build_pos_map(parent1.matrix, 2)
     ind_map_p2 = _build_pos_map(parent2.matrix, 2)
 
-    # --- Zig-zag cut ---
-    if cols < 3:
-        # Not enough interior columns for a meaningful cut
-        return None
-    base_cut = rng.randint(1, cols - 2)
-    cut_cols = [
-        max(1, min(cols - 2, base_cut + rng.randint(-1, 1)))
-        for _ in range(rows)
-    ]
+    # --- Choose orientation ---
+    orientation = rng.choice(["vertical", "horizontal"])
 
-    # --- Hybrid matrix ---
-    child_matrix: List[List[int]] = []
-    for r in range(rows):
-        cut = cut_cols[r]
-        child_matrix.append(
-            list(parent1.matrix[r][:cut]) + list(parent2.matrix[r][cut:])
-        )
+    if orientation == "vertical":
+        # Vertical cut: split each row at a jagged column boundary
+        if cols < 3:
+            return None, {"orientation": orientation}
+        base_cut = rng.randint(1, cols - 2)
+        cut_cols = _zig_zag_markov_path(rows, base_cut, 1, cols - 2, rng)
+
+        child_matrix: List[List[int]] = []
+        for r in range(rows):
+            cut = cut_cols[r]
+            child_matrix.append(
+                list(parent1.matrix[r][:cut]) + list(parent2.matrix[r][cut:])
+            )
+
+        xover_params = {"orientation": "vertical", "base_cut": base_cut}
+
+    else:
+        # Horizontal cut: split each column at a jagged row boundary
+        if rows < 3:
+            return None, {"orientation": orientation}
+        base_cut = rng.randint(1, rows - 2)
+        cut_rows = _zig_zag_markov_path(cols, base_cut, 1, rows - 2, rng)
+
+        child_matrix = [[0] * cols for _ in range(rows)]
+        for r in range(rows):
+            for c in range(cols):
+                child_matrix[r][c] = (
+                    parent1.matrix[r][c] if r < cut_rows[c] else parent2.matrix[r][c]
+                )
+
+        xover_params = {"orientation": "horizontal", "base_cut": base_cut}
 
     # --- Repair pipeline ---
     _fix_inductors(child_matrix, max_inductors, rng)
@@ -517,30 +669,49 @@ def crossover_zig_zag(
     if max_vias > 0:
         _fix_vias(child_matrix, max_vias, rng)
     if not _fix_connectivity(child_matrix, rng):
-        return None
+        return None, xover_params
 
     # --- Final feasibility gate ---
     if not is_feasible(child_matrix, 0, max_inductors, min_switches=min_switches, max_switches=max_switches, max_vias=max_vias):
-        return None
+        return None, xover_params
 
     # --- Inherit continuous/discrete values from parents ---
-    switch_states, cap_values, inductor_values, inductor_switch_states = _inherit_values(
-        child_matrix,
-        cut_cols,
-        parent1,
-        parent2,
-        sw_map_p1,
-        sw_map_p2,
-        ind_map_p1,
-        ind_map_p2,
-        n_states,
-        cap_min,
-        cap_max,
-        n_inductor_values,
-        rng,
-        ind_sw_states_p1=parent1.inductor_switch_states,
-        ind_sw_states_p2=parent2.inductor_switch_states,
-    )
+    if orientation == "vertical":
+        switch_states, cap_values, inductor_values, inductor_switch_states = _inherit_values(
+            child_matrix,
+            cut_cols,
+            parent1,
+            parent2,
+            sw_map_p1,
+            sw_map_p2,
+            ind_map_p1,
+            ind_map_p2,
+            n_states,
+            cap_min,
+            cap_max,
+            n_inductor_values,
+            rng,
+            ind_sw_states_p1=parent1.inductor_switch_states,
+            ind_sw_states_p2=parent2.inductor_switch_states,
+        )
+    else:
+        switch_states, cap_values, inductor_values, inductor_switch_states = _inherit_values_horizontal(
+            child_matrix,
+            cut_rows,
+            parent1,
+            parent2,
+            sw_map_p1,
+            sw_map_p2,
+            ind_map_p1,
+            ind_map_p2,
+            n_states,
+            cap_min,
+            cap_max,
+            n_inductor_values,
+            rng,
+            ind_sw_states_p1=parent1.inductor_switch_states,
+            ind_sw_states_p2=parent2.inductor_switch_states,
+        )
 
     # Enforce single inductor value: randomly inherit one parent's shared value
     if single_inductor_value and inductor_values:
@@ -561,4 +732,4 @@ def crossover_zig_zag(
         inductor_switch_states = inductor_switch_states,
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
-    )
+    ), xover_params

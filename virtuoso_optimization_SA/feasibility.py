@@ -289,12 +289,14 @@ def check_cap_pair_valid(
     min_dist: int = 2,
     max_dist: int = 3,
     other_pair_path_cells: Optional[set] = None,
+    require_axis_aligned: bool = True,
 ) -> bool:
     """
     Return True if a cap pixel pair is valid:
 
     1. Both endpoints must be type-1 (metal) pixels.
-    2. (removed) — diagonal and off-diagonal pairs are now permitted.
+    2. (optional) Pair must be axis-aligned: either same row or same column.
+       Controlled by ``require_axis_aligned`` (default True).
     3. Chebyshev distance max(|dr|, |dc|) between endpoints must be in
        [min_dist, max_dist].
     4. The cells strictly between the two endpoints (exclusive of the
@@ -314,6 +316,8 @@ def check_cap_pair_valid(
         (endpoints + interior) of all *other* existing cap pairs.  When
         provided, rule 6 rejects any pair whose 3×3 corridor contains a cell
         from this set.
+    require_axis_aligned : if True (default), reject pairs that are not
+        strictly horizontal (same row) or vertical (same column).
     """
     rows = len(matrix)
     cols = len(matrix[0])
@@ -322,6 +326,10 @@ def check_cap_pair_valid(
 
     # Rule 1: both endpoints must be type 1
     if matrix[r1][c1] != 1 or matrix[r2][c2] != 1:
+        return False
+
+    # Rule 2: axis-aligned only (if required)
+    if require_axis_aligned and r1 != r2 and c1 != c2:
         return False
 
     # Rule 3: Chebyshev distance bounds
@@ -409,6 +417,7 @@ def filter_valid_pairs(
     pair_values: List[float],
     min_dist: int = 2,
     max_dist: int = 3,
+    require_axis_aligned: bool = True,
 ) -> Tuple[List[List[List[int]]], List[float]]:
     """
     Remove any cap pixel pairs that are no longer valid after a matrix mutation.
@@ -419,7 +428,8 @@ def filter_valid_pairs(
     kept_values: List[float] = []
     for i, (pair, val) in enumerate(zip(pairs, pair_values)):
         other_cells = _build_other_path_cells(pairs, exclude_index=i)
-        if check_cap_pair_valid(matrix, pair, min_dist, max_dist, other_cells):
+        if check_cap_pair_valid(matrix, pair, min_dist, max_dist, other_cells,
+                                require_axis_aligned=require_axis_aligned):
             kept_pairs.append(pair)
             kept_values.append(val)
     return kept_pairs, kept_values

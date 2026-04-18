@@ -1,0 +1,10 @@
+# ===========================================================================
+# GA Experiment — 21×27 grid, pixel_size=37 um, grid_size=30 um, scratch
+# Engine: config_ps37_gs30.yaml (single 200 nH inductor)
+# ===========================================================================
+_base_: ../base/21x27_scratch.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps37_gs30.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps37_gs30_scratch"
+
+seed: 42

@@ -414,16 +414,14 @@ class DesignModel:
 
     # ── Grid resizing ────────────────────────────────────────────────────────
 
-    def add_row(self, where: str = "bottom") -> None:
+    def add_row(self, idx: int) -> None:
+        """Insert a blank row before row *idx* (0 = top, num_rows() = bottom)."""
         new_row = [0] * self.num_cols()
-        if where == "top":
-            self.matrix.insert(0, new_row)
-            # Shift cap pair row indices
-            for pair in self.cap_pixel_pairs:
-                for p in pair:
+        self.matrix.insert(idx, new_row)
+        for pair in self.cap_pixel_pairs:
+            for p in pair:
+                if p[0] >= idx:
                     p[0] += 1
-        else:
-            self.matrix.append(new_row)
 
     def remove_row(self, idx: int) -> None:
         if self.num_rows() <= 1:
@@ -451,15 +449,13 @@ class DesignModel:
         self.cap_pair_values = keep_v
         self.matrix.pop(idx)
 
-    def add_col(self, where: str = "right") -> None:
+    def add_col(self, idx: int) -> None:
+        """Insert a blank column before col *idx* (0 = left, num_cols() = right)."""
         for row in self.matrix:
-            if where == "left":
-                row.insert(0, 0)
-            else:
-                row.append(0)
-        if where == "left":
-            for pair in self.cap_pixel_pairs:
-                for p in pair:
+            row.insert(idx, 0)
+        for pair in self.cap_pixel_pairs:
+            for p in pair:
+                if p[1] >= idx:
                     p[1] += 1
 
     def remove_col(self, idx: int) -> None:
@@ -2201,12 +2197,10 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addWidget(QLabel(" Grid: "))
         for label, fn in [
-            ("+Row↓",  lambda: self._grid_op("row_bot")),
-            ("+Row↑",  lambda: self._grid_op("row_top")),
-            ("–Row",   self._del_row),
-            ("+Col→",  lambda: self._grid_op("col_right")),
-            ("+Col←",  lambda: self._grid_op("col_left")),
-            ("–Col",   self._del_col),
+            ("+Row",  self._add_row),
+            ("–Row",  self._del_row),
+            ("+Col",  self._add_col),
+            ("–Col",  self._del_col),
         ]:
             btn = QPushButton(label)
             btn.clicked.connect(fn)
@@ -2383,13 +2377,23 @@ class MainWindow(QMainWindow):
 
     # ── Grid operations ───────────────────────────────────────────────────────
 
-    def _grid_op(self, op: str) -> None:
-        {"row_bot":   lambda: self.model.add_row("bottom"),
-         "row_top":   lambda: self.model.add_row("top"),
-         "col_right": lambda: self.model.add_col("right"),
-         "col_left":  lambda: self.model.add_col("left"),
-         }[op]()
-        self._full_refresh()
+    def _add_row(self) -> None:
+        nr = self.model.num_rows()
+        idx, ok = QInputDialog.getInt(self, "Insert Row",
+                                      f"Insert before row (0 = top, {nr} = bottom):",
+                                      nr, 0, nr)
+        if ok:
+            self.model.add_row(idx)
+            self._full_refresh()
+
+    def _add_col(self) -> None:
+        nc = self.model.num_cols()
+        idx, ok = QInputDialog.getInt(self, "Insert Column",
+                                      f"Insert before column (0 = left, {nc} = right):",
+                                      nc, 0, nc)
+        if ok:
+            self.model.add_col(idx)
+            self._full_refresh()
 
     def _del_row(self) -> None:
         nr = self.model.num_rows()

@@ -36,6 +36,7 @@ from .crossover import (
     _fix_vias,
     _inherit_cap_pairs,
 )
+from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +173,75 @@ def _inherit_values_clustered(
 
 
 # ---------------------------------------------------------------------------
+# Position-aware cap pair inheritance for clustering crossover
+# ---------------------------------------------------------------------------
+
+def _inherit_cap_pairs_clustered(
+    pixel_source: Dict[Tuple[int, int], int],
+    parent1: DesignState,
+    parent2: DesignState,
+    child_matrix: List[List[int]],
+    max_cap_pairs: int,
+    min_dist: int,
+    max_dist: int,
+    rng: random.Random,
+) -> Tuple[List, List[float]]:
+    """
+    Inherit cap pixel pairs from parents using the cluster pixel_source map.
+
+    A pair from parent1 is kept only if both of its endpoints fall in a region
+    assigned to parent1 (pixel_source == 1).  Likewise for parent2.  This mirrors
+    the position-aware logic used by the block crossover.
+
+    Returns (cap_pixel_pairs, cap_pair_values).
+    """
+    if max_cap_pairs == 0:
+        return [], []
+
+    def _key(pair: List) -> Tuple:
+        ep1, ep2 = tuple(pair[0]), tuple(pair[1])
+        return (min(ep1, ep2), max(ep1, ep2))
+
+    pair_pool: Dict[Tuple, float] = {}
+
+    for pair, val in zip(parent1.cap_pixel_pairs, parent1.cap_pair_values):
+        r1, c1 = pair[0]
+        r2, c2 = pair[1]
+        if pixel_source.get((r1, c1), 1) == 1 and pixel_source.get((r2, c2), 1) == 1:
+            k = _key(pair)
+            pair_pool[k] = val
+
+    for pair, val in zip(parent2.cap_pixel_pairs, parent2.cap_pair_values):
+        r1, c1 = pair[0]
+        r2, c2 = pair[1]
+        if pixel_source.get((r1, c1), 2) == 2 and pixel_source.get((r2, c2), 2) == 2:
+            k = _key(pair)
+            if k not in pair_pool:
+                pair_pool[k] = val
+            else:
+                pair_pool[k] = (pair_pool[k] + val) / 2.0  # both parents had same pair
+
+    if not pair_pool:
+        return [], []
+
+    candidate_pairs  = [[[k[0][0], k[0][1]], [k[1][0], k[1][1]]] for k in pair_pool]
+    candidate_values = [pair_pool[k] for k in pair_pool]
+
+    valid_pairs, valid_values = filter_valid_pairs(
+        child_matrix, candidate_pairs, candidate_values, min_dist, max_dist
+    )
+
+    combined = list(zip(valid_pairs, valid_values))
+    rng.shuffle(combined)
+    combined = combined[:max_cap_pairs]
+
+    if not combined:
+        return [], []
+    result_pairs, result_values = zip(*combined)
+    return list(result_pairs), list(result_values)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -192,7 +262,7 @@ def crossover_weighted_clustering(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
-) -> Optional[DesignState]:
+) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by weighted-clustering crossover of two parent designs.
 
@@ -202,8 +272,11 @@ def crossover_weighted_clustering(
     parents contribute at least one centroid. A per-centroid weight in [0.5, 1.0]
     scales the Euclidean distance, producing richer, non-linear cluster boundaries.
 
-    Returns a valid DesignState, or None if the repair pipeline fails to
-    produce a feasible design.
+    Cap pixel pairs are inherited position-aware: a pair is kept only if both
+    of its endpoints belong to a cluster region assigned to the same parent.
+
+    Returns (child, params) where child is a valid DesignState (or None if repair
+    fails) and params describes the crossover parameters used.
     """
     rows = parent1.rows
     cols = parent1.cols
@@ -211,6 +284,7 @@ def crossover_weighted_clustering(
     # --- Randomly draw number of centroids for this call ---
     n_centroids_max = max(2, n_centroids_max)
     n_centroids = rng.randint(2, n_centroids_max)
+    xover_params = {"n_centroids": n_centroids}
 
     # --- Build position maps BEFORE any changes ---
     sw_map_p1  = _build_pos_map(parent1.matrix, 3)
@@ -264,14 +338,14 @@ def crossover_weighted_clustering(
     if max_vias > 0:
         _fix_vias(child_matrix, max_vias, rng)
     if not _fix_connectivity(child_matrix, rng):
-        return None
+        return None, xover_params
 
     # --- Final feasibility gate ---
     if not is_feasible(
         child_matrix, 0, max_inductors,
         min_switches=min_switches, max_switches=max_switches, max_vias=max_vias
     ):
-        return None
+        return None, xover_params
 
     # --- Inherit continuous/discrete values from parents ---
     switch_states, cap_values, inductor_values, inductor_switch_states = (
@@ -300,9 +374,16 @@ def crossover_weighted_clustering(
         val = donor.inductor_values[0] if donor.inductor_values else rng.randint(0, n_inductor_values - 1)
         inductor_values = [val] * len(inductor_values)
 
-    # --- Inherit cap pixel pairs from parents ---
-    cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs(
-        child_matrix, parent1, parent2, max_cap_pairs, cap_pair_min_dist, cap_pair_max_dist, rng
+    # --- Inherit cap pixel pairs: position-aware using cluster assignment ---
+    cap_pixel_pairs, cap_pair_values = _inherit_cap_pairs_clustered(
+        pixel_source,
+        parent1,
+        parent2,
+        child_matrix,
+        max_cap_pairs,
+        cap_pair_min_dist,
+        cap_pair_max_dist,
+        rng,
     )
 
     return DesignState(
@@ -313,4 +394,4 @@ def crossover_weighted_clustering(
         inductor_switch_states = inductor_switch_states,
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
-    )
+    ), xover_params

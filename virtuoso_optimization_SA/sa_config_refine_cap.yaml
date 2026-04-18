@@ -132,7 +132,7 @@ sa:
   via_flip_max_count: 3
 
   # Per-action sampling weights — cap-pair actions dominant, others very low.
-  # Order: [flip_01, move_switch, flip_inductor, flip_inductor_value,
+  # Order: [flip_01, modify_switch, flip_inductor, flip_inductor_value,
   #         perturb_caps, flip_switch_state,
   #         add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state, flip_via]
   action_weights: [0.5, 0.5, 0.1, 0.5, 3.0, 1.0, 8.0, 8.0, 8.0, 1.0, 0.5]

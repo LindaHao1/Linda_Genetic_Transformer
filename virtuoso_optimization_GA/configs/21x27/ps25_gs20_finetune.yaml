@@ -1,0 +1,38 @@
+# ===========================================================================
+# GA Experiment — 21×27 grid, pixel_size=25 um, grid_size=20 um, fine-tune
+# Engine: config.yaml (4-inductor table: 100/200/400/800 nH)
+# Seeds 70% of the population from a known-good design.
+# ===========================================================================
+_base_: ../base/21x27_finetune.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_finetune_cap_2"
+
+grid:
+  n_inductor_values: 4
+  single_inductor_value: false
+  cap_pair_init_min: 0
+  cap_pair_init_max: 4
+  init_max_vias: 2
+
+ga:
+  n_parallel: 5
+  # Override exploitation weights for fine-tune (cap-pair heavy)
+  exploitation_action_weights:
+    flip_01:             0.0
+    modify_switch:       4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   4.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 4.0
+    flip_via:            2.0
+
+  # REQUIRED: path to the design to fine-tune from
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_indefinite_init_count/sims/gen91_ind6/worker_1/pixsimple_r21c27_ps25p0_gs20p0_frl15frr7_w1/config.yaml"
+  finetune_seed_ratio: 0.7
+
+seed: 42

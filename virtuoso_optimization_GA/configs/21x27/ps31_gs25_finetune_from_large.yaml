@@ -1,0 +1,23 @@
+# ===========================================================================
+# GA Experiment — 21×27 → larger grid, pixel_size=31 um, grid_size=25 um
+# Fine-tune a known-good 21×27 ps31/gs25 design onto an expanded grid.
+#
+# Grid is enlarged to 27×33 (placeholder — adjust rows/cols as needed).
+# 70% of the initial population is seeded by mutating the source design.
+#
+# IMPORTANT: set ga.finetune_design_path before running.
+# ===========================================================================
+_base_: ../base/21x27_finetune.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_finetune_to_large_2"
+
+grid:
+  rows: 25       # TODO: adjust to target large-grid size
+  cols: 37       # TODO: adjust to target large-grid size
+
+ga:
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/ps31_gs25/config.yaml"   
+  n_parallel: 4
+
+seed: 42

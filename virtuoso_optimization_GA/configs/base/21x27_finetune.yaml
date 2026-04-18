@@ -1,0 +1,137 @@
+# ===========================================================================
+# GA Base Config — 21×27 Grid, Fine-Tune Initialisation
+#
+# Inherits grid, filter_specs, and most GA params from 21x27_scratch.yaml.
+# Overrides population schedule and action weights for exploitation,
+# and enables fine-tune seeding.
+#
+# This file is a SHARED BASE — do not run it directly.
+# Create an experiment config in configs/21x27/ that sets:
+#   _base_: ../base/21x27_finetune.yaml
+#   virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_<variant>.yaml"
+#   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   ga:
+#     finetune_design_path: "/path/to/best_design.yaml"  # REQUIRED
+#   seed: 42
+# ===========================================================================
+_base_: 21x27_scratch.yaml
+
+# Override filter_specs to raise cost_order to 1.5 for all states.
+# Lists are replaced wholesale by the config loader — full spec required.
+filter_specs:
+  - state_index:     0
+    passband:        [6.0e9, 8.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [4.0e9,   6.0e9]
+      - [8.0e9,  14.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions:
+      - [14.0e9, 65.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: true
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+
+  - state_index:     1
+    passband:        [22.0e9, 26.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [14.0e9, 22.0e9]
+      - [26.0e9, 32.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions:
+      - [4.0e9,  14.0e9]
+      - [32.0e9, 65.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: true
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+
+  - state_index:     2
+    passband:        [38.0e9, 42.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [32.0e9, 38.0e9]
+      - [42.0e9, 50.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions:
+      - [4.0e9,  32.0e9]
+      - [50.0e9, 65.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: true
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+
+ga:
+  # Smaller population for fine-tune (exploiting a good starting point)
+  pop_size_start:    100
+  pop_size_end:       30
+  pop_size_step_size: 20
+  pop_schedule_gens_per_step: 2
+  n_keep_bad: 1
+   
+    
+  flip_inner_region: [[2, 6], [22, 30]]
+  flip_inner_prob:   0.6
+  flip_outer_prob:   1.0
+
+
+  # Exploration vs. exploitation shift: heavier cap-pair mutations,
+  # lighter structural mutations
+  action_weights:
+    flip_01:             12.0
+    modify_switch:       5.0
+    flip_inductor:       5.0
+    flip_inductor_value: 1.0
+    perturb_caps:        1.0
+    flip_switch_state:   5.0
+    add_cap_pair:        8.0
+    remove_cap_pair:     8.0
+    perturb_pair_caps:   3.0
+    flip_inductor_state: 5.0
+    flip_via:            2.0
+
+  n_state_champions: 2
+
+  # Fine-tune: seed finetune_seed_ratio of the initial population by
+  # mutating an existing design.  The remaining fraction is random.
+  # finetune_design_path MUST be set to a valid path in the experiment config.
+  finetune_design_path: null   # REQUIRED — set this in your experiment config
+  finetune_seed_ratio:  0.7

@@ -1,0 +1,47 @@
+# ===========================================================================
+# GA Experiment — 21×27 grid, pixel_size=30 um, grid_size=25 um, scratch
+# Engine: config_larger_pixel.yaml (single 200 nH inductor)
+# ===========================================================================
+_base_: ../base/21x27_scratch.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_larger_pixel.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_block_hybrid_larger_pixel"
+
+grid:
+  n_inductor_values: 2
+  single_inductor_value: true
+  cap_pair_init_min: 2
+  init_max_vias: 0
+
+ga:
+  pop_size_end: 50
+  n_keep_bad: 1
+  block_min_size: 5
+  block_max_size: 15
+  n_parallel: 5
+  action_weights:
+    flip_01:             4.0
+    modify_switch:       1.0
+    flip_inductor:       1.0
+    flip_inductor_value: 4.0
+    perturb_caps:        4.0
+    flip_switch_state:   8.0
+    add_cap_pair:        3.0
+    remove_cap_pair:     3.0
+    perturb_pair_caps:   2.0
+    flip_inductor_state: 12.0
+    flip_via:            2.0
+  exploitation_action_weights:
+    flip_01:             0.0
+    modify_switch:       4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   4.0
+    add_cap_pair:        2.0
+    remove_cap_pair:     2.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 4.0
+    flip_via:            2.0
+
+seed: 42

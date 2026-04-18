@@ -192,7 +192,7 @@ def crossover_block(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
-) -> Optional[DesignState]:
+) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by block-based crossover of two parent designs.
 
@@ -201,7 +201,8 @@ def crossover_block(
     for each dimension. The transfer direction (which parent donates the block)
     is chosen at random each call.
 
-    Returns a valid DesignState, or None if the repair pipeline fails.
+    Returns (child, params) where child is a valid DesignState (or None if repair
+    fails) and params describes the block crossover parameters used.
     """
     rows = parent1.rows
     cols = parent1.cols
@@ -209,7 +210,7 @@ def crossover_block(
     block_min_size = max(1, block_min_size)
     block_max_size = min(block_max_size, min(rows, cols))
     if block_min_size > block_max_size:
-        return None
+        return None, {}
 
     # Build position maps before any changes (for value inheritance)
     sw_map_p1  = _build_pos_map(parent1.matrix, 3)
@@ -223,7 +224,7 @@ def crossover_block(
 
     # A block spanning the full width cannot satisfy the edge constraint
     if w >= cols:
-        return None
+        return None, {}
 
     # Sample Box A position in parent1
     for _ in range(_MAX_PLACEMENT_ATTEMPTS):
@@ -254,6 +255,11 @@ def crossover_block(
 
         # Sample transfer direction
         direction = rng.randint(0, 1)
+        xover_params = {
+            "block_h": h,
+            "block_w": w,
+            "direction": "p1_into_p2" if direction == 0 else "p2_into_p1",
+        }
 
         if direction == 0:
             # Base = parent2; insert parent1's block into Box B position
@@ -357,6 +363,6 @@ def crossover_block(
             inductor_switch_states = inductor_switch_states,
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values,
-        )
+        ), xover_params
 
-    return None  # all placement attempts exhausted
+    return None, {"block_h": h, "block_w": w}  # all placement attempts exhausted

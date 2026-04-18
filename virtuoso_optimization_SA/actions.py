@@ -1,10 +1,13 @@
 """
 actions.py — SA mutation actions for the switchable-filter design.
 
-Six actions are available:
+Actions available:
 
 1. flip_01              — flip up to N_regular_flip type-0 or type-1 pixels.
-2. move_switch          — relocate one switch to a different type-1 pixel.
+2. modify_switch        — with equal probability: move, add, or remove one switch.
+                          Add inserts a new switch_states column with values that keep
+                          all states distinct (avoids all-0/all-1 if n_states > 2).
+                          Remove drops the switch and its switch_states column.
 3. flip_inductor        — add or remove one inductor pixel.
 4. flip_inductor_value  — change the inductance value of one inductor pixel
                           (does not alter inductor count).
@@ -54,27 +57,89 @@ def action_flip_01(
     rng: random.Random,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    flip_inner_region=None,
+    flip_inner_prob: float = 1.0,
+    flip_outer_prob: float = 1.0,
+    require_axis_aligned: bool = True,
+    flip_region_size: int = 8,
 ) -> tuple:
     """
     Randomly flip up to ``n_flip`` type-0 or type-1 interior pixels
     (feed columns are excluded).
+
+    A random ``flip_region_size`` × ``flip_region_size`` window is chosen
+    first; only pixels within that window are candidates.  The inner/outer
+    probability weighting (``flip_inner_region``) is applied within the window.
 
     Returns (mutated copy, info_dict), or (None, None) if infeasible.
     """
     rows  = state.rows
     cols  = state.cols
 
+    # All valid window top-left positions (window must fit within the grid).
+    r0_max = max(0, rows - flip_region_size)
+    c0_max = max(0, cols - flip_region_size)
+
+    # Choose window position: biased towards the outer region when
+    # flip_inner_region is configured, uniform otherwise.
+    # Each window position is weighted by the blended expected flip probability
+    # of its cells: (n_inner * flip_inner_prob + n_outer * flip_outer_prob) / n_total.
+    # The overlap counts are computed analytically via rectangle intersection.
+    if flip_inner_region is not None and flip_inner_prob != flip_outer_prob:
+        (ri1, ci1), (ri2, ci2) = flip_inner_region
+        all_positions = [
+            (r0, c0)
+            for r0 in range(r0_max + 1)
+            for c0 in range(c0_max + 1)
+        ]
+        pos_weights = []
+        for r0, c0 in all_positions:
+            r_end   = min(r0 + flip_region_size, rows)
+            c_start = max(1, c0)
+            c_end   = min(c0 + flip_region_size, cols - 1)
+            total   = (r_end - r0) * max(0, c_end - c_start)
+            if total == 0:
+                pos_weights.append(0.0)
+                continue
+            # Analytical inner-region overlap (rectangle intersection)
+            r_inner = max(0, min(r_end - 1, ri2) - max(r0, ri1) + 1)
+            c_inner = max(0, min(c_end - 1, ci2) - max(c_start, ci1) + 1)
+            n_inner = r_inner * c_inner
+            n_outer = total - n_inner
+            pos_weights.append(
+                (n_inner * flip_inner_prob + n_outer * flip_outer_prob) / total
+            )
+        (r0, c0) = rng.choices(all_positions, weights=pos_weights)[0]
+    else:
+        r0 = rng.randint(0, r0_max)
+        c0 = rng.randint(0, c0_max)
+
+    r1_win = r0 + flip_region_size - 1
+    c1_win = c0 + flip_region_size - 1
+
     candidates = [
         (r, c)
-        for r in range(rows)
-        for c in range(1, cols - 1)          # exclude feed columns
+        for r in range(r0, min(r1_win + 1, rows))
+        for c in range(max(1, c0), min(c1_win + 1, cols - 1))   # exclude feed columns
         if state.matrix[r][c] in (0, 1)
     ]
     if not candidates:
         return None, None
 
     k = rng.randint(1, min(n_flip, len(candidates)))
-    chosen = rng.sample(candidates, k)
+
+    # Weighted sampling without replacement (Efraimidis-Spirakis) when a
+    # non-uniform inner/outer region is configured; fall back to uniform otherwise.
+    if flip_inner_region is not None and flip_inner_prob != flip_outer_prob:
+        (ri1, ci1), (ri2, ci2) = flip_inner_region
+        def _w(r, c):
+            return flip_inner_prob if (ri1 <= r <= ri2 and ci1 <= c <= ci2) else flip_outer_prob
+        cand_weights = [_w(r, c) for r, c in candidates]
+        keys = [rng.random() ** (1.0 / w) if w > 0 else 0.0 for w in cand_weights]
+        sorted_idx = sorted(range(len(candidates)), key=lambda i: keys[i], reverse=True)
+        chosen = [candidates[i] for i in sorted_idx[:k]]
+    else:
+        chosen = rng.sample(candidates, k)
 
     new = state.copy()
     flipped_cells = []
@@ -91,6 +156,7 @@ def action_flip_01(
     new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
         new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
         cap_pair_min_dist, cap_pair_max_dist,
+        require_axis_aligned=require_axis_aligned,
     )
     info = {
         "action": "flip_01",
@@ -109,6 +175,7 @@ def action_move_switch(
     rng: random.Random,
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
+    require_axis_aligned: bool = True,
 ) -> tuple:
     """
     Pick a random switch pixel (type 3), remove it (set to 1), then place it
@@ -154,6 +221,7 @@ def action_move_switch(
                 new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
                     new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
                     cap_pair_min_dist, cap_pair_max_dist,
+                    require_axis_aligned=require_axis_aligned,
                 )
                 info = {
                     "action": "move_switch",
@@ -166,6 +234,199 @@ def action_move_switch(
             new.matrix[pr][pc] = 1
 
     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Action 2b: modify switch (move / add / remove) — replaces move_switch
+# ---------------------------------------------------------------------------
+
+def _switch_row_first_index(matrix: list, r: int, c: int) -> int:
+    """Return the row-first position of switch pixel (r, c) among all type-3 pixels."""
+    idx = 0
+    for row in range(len(matrix)):
+        for col in range(len(matrix[0])):
+            if matrix[row][col] == 3:
+                if row == r and col == c:
+                    return idx
+                idx += 1
+    raise ValueError(f"No type-3 pixel at ({r}, {c})")
+
+
+def action_modify_switch(
+    state: DesignState,
+    rng: random.Random,
+    min_switches: int = 1,
+    max_switches: int = 99,
+    cap_min: float = 50e-15,
+    cap_max: float = 500e-15,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
+    require_axis_aligned: bool = True,
+) -> tuple:
+    """
+    Modify the switch layout with equal probability across three sub-actions:
+
+    - move:   relocate one switch to a different type-1 pixel (same constraints
+              as the old action_move_switch).
+    - add:    place a new switch on an eligible type-1 pixel; insert a new column
+              in switch_states whose values keep all states distinct.  When
+              n_states > 2, all-0 and all-1 columns are additionally rejected.
+              A new cap value is inserted at the matching row-first position.
+    - remove: pick a random switch, remove it (type 3 → 1), drop the corresponding
+              column from switch_states and entry from cap_values.  Rejected if the
+              remaining states are no longer distinct.
+
+    Sub-actions that would violate min_switches / max_switches bounds are excluded
+    from the random draw.
+
+    Returns (mutated copy, info_dict), or (None, None) if all eligible sub-actions
+    fail.
+    """
+    rows = state.rows
+    cols = state.cols
+
+    sw_positions = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if state.matrix[r][c] == 3
+    ]
+    n_switches = len(sw_positions)
+    n_states = state.n_states
+
+    can_move   = n_switches > 0
+    can_add    = n_switches < max_switches
+    can_remove = n_switches > min_switches
+
+    choices = []
+    if can_move:   choices.append("move")
+    if can_add:    choices.append("add")
+    if can_remove: choices.append("remove")
+
+    if not choices:
+        return None, None
+
+    sub_action = rng.choice(choices)
+
+    # ---- move ----
+    if sub_action == "move":
+        return action_move_switch(
+            state, rng,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
+        )
+
+    # ---- add ----
+    elif sub_action == "add":
+        new = state.copy()
+
+        eligible = [
+            (r, c)
+            for r in range(rows)
+            for c in range(1, cols - 1)
+            if new.matrix[r][c] == 1 and _can_place_switch_at(new.matrix, r, c)
+        ]
+        if not eligible:
+            return None, None
+
+        rng.shuffle(eligible)
+        for pr, pc in eligible:
+            new2 = new.copy()
+            new2.matrix[pr][pc] = 3
+            if not check_connectivity(new2.matrix):
+                continue
+
+            idx = _switch_row_first_index(new2.matrix, pr, pc)
+
+            # Generate a switch_states column that keeps states distinct.
+            # When n_states > 2, additionally reject all-0 and all-1 columns.
+            placed = False
+            for _ in range(200):
+                col_vals = [rng.randint(0, 1) for _ in range(n_states)]
+                if n_states > 2 and (all(v == 0 for v in col_vals) or all(v == 1 for v in col_vals)):
+                    continue
+                new_ss = [
+                    row[:idx] + [col_vals[si]] + row[idx:]
+                    for si, row in enumerate(new2.switch_states)
+                ]
+                if (_states_can_be_distinct(n_switches + 1, n_states)
+                        and not check_switch_states_distinct(new_ss)):
+                    continue
+                new2.switch_states = new_ss
+                placed = True
+                break
+
+            if not placed:
+                continue
+
+            # Insert corresponding cap value
+            new_cap_val = rng.uniform(cap_min, cap_max)
+            new2.cap_values.insert(idx, new_cap_val)
+
+            new2.cap_pixel_pairs, new2.cap_pair_values = filter_valid_pairs(
+                new2.matrix, new2.cap_pixel_pairs, new2.cap_pair_values,
+                cap_pair_min_dist, cap_pair_max_dist,
+                require_axis_aligned=require_axis_aligned,
+            )
+            info = {
+                "action":           "modify_switch",
+                "sub_action":       "add",
+                "description":      f"Added switch at ({pr},{pc}), switch_states column {idx}",
+                "placed_at":        {"row": pr, "col": pc},
+                "switch_list_index": idx,
+                "cap_value_fF":     new_cap_val * 1e15,
+                "n_switches_before": n_switches,
+                "n_switches_after":  n_switches + 1,
+            }
+            return new2, info
+
+        return None, None
+
+    # ---- remove ----
+    else:
+        sw_list = list(sw_positions)
+        rng.shuffle(sw_list)
+
+        for rm_r, rm_c in sw_list:
+            idx = _switch_row_first_index(state.matrix, rm_r, rm_c)
+
+            new = state.copy()
+            new.matrix[rm_r][rm_c] = 1
+
+            if not check_connectivity(new.matrix):
+                continue
+
+            # Drop column from switch_states
+            new_ss = [row[:idx] + row[idx + 1:] for row in new.switch_states]
+            n_sw_new = n_switches - 1
+            if (new_ss and new_ss[0]
+                    and _states_can_be_distinct(n_sw_new, n_states)
+                    and not check_switch_states_distinct(new_ss)):
+                continue
+            new.switch_states = new_ss
+
+            # Drop the corresponding cap value
+            if idx < len(new.cap_values):
+                new.cap_values.pop(idx)
+
+            new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+                new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+                cap_pair_min_dist, cap_pair_max_dist,
+                require_axis_aligned=require_axis_aligned,
+            )
+            info = {
+                "action":            "modify_switch",
+                "sub_action":        "remove",
+                "description":       f"Removed switch at ({rm_r},{rm_c}), switch_states column {idx}",
+                "removed_from":      {"row": rm_r, "col": rm_c},
+                "switch_list_index": idx,
+                "n_switches_before": n_switches,
+                "n_switches_after":  n_switches - 1,
+            }
+            return new, info
+
+        return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +453,7 @@ def action_flip_inductor(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
+    require_axis_aligned: bool = True,
 ) -> tuple:
     """
     Either add an inductor (type 1 → 2) or remove one (type 2 → 1).
@@ -257,6 +519,7 @@ def action_flip_inductor(
         new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
             new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
             cap_pair_min_dist, cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
         )
         info = {
             "action": "flip_inductor",
@@ -307,6 +570,7 @@ def action_flip_inductor(
         new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
             new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
             cap_pair_min_dist, cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
         )
         info = {
             "action": "flip_inductor",
@@ -531,9 +795,11 @@ def action_flip_switch_state(
     n_states   = state.n_states
     n_switches = len(state.switch_states[0])
 
-    all_positions = [(si, sw) for si in range(n_states) for sw in range(n_switches)]
-    k = rng.randint(1, min(max_flips, len(all_positions)))
-    chosen = rng.sample(all_positions, k)
+    # Always flip bits within a single randomly chosen state row.
+    si = rng.randint(0, n_states - 1)
+    positions_in_state = [(si, sw) for sw in range(n_switches)]
+    k = rng.randint(1, min(max_flips, len(positions_in_state)))
+    chosen = rng.sample(positions_in_state, k)
 
     new = state.copy()
     flips = []
@@ -590,9 +856,11 @@ def action_flip_inductor_state(
     if not new.inductor_switch_states:
         new.inductor_switch_states = [[1] * n_ind for _ in range(n_states)]
 
-    all_positions = [(si, ii) for si in range(n_states) for ii in range(n_ind)]
-    k = rng.randint(1, min(max_flips, len(all_positions)))
-    chosen = rng.sample(all_positions, k)
+    # Always flip bits within a single randomly chosen state row.
+    si = rng.randint(0, n_states - 1)
+    positions_in_state = [(si, ii) for ii in range(n_ind)]
+    k = rng.randint(1, min(max_flips, len(positions_in_state)))
+    chosen = rng.sample(positions_in_state, k)
 
     flips = []
     for si, ii in chosen:
@@ -628,10 +896,13 @@ def action_add_cap_pair(
     cap_pair_max_dist: int,
     rng: random.Random,
     max_search: int = 300,
+    require_axis_aligned: bool = True,
 ) -> tuple:
     """
-    Find two type-1 interior pixels that form a valid cap pair (axis-aligned
-    or diagonal) and add it to the design.
+    Find two type-1 interior pixels that form a valid cap pair and add it to
+    the design.  When ``require_axis_aligned`` is True (default), only
+    horizontal or vertical pairs are considered; otherwise diagonal pairs are
+    also permitted.
 
     Returns (mutated copy, info_dict), or (None, None) if already at the cap
     pair limit or no valid pair can be found within ``max_search`` attempts.
@@ -658,18 +929,25 @@ def action_add_cap_pair(
 
     candidates = []
     for (r1, c1) in metal_set:
-        for dr in range(0, cap_pair_max_dist + 1):
-            dc_range = range(
-                -cap_pair_max_dist if dr > 0 else 1,
-                cap_pair_max_dist + 1,
-            )
-            for dc in dc_range:
-                if max(dr, abs(dc)) < cap_pair_min_dist:
-                    continue
-                if max(dr, abs(dc)) > cap_pair_max_dist:
-                    continue
-                if (r1 + dr, c1 + dc) in metal_set:
-                    candidates.append(((r1, c1), (r1 + dr, c1 + dc)))
+        if require_axis_aligned:
+            # Only horizontal (dr=0) and vertical (dc=0) directions
+            for dist in range(cap_pair_min_dist, cap_pair_max_dist + 1):
+                for (dr, dc) in ((0, dist), (0, -dist), (dist, 0), (-dist, 0)):
+                    if (r1 + dr, c1 + dc) in metal_set:
+                        candidates.append(((r1, c1), (r1 + dr, c1 + dc)))
+        else:
+            for dr in range(0, cap_pair_max_dist + 1):
+                dc_range = range(
+                    -cap_pair_max_dist if dr > 0 else 1,
+                    cap_pair_max_dist + 1,
+                )
+                for dc in dc_range:
+                    if max(dr, abs(dc)) < cap_pair_min_dist:
+                        continue
+                    if max(dr, abs(dc)) > cap_pair_max_dist:
+                        continue
+                    if (r1 + dr, c1 + dc) in metal_set:
+                        candidates.append(((r1, c1), (r1 + dr, c1 + dc)))
 
     rng.shuffle(candidates)
     for (r1, c1), (r2, c2) in candidates[:max_search]:
@@ -681,6 +959,7 @@ def action_add_cap_pair(
             state.matrix, candidate,
             cap_pair_min_dist, cap_pair_max_dist,
             existing_path_cells,
+            require_axis_aligned=require_axis_aligned,
         ):
             continue
         new = state.copy()
@@ -784,7 +1063,7 @@ def action_perturb_pair_caps(
 
 _ACTION_NAMES = [
     "flip_01",
-    "move_switch",
+    "modify_switch",
     "flip_inductor",
     "flip_inductor_value",
     "perturb_caps",
@@ -818,6 +1097,13 @@ def _dispatch_action(
     max_vias: int = 0,
     via_flip_max_count: int = 3,
     single_inductor_value: bool = False,
+    require_axis_aligned: bool = True,
+    flip_inner_region=None,
+    flip_inner_prob: float = 1.0,
+    flip_outer_prob: float = 1.0,
+    flip_region_size: int = 8,
+    min_switches: int = 1,
+    max_switches: int = 99,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -825,12 +1111,22 @@ def _dispatch_action(
             state, n_regular_flip, rng,
             cap_pair_min_dist=cap_pair_min_dist,
             cap_pair_max_dist=cap_pair_max_dist,
+            flip_inner_region=flip_inner_region,
+            flip_inner_prob=flip_inner_prob,
+            flip_outer_prob=flip_outer_prob,
+            require_axis_aligned=require_axis_aligned,
+            flip_region_size=flip_region_size,
         )
-    elif action_name == "move_switch":
-        return action_move_switch(
+    elif action_name == "modify_switch":
+        return action_modify_switch(
             state, rng,
+            min_switches=min_switches,
+            max_switches=max_switches,
+            cap_min=cap_min,
+            cap_max=cap_max,
             cap_pair_min_dist=cap_pair_min_dist,
             cap_pair_max_dist=cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
         )
     elif action_name == "flip_inductor":
         return action_flip_inductor(
@@ -838,6 +1134,7 @@ def _dispatch_action(
             cap_pair_min_dist=cap_pair_min_dist,
             cap_pair_max_dist=cap_pair_max_dist,
             single_inductor_value=single_inductor_value,
+            require_axis_aligned=require_axis_aligned,
         )
     elif action_name == "flip_inductor_value":
         return action_flip_inductor_value(state, n_inductor_values, rng,
@@ -850,6 +1147,7 @@ def _dispatch_action(
         return action_add_cap_pair(
             state, max_cap_pairs, cap_pair_min, cap_pair_max,
             cap_pair_min_dist, cap_pair_max_dist, rng,
+            require_axis_aligned=require_axis_aligned,
         )
     elif action_name == "remove_cap_pair":
         return action_remove_cap_pair(state, rng)
@@ -874,7 +1172,7 @@ def random_action(
     rng: random.Random,
     n_inductor_values: int = 4,
     action_weights: Optional[List[float]] = None,
-    max_retries_per_action: int = 20,
+    max_retries_per_action: int = 200,
     max_cap_pairs: int = 0,
     cap_pair_min: float = 50e-15,
     cap_pair_max: float = 500e-15,
@@ -886,6 +1184,13 @@ def random_action(
     max_vias: int = 0,
     via_flip_max_count: int = 3,
     single_inductor_value: bool = False,
+    require_axis_aligned: bool = True,
+    flip_inner_region=None,
+    flip_inner_prob: float = 1.0,
+    flip_outer_prob: float = 1.0,
+    flip_region_size: int = 8,
+    min_switches: int = 1,
+    max_switches: int = 99,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -905,7 +1210,7 @@ def random_action(
     ----------
     action_weights : optional list of 11 floats (unnormalised weights).
         Order matches _ACTION_NAMES:
-        [flip_01, move_switch, flip_inductor, flip_inductor_value,
+        [flip_01, modify_switch, flip_inductor, flip_inductor_value,
          perturb_caps, flip_switch_state,
          add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state,
          flip_via]
@@ -940,6 +1245,13 @@ def random_action(
         max_vias=max_vias,
         via_flip_max_count=via_flip_max_count,
         single_inductor_value=single_inductor_value,
+        require_axis_aligned=require_axis_aligned,
+        flip_inner_region=flip_inner_region,
+        flip_inner_prob=flip_inner_prob,
+        flip_outer_prob=flip_outer_prob,
+        flip_region_size=flip_region_size,
+        min_switches=min_switches,
+        max_switches=max_switches,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

@@ -1,0 +1,12 @@
+# ============================================================
+# Virtuoso Pixel Engine — pixel_size=37 um, grid_size=30 um
+# Reduced inductor set: single 200 nH value only.
+#
+# Inherits all settings from config_reduced_inductor_set.yaml
+# and overrides layout.pixel_size / layout.grid_size.
+# ============================================================
+_base_: config_reduced_inductor_set.yaml
+
+layout:
+  pixel_size: 37.0   # um
+  grid_size:  30.0   # um  (pixel_size > grid_size → overlapping pixels)

@@ -1,0 +1,24 @@
+# ===========================================================================
+# GA Experiment — 27×33 grid, pixel_size=25 um, grid_size=20 um, fine-tune
+# Engine: config_reduced_inductor_set.yaml (single 200 nH inductor)
+# Seeds 70% of the population from a known-good design.
+# The original r21c27 design area is centred at rows 3-23, cols 4-28.
+# ===========================================================================
+_base_: ../base/27x33_finetune.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_reduced_inductor_set.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_finetune_small_peak_matching_3"
+
+grid:
+  n_inductor_values: 1
+
+ga:
+  n_parallel: 5
+  flip_inner_region: [[3, 4], [23, 28]]
+  flip_inner_prob:   0.8
+  flip_outer_prob:   1.0
+
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/current_best_fine_tune_to_larger/sim_20260413_230101_config.yaml"
+  finetune_seed_ratio: 0.7
+
+seed: 42

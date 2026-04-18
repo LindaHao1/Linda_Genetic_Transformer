@@ -1,0 +1,41 @@
+# ===========================================================================
+# GA Experiment — 21×27 → larger grid, pixel_size=31 um, grid_size=25 um
+# Expand a known-good 21×27 ps31/gs25 design to the target grid size by
+# physically inserting rows/columns, then fine-tune the expanded population.
+#
+# Differs from ps31_gs25_finetune_from_large.yaml: instead of seeding the
+# population by mutating the small design directly within the larger grid,
+# each seeded individual is first physically expanded (rows/columns inserted)
+# before mutations are applied.  This gives a structurally valid starting
+# point at the target grid size rather than relying on flip_inner_region logic.
+#
+# IMPORTANT: set ga.finetune_design_path before running.
+# ===========================================================================
+_base_: ../base/21x27_finetune.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large"
+
+grid:
+  rows: 25       # TODO: adjust to target large-grid size
+  cols: 37       # TODO: adjust to target large-grid size
+
+ga:
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_scratch/sims/gen65_ind54/worker_1/pixsimple_r21c27_ps31p0_gs25p0_frl16frr8_w1/config.yaml"
+  n_parallel: 4
+
+  finetune_expand:
+    enabled: true
+    # Each inserted row/col uses one of three modes, chosen by weighted random:
+    #   p_duplicate:   copy the adjacent row/col at a random interior position
+    #                  — best for preserving RF topology
+    #   p_random_fill: random 0/1 content at a random interior position
+    #                  — introduces structural diversity
+    #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
+    #                  — grows the design outward without disturbing the core
+    p_duplicate:   0.6
+    p_random_fill: 0.3
+    p_zero_pad:    0.1
+    n_immigrants_expanded: 2   # expanded immigrants injected each generation
+
+seed: 42

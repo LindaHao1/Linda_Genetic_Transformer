@@ -54,6 +54,7 @@ from typing import Dict, List, Optional, TextIO
 import yaml
 
 from .engine import VirtuosoPixelEngine, RunResult
+from .config_loader import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -236,8 +237,7 @@ class ParallelVirtuosoEngine:
         if self._started:
             return
 
-        with self.config_path.open() as f:
-            cfg = yaml.safe_load(f)
+        cfg = load_config(self.config_path)
         n = self._num_workers or cfg.get("parallel", {}).get("num_workers", 1)
 
         # --- Set up console logging / output suppression ---

@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import List
 
-import yaml
+from virtuoso_engine.config_loader import load_config
 
 from virtuoso_engine import VirtuosoPixelEngine
 from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine
@@ -43,8 +43,7 @@ BASE_CONFIG = "virtuoso_engine/config.yaml"
 
 def load_from_config_yaml(path: str) -> dict:
     """Load a full simulation config.yaml — return it as the override dict."""
-    with open(path) as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config(path)
 
     # Strip internal/worker keys that are not valid engine overrides
     for key in ("_worker_id",):
