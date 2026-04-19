@@ -104,6 +104,14 @@ pixelated:
   inductor_values: []              # MUST be overridden in child config
   inductor_s1p: ""                 # MUST be overridden in child config
 
+  # Optional OFF-state s1p files.  When provided, an inductor in the OFF state
+  # is terminated with its layout-extracted s1p instead of a large resistor.
+  # inductor_off_translation_table mirrors inductor_translation_table (same
+  # value indices).  inductor_off_s1p is a single fallback for all inductors.
+  # Leave both empty (or omit) to keep the original large-resistor behaviour.
+  inductor_off_translation_table: []
+  inductor_off_s1p: ""
+
   cap_pixel_pairs: []
   cap_pair_values: []
 

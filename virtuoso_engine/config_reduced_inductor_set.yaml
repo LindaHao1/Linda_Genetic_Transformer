@@ -1,6 +1,6 @@
 # ============================================================
 # Virtuoso Pixel Engine — pixel_size=25 um, grid_size=20 um
-# Reduced inductor set: single 200 nH value only.
+# Single inductor: layout-extracted EM s1p (300 pH active inductor).
 #
 # Inherits layout and all other settings from config.yaml.
 # Used by GA/SA optimisers that run with n_inductor_values=1.
@@ -9,7 +9,12 @@ _base_: config.yaml
 
 pixelated:
   inductor_translation_table:
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
 
   inductor_values: [0, 0]
-  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
+
+  inductor_off_translation_table:
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"
+
+  inductor_off_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"

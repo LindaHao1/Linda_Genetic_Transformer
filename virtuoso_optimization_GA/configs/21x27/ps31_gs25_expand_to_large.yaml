@@ -21,21 +21,21 @@ grid:
   cols: 37       # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_scratch/sims/gen65_ind54/worker_1/pixsimple_r21c27_ps31p0_gs25p0_frl16frr8_w1/config.yaml"
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
   n_parallel: 4
 
   finetune_expand:
     enabled: true
-    # Each inserted row/col uses one of three modes, chosen by weighted random:
+    # Expansion mode probabilities (must not necessarily sum to 1 — treated as weights):
+    #   p_center_pad:  embed original at center w/ even zero-padding + feed extension
     #   p_duplicate:   copy the adjacent row/col at a random interior position
-    #                  — best for preserving RF topology
     #   p_random_fill: random 0/1 content at a random interior position
-    #                  — introduces structural diversity
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
-    #                  — grows the design outward without disturbing the core
+    # Note: the first seeded individual always uses center_pad (no mutations).
+    p_center_pad:  0.3
     p_duplicate:   0.6
-    p_random_fill: 0.3
-    p_zero_pad:    0.1
+    p_random_fill: 0.2
+    p_zero_pad:    0.2
     n_immigrants_expanded: 2   # expanded immigrants injected each generation
 
 seed: 42

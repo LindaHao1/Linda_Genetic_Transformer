@@ -1,6 +1,6 @@
 # ============================================================
 # Virtuoso Pixel Engine — pixel_size=25 um, grid_size=20 um
-# 4-inductor translation table (100/200/400/800 nH)
+# Single inductor: layout-extracted EM s1p (300 pH active inductor).
 #
 # Inherits all shared settings from config_base.yaml.
 # ============================================================
@@ -11,13 +11,16 @@ layout:
   grid_size:  20.0   # um  (pixel_size > grid_size → overlapping pixels)
 
 pixelated:
-  # Full 4-value inductor translation table
+  # Single-value inductor translation table — layout-extracted EM s1p
   inductor_translation_table:
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/100nH_active_inductance.s1p"
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/400nH_active_inductance.s1p"
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/800nH_active_inductance.s1p"
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
 
   # Example values — overridden per run by the optimizer
-  inductor_values: [1, 2]
-  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p"
+  inductor_values: [0]
+  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
+
+  # OFF-state layout-extracted EM s1p (replaces large-resistor open-circuit model)
+  inductor_off_translation_table:
+    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"
+
+  inductor_off_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"

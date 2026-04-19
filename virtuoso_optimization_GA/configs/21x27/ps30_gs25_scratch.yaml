@@ -8,7 +8,7 @@ virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_larger_pixel.yaml"
 output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_block_hybrid_larger_pixel"
 
 grid:
-  n_inductor_values: 2
+  n_inductor_values: 1
   single_inductor_value: true
   cap_pair_init_min: 2
   init_max_vias: 0

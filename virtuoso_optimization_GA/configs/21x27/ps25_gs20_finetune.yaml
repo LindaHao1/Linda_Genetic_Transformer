@@ -1,16 +1,16 @@
 # ===========================================================================
 # GA Experiment — 21×27 grid, pixel_size=25 um, grid_size=20 um, fine-tune
-# Engine: config.yaml (4-inductor table: 100/200/400/800 nH)
+# Engine: config_reduced_inductor_set.yaml (single layout-extracted EM inductor)
 # Seeds 70% of the population from a known-good design.
 # ===========================================================================
 _base_: ../base/21x27_finetune.yaml
 
-virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config.yaml"
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_reduced_inductor_set.yaml"
 output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_finetune_cap_2"
 
 grid:
-  n_inductor_values: 4
-  single_inductor_value: false
+  n_inductor_values: 1
+  single_inductor_value: true
   cap_pair_init_min: 0
   cap_pair_init_max: 4
   init_max_vias: 2

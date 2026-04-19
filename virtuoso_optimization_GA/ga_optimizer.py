@@ -53,7 +53,7 @@ from virtuoso_optimization_SA.feasibility import generate_random_design, is_feas
 from .crossover import crossover_zig_zag
 from .crossover_weighted_clustering import crossover_weighted_clustering
 from .crossover_block import crossover_block
-from .expand_design import expand_design_to_size
+from .expand_design import expand_design_to_size, zero_pad_centered_with_feed
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -205,9 +205,10 @@ class GAConfig:
     #   p_random_fill: random 0/1 content at a random interior position
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
     finetune_expand_enabled:       bool  = False
-    finetune_expand_p_duplicate:   float = 0.6
-    finetune_expand_p_random_fill: float = 0.3
-    finetune_expand_p_zero_pad:    float = 0.1
+    finetune_expand_p_center_pad:  float = 0.3   # prob of using centered zero-pad + feed extension per expansion
+    finetune_expand_p_duplicate:   float = 0.42  # } remaining prob split among random-insertion modes
+    finetune_expand_p_random_fill: float = 0.21  # }
+    finetune_expand_p_zero_pad:    float = 0.07  # }
     finetune_expand_n_immigrants:  int   = 2
 
     # Multi-champion: keep the top-k designs per filter state in the champion registry.
@@ -301,9 +302,10 @@ class GAConfig:
 
             **{k: v for k, v in {
                 "finetune_expand_enabled":       bool( _fex.get("enabled",              False)),
-                "finetune_expand_p_duplicate":   float(_fex.get("p_duplicate",           0.6)),
-                "finetune_expand_p_random_fill": float(_fex.get("p_random_fill",         0.3)),
-                "finetune_expand_p_zero_pad":    float(_fex.get("p_zero_pad",            0.1)),
+                "finetune_expand_p_center_pad":  float(_fex.get("p_center_pad",         0.3)),
+                "finetune_expand_p_duplicate":   float(_fex.get("p_duplicate",          0.42)),
+                "finetune_expand_p_random_fill": float(_fex.get("p_random_fill",        0.21)),
+                "finetune_expand_p_zero_pad":    float(_fex.get("p_zero_pad",           0.07)),
                 "finetune_expand_n_immigrants":  int(  _fex.get("n_immigrants_expanded",  2)),
             }.items()},
 
@@ -1081,7 +1083,8 @@ class SwitchableFilterGA:
                 print(
                     f"[GA] Expansion mode: seed {seed_design.rows}x{seed_design.cols} "
                     f"→ {cfg.rows}x{cfg.cols} "
-                    f"(p_dup={cfg.finetune_expand_p_duplicate}, "
+                    f"(p_center_pad={cfg.finetune_expand_p_center_pad}, "
+                    f"p_dup={cfg.finetune_expand_p_duplicate}, "
                     f"p_rand={cfg.finetune_expand_p_random_fill}, "
                     f"p_zero_pad={cfg.finetune_expand_p_zero_pad})"
                 )
@@ -1094,6 +1097,17 @@ class SwitchableFilterGA:
             # skip inner-region pixels entirely (weight=0 → never sampled).
             _init_flip_inner_prob = 0.0 if cfg.finetune_init_outer_only else cfg.flip_inner_prob
             for i in range(n_seeded):
+                # Individual 0: always the original seed (or centered-padded expansion)
+                # with NO mutations — preserved exactly to anchor the population.
+                if i == 0:
+                    if _do_expand:
+                        population.append(
+                            zero_pad_centered_with_feed(seed_design, cfg.rows, cfg.cols)
+                        )
+                    else:
+                        population.append(seed_design.copy())
+                    continue
+
                 mutant = None
                 for _ in range(_MAX_SEED_RETRIES):
                     # Apply a random number of mutations (1..finetune_init_max_mutations)

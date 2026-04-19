@@ -35,7 +35,7 @@ grid:
   cap_min: 200.0e-15
   cap_max: 1000.0e-15
 
-  n_inductor_values: 4
+  n_inductor_values: 1
 
   # Via-ground pixels
   n_max_vias: 5

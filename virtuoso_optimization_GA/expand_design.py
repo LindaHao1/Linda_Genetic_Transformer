@@ -34,6 +34,7 @@ import copy
 import random as _random_module
 from typing import List, Tuple
 
+from virtuoso_engine.pixel_matrix import get_feed_rows
 from virtuoso_optimization_SA.design import DesignState
 from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 
@@ -124,6 +125,95 @@ def _insert_row(
     return result
 
 
+def _enforce_feed_adjacency(
+    matrix: List[List[int]],
+    col_pos: int,
+    left_feed_row: int,
+    right_feed_row: int,
+    pre_insert_cols: int,
+) -> List[List[int]]:
+    """
+    After inserting a column at col_pos, guarantee the bridging pixel between
+    each feed column and the interior is non-zero.
+
+    The connectivity checker forbids diagonal steps from feed columns, so the
+    only valid exit from (left_feed_row, 0) is straight-right to col 1, and
+    the only valid exit from (right_feed_row, N-1) is straight-left to col N-2.
+    If either bridging pixel is 0 the design is unconditionally disconnected.
+    """
+    result = [list(row) for row in matrix]
+    if col_pos == 1 and result[left_feed_row][1] == 0:
+        result[left_feed_row][1] = 1
+    if col_pos == pre_insert_cols - 1 and result[right_feed_row][col_pos] == 0:
+        result[right_feed_row][col_pos] = 1
+    return result
+
+
+def zero_pad_centered_with_feed(
+    design: DesignState,
+    target_rows: int,
+    target_cols: int,
+) -> DesignState:
+    """
+    Embed the original design at the center of a (target_rows x target_cols) grid
+    by adding zero-padding evenly on all four sides (extra pixel goes to top/right).
+
+    Feed connectivity is maintained by extending a horizontal metal trace from the
+    new edge columns to the original feed pixels:
+      - Left:  row (left_feed_row + pad_bottom) gets metal (type 1) at cols 0..pad_left-1
+      - Right: row (right_feed_row + pad_bottom) gets metal (type 1) at cols
+               pad_left+src_cols..target_cols-1
+
+    The new col 0 and col target_cols-1 each contain exactly one non-zero pixel,
+    satisfying the feed-column feasibility rule.
+    Cap-pair coordinates are shifted by (pad_bottom, pad_left); distances are
+    unchanged so all pairs remain valid without filtering.
+    """
+    src = design.matrix
+    src_rows = len(src)
+    src_cols = len(src[0])
+
+    delta_rows = target_rows - src_rows
+    delta_cols = target_cols - src_cols
+
+    pad_bottom = delta_rows // 2
+    pad_left   = delta_cols // 2
+
+    left_feed_row, right_feed_row = get_feed_rows(src)
+    new_left_feed_row  = left_feed_row  + pad_bottom
+    new_right_feed_row = right_feed_row + pad_bottom
+
+    # Build zero grid and embed original design
+    new_matrix = [[0] * target_cols for _ in range(target_rows)]
+    for r in range(src_rows):
+        for c in range(src_cols):
+            new_matrix[r + pad_bottom][c + pad_left] = src[r][c]
+
+    # Left feed extension: horizontal metal trace from new col 0 to original left feed
+    for c in range(pad_left):
+        new_matrix[new_left_feed_row][c] = 1
+
+    # Right feed extension: horizontal metal trace from original right feed to new col N-1
+    for c in range(pad_left + src_cols, target_cols):
+        new_matrix[new_right_feed_row][c] = 1
+
+    # Shift cap pairs by the embedding offset (distances unchanged, no filter needed)
+    shifted_pairs = [
+        [[ep[0] + pad_bottom, ep[1] + pad_left] for ep in pair]
+        for pair in design.cap_pixel_pairs
+    ]
+
+    return DesignState(
+        matrix                 = new_matrix,
+        switch_states          = copy.deepcopy(design.switch_states),
+        cap_values             = list(design.cap_values),
+        inductor_values        = list(design.inductor_values),
+        inductor_switch_states = copy.deepcopy(design.inductor_switch_states),
+        cap_pixel_pairs        = shifted_pairs,
+        cap_pair_values        = list(design.cap_pair_values),
+    )
+
+
 def _shift_cap_pairs_col(
     pairs: List[List[List[int]]],
     col_pos: int,
@@ -160,20 +250,16 @@ def expand_design_to_size(
     rng: _random_module.Random,
 ) -> DesignState:
     """
-    Physically expand *design* to (target_rows x target_cols) by inserting
-    exactly (target_cols - design.cols) columns and (target_rows - design.rows)
-    rows.  The insertion order is shuffled so rows and cols are interleaved.
+    Physically expand *design* to (target_rows x target_cols).
 
-    Each insertion uses one of three modes (chosen by weighted random):
-      - "duplicate"   — copy adjacent content at a random interior position
-      - "random_fill" — random 0/1 content at a random interior position
-      - "zero_pad"    — zeros inserted at the boundary (edges only)
+    With probability cfg.finetune_expand_p_center_pad, uses zero_pad_centered_with_feed:
+      the original design is embedded at the center of the target grid with even
+      zero-padding on all four sides and horizontal feed traces extended to the new
+      edge columns.  This is deterministic (no rng needed for the expansion itself).
 
-    Weights are cfg.finetune_expand_p_duplicate / p_random_fill / p_zero_pad.
-
-    cap_pixel_pairs coordinates are shifted after every insertion and invalid
-    pairs are pruned.  switch_states, cap_values, inductor_values, and
-    inductor_switch_states are unchanged (no new special pixels are inserted).
+    Otherwise, rows and columns are inserted one at a time in shuffled order, each
+    using one of three modes (duplicate / random_fill / zero_pad) chosen by weighted
+    random from cfg.finetune_expand_p_*.
 
     Returns a new DesignState; the input is not modified.
     """
@@ -187,6 +273,10 @@ def expand_design_to_size(
         )
     if delta_rows == 0 and delta_cols == 0:
         return design.copy()
+
+    p_center = getattr(cfg, "finetune_expand_p_center_pad", 0.3)
+    if rng.random() < p_center:
+        return zero_pad_centered_with_feed(design, target_rows, target_cols)
 
     p_dup  = cfg.finetune_expand_p_duplicate
     p_rand = cfg.finetune_expand_p_random_fill
@@ -205,6 +295,8 @@ def expand_design_to_size(
         vals  = current.cap_pair_values
 
         if op == "col":
+            left_feed_row, right_feed_row = get_feed_rows(mat)
+            pre_insert_cols = current.cols
             if mode == "zero_pad":
                 # Boundary only: insert just inside the left or right feed column
                 col_pos = rng.choice([1, current.cols - 1])
@@ -212,6 +304,9 @@ def expand_design_to_size(
                 # Random interior position (never at feed columns 0 or cols-1)
                 col_pos = rng.randint(1, current.cols - 1)
             new_mat = _insert_column(mat, col_pos, mode, rng)
+            new_mat = _enforce_feed_adjacency(
+                new_mat, col_pos, left_feed_row, right_feed_row, pre_insert_cols
+            )
             shifted = _shift_cap_pairs_col(pairs, col_pos)
         else:
             if mode == "zero_pad":

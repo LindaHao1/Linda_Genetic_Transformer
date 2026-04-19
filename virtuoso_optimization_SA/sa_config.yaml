@@ -48,7 +48,7 @@ grid:
   cap_max: 1000.0e-15   # 1000 fF
 
   # Number of discrete inductance choices in inductor_translation_table (config.yaml)
-  n_inductor_values: 4
+  n_inductor_values: 1
 
   # Via-ground pixels (type 4): always shorted to GND in simulation
   n_max_vias: 5          # maximum number of via-ground pixels allowed

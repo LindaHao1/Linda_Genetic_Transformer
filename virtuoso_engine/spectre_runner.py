@@ -114,6 +114,7 @@ def generate_state_netlist(
     cap_pair_values: Optional[List[float]] = None,
     inductor_state_vector: Optional[List[int]] = None,
     via_indices_in_port_order: Optional[List[int]] = None,
+    inductor_off_s1p_list: Optional[List[str]] = None,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
@@ -131,8 +132,11 @@ def generate_state_netlist(
         r_on                      Switch ON resistance (ohm).
         r_off                     Switch OFF resistance (ohm).
         c_off                     Switch OFF capacitance (F).
-        inductor_s1p_list         Per-inductor s1p file paths, in IND_* port order.
+        inductor_s1p_list         Per-inductor ON-state s1p file paths (IND_* order).
                                   Length must equal len(ind_indices_in_port_order).
+        inductor_off_s1p_list     Per-inductor OFF-state s1p paths (IND_* order).
+                                  When None or entry is empty, falls back to large
+                                  resistor (1 TΩ) for that inductor's OFF state.
         sim_cfg                   simulation config dict (spectre_freq_* keys).
         output_s2p                Path where Spectre should write the .s2p file.
         netlist_dir               Directory to write the .scs file into.
@@ -194,8 +198,15 @@ def generate_state_netlist(
                 s1p = inductor_s1p_list[local_idx] if local_idx < len(inductor_s1p_list) else ""
                 lines.append(f"nport_ind{local_idx} ({node} 0) nport file=\"{s1p}\" N=1")
             else:
-                lines.append(f"// IND_{local_idx}: OFF (open-circuit termination)")
-                lines.append(f"r_open_ind{local_idx} ({node} 0) resistor r=1e12")
+                off_s1p = ""
+                if inductor_off_s1p_list and local_idx < len(inductor_off_s1p_list):
+                    off_s1p = inductor_off_s1p_list[local_idx] or ""
+                if off_s1p:
+                    lines.append(f"// IND_{local_idx}: OFF (layout s1p)")
+                    lines.append(f"nport_ind{local_idx} ({node} 0) nport file=\"{off_s1p}\" N=1")
+                else:
+                    lines.append(f"// IND_{local_idx}: OFF (open-circuit termination)")
+                    lines.append(f"r_open_ind{local_idx} ({node} 0) resistor r=1e12")
         lines.append("")
 
     # --- Switch connections (state-dependent) ---
@@ -342,6 +353,26 @@ def run_all_states(
         # local_idx in generate_state_netlist — pad to len(ind_indices) lazily.
         inductor_s1p_list = [fallback_s1p] * max(len(ind_indices), 1)
 
+    # Build per-inductor OFF-state s1p list.
+    # Uses inductor_off_translation_table (same value indices as ON table) when
+    # present; falls back to inductor_off_s1p (single path for all inductors);
+    # falls back to None → large-resistor open-circuit (original behaviour).
+    off_translation_table: List[str] = pd.get("inductor_off_translation_table", [])
+    fallback_off_s1p: str = pd.get("inductor_off_s1p", "")
+
+    if off_translation_table:
+        if inductor_value_indices:
+            inductor_off_s1p_list: Optional[List[str]] = [
+                off_translation_table[idx] if idx < len(off_translation_table) else ""
+                for idx in inductor_value_indices
+            ]
+        else:
+            inductor_off_s1p_list = [off_translation_table[0]] * max(len(ind_indices), 1)
+    elif fallback_off_s1p:
+        inductor_off_s1p_list = [fallback_off_s1p] * max(len(ind_indices), 1)
+    else:
+        inductor_off_s1p_list = None
+
     s2p_paths: List[Optional[Path]] = []
 
     for state_idx, state_vector in enumerate(state_list):
@@ -377,6 +408,7 @@ def run_all_states(
             cap_pair_values           = cap_pair_values,
             inductor_state_vector     = inductor_state_vector,
             via_indices_in_port_order = via_indices,
+            inductor_off_s1p_list     = inductor_off_s1p_list,
         )
 
         # --- Run Spectre ---

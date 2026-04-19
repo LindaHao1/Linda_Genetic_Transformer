@@ -55,7 +55,7 @@ PIXEL_INFO: Dict[int, Tuple[str, QColor]] = {
     4: ("VIA", QColor("#7d3c98")),
 }
 
-INDUCTOR_LABELS = ["100 nH", "200 nH", "400 nH", "800 nH"]
+INDUCTOR_LABELS = ["300 pH (EM)"]
 DEFAULT_CAP_F   = 1.0e-12   # 1 pF
 DEFAULT_PAIR_F  = 1.0e-12
 
@@ -68,10 +68,11 @@ PAIR_COLORS = [
 ]
 
 DEFAULT_INDUCTOR_TABLE = [
-    "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/100nH_active_inductance.s1p",
-    "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/200nH_active_inductance.s1p",
-    "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/400nH_active_inductance.s1p",
-    "/disk/mcao53/RFIC_RL/Inductor_spar/Simulated_Active_inductance/800nH_active_inductance.s1p",
+    "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p",
+]
+
+DEFAULT_INDUCTOR_OFF_TABLE = [
+    "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p",
 ]
 
 # Persistent GUI settings file (conda env, script paths)
@@ -498,16 +499,18 @@ class DesignModel:
                 ],
                 "state_list":      [[0, 0], [1, 0], [0, 1], [1, 1]],
                 "cap_values":      [1.0e-12, 1.0e-12],
-                "inductor_values": [1, 2],
+                "inductor_values": [0],
                 "cap_pixel_pairs": [],
                 "cap_pair_values": [],
                 "inductor_translation_table": DEFAULT_INDUCTOR_TABLE,
+                "inductor_off_translation_table": DEFAULT_INDUCTOR_OFF_TABLE,
                 "feedline": {
                     "feedline_row":     1,
                     "feedline_width":   10.2,
                     "feedline_padding": 10.0,
                 },
-                "inductor_s1p": DEFAULT_INDUCTOR_TABLE[1],
+                "inductor_s1p":     DEFAULT_INDUCTOR_TABLE[0],
+                "inductor_off_s1p": DEFAULT_INDUCTOR_OFF_TABLE[0],
             },
         }
         m._pull_from_config()
@@ -1438,17 +1441,30 @@ class SettingsDialog(QDialog):
     def _tab_inductors(self) -> QWidget:
         w  = QWidget()
         vl = QVBoxLayout(w)
+
         vl.addWidget(QLabel(
-            "Inductor s1p files — one per inductor value (index 0 = 100 nH, "
-            "1 = 200 nH, 2 = 400 nH, 3 = 800 nH):"))
-        fl = QFormLayout()
-        vl.addLayout(fl)
+            "ON-state inductor s1p files — one entry per inductor value "
+            "(index 0 = 300 pH layout-extracted EM):"))
+        fl_on = QFormLayout()
+        vl.addLayout(fl_on)
         self._ind_edits: List[QLineEdit] = []
-        labels = ["0 — 100 nH:", "1 — 200 nH:", "2 — 400 nH:", "3 — 800 nH:"]
-        for lbl in labels:
+        for lbl in ["0 — 300 pH (ON):"]:
             edit = QLineEdit()
             self._ind_edits.append(edit)
-            fl.addRow(lbl, self._make_browse_row(edit, "file"))
+            fl_on.addRow(lbl, self._make_browse_row(edit, "file"))
+
+        vl.addSpacing(12)
+        vl.addWidget(QLabel(
+            "OFF-state inductor s1p files (optional) — leave blank to use "
+            "large-resistor open-circuit model for that inductor value:"))
+        fl_off = QFormLayout()
+        vl.addLayout(fl_off)
+        self._ind_off_edits: List[QLineEdit] = []
+        for lbl in ["0 — 300 pH (OFF):"]:
+            edit = QLineEdit()
+            self._ind_off_edits.append(edit)
+            fl_off.addRow(lbl, self._make_browse_row(edit, "file"))
+
         vl.addStretch()
         return w
 
@@ -1556,6 +1572,10 @@ class SettingsDialog(QDialog):
         for i, edit in enumerate(self._ind_edits):
             edit.setText(str(tbl[i]) if i < len(tbl) else "")
 
+        off_tbl = _get_nested(cfg, "pixelated.inductor_off_translation_table", [])
+        for i, edit in enumerate(self._ind_off_edits):
+            edit.setText(str(off_tbl[i]) if i < len(off_tbl) else "")
+
         self._pixel_size_spin.setValue(
             float(_get_nested(cfg, "layout.pixel_size", 25.0)))
         self._grid_size_spin.setValue(
@@ -1596,6 +1616,12 @@ class SettingsDialog(QDialog):
         tbl = [e.text().strip() for e in self._ind_edits if e.text().strip()]
         if tbl:
             _set_nested(cfg, "pixelated.inductor_translation_table", tbl)
+
+        off_tbl = [e.text().strip() for e in self._ind_off_edits]
+        if any(off_tbl):
+            _set_nested(cfg, "pixelated.inductor_off_translation_table", off_tbl)
+        else:
+            cfg.get("pixelated", {}).pop("inductor_off_translation_table", None)
 
         _set_nested(cfg, "layout.pixel_size",   self._pixel_size_spin.value())
         _set_nested(cfg, "layout.grid_size",    self._grid_size_spin.value())
