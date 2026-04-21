@@ -148,7 +148,7 @@ ga:
   pop_size_end:       40
   pop_size_step_size: 20
   elite_fraction:   0.20
-  n_gen:    100
+  n_gen:    300
   n_immigrants: 2
   n_keep_bad:  1
 

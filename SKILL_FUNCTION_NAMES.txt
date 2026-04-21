@@ -1,0 +1,2075 @@
+Graphics Editor Functions
+Design Functions
+
+geChangeCellView
+geChangeEditMode
+geDiscardEdits
+geNewWindow
+geReturn
+geReturnToLevel
+geSave
+geSaveAs
+geSaveHier
+Automatic Menu Enabling Functions
+
+Defining a Menu Update Policy
+geGetDisabledMenus
+geGetEnablePredicate
+geGetWindowStatus
+geSetEnablePredicate
+geSetWindowStatus
+geUpdateWindowMenus
+Cross Section Viewer Functions
+
+geCrossSection
+geCrossSectionAddLayerThickness
+geCrossSectionAddLayerToSkip
+geCrossSectionAddLayersToMerge
+geCrossSectionAddMaterialToSkip
+geCrossSectionClearConfig
+geCrossSectionLoadConfig
+Edit and Display Functions
+
+geClearIgnoreProp
+gec
+geClearNetNameDisplayFilter
+geComputeQueryBbox
+geCopySelSet
+geDeleteSelSet
+geDispWinEnvProps
+geEditSelSet
+geEditSingleObject
+geEditToWindowPoint
+geEnableNetNameDisplay
+geEquivWindow
+geEquivWindowSet
+geFindPathToCellViewInst
+geGetCellViewWindow
+geGetEditCellView
+geGetEditCellViewWindow
+geGetEditRep
+geGetHierMemInst
+geGetInstHier
+geGetInstHierPath
+geGetNetNameDisplayFilter
+geGetObjectSelectedSet
+geGetSortedSelectByLine
+geGetTopCellViewWindow
+geGetTopLevelCellView
+geGetWindowBox
+geGetWindowCellView
+geGetWindowRep
+geIsGraphicalWindow
+geIsNetNameDisplayActiveOnWindow
+geIsNetNameDisplayEnabled
+geMenuForObjectsUnderPoint
+geNetNameDisplayOptionForm
+geSaveNetNameDisplayFilter
+geSelectNextInSelSet
+geSelectPreviousInSelSet
+geSelectToggleObject
+geSetNetNameDisplayFilter
+geSetTCProbeDisplayStyle
+geTransparencyOptions
+geWindowToEditPoint
+gtc
+gwc
+Refresh Functions
+
+geRefresh
+geRefreshCellView
+geRefreshCellViews
+geRefreshWindow
+geRefreshWorldView
+View-Level Functions
+
+geDeleteAllAreaViewLevel
+geDeleteAllInstViewLevel
+geDeleteAreaViewLevel
+geDeleteInstViewLevel
+geGetAllAreaViewLevel
+geGetAllInstViewLevel
+geGetAreaViewLevel
+geGetInstViewLevel
+geSetAreaViewLevel
+geSetInstViewLevel
+geRestoreWinView
+geSaveWinView
+Procedural-Level Functions
+
+geEditInPlace
+gePush
+geSwitch
+geSwitchInContext
+Window Scroll Functions
+
+geCenter
+geGetScrollPercent
+geScroll
+geSetScrollPercent
+geShift
+geZoomToGrid
+Selection Functions
+
+Point Selection
+Area Selection
+Selection User Interface
+geAdvWireSelection
+geAddSelectBox
+geAddSelectPoint
+geAdjustPoint
+geCyclePotentialSelectNext
+geCycleSelectNext
+geDeselectAll
+geDeselectAllFig
+geDeselectAllObject
+geDeselectArea
+geDeselectFig
+geDeselectFigs
+geDeselectFigNoFilter
+geDeselectFigPoint
+geDeselectObject
+geDeselectObjectNoFilter
+geDeselectObjectPoint
+geDeselectPoint
+geDeselectProtected
+geDSAGetSelectedSet
+geDSAFreeze
+geGetPotentialSelection
+geGetSelSet
+geGetSelectedSet
+geGetSelSetCount
+geGetSelectedInstancesCount
+geGetSelProtectedObjects
+geGetSelSetFigPoint
+geGetWindowSelProtectionHighlight
+geGetWindowSelProtectionSelectability
+geHiDragFig
+geHiDisplaySelectionForm
+geHighlightProtected
+geHiSetSelProtectionEF
+geHiUnsetSelProtectionEF
+geIsFigAllSelected
+geIsFigPartiallySelected
+geIsFigSelected
+geIsObjectAllSelected
+geIsObjectPartiallySelected
+geIsObjectSelected
+geIsPointInsidePolygon
+geIsSelProtection
+gePointQuery
+gePointToFig
+geSelectAll
+geSelectAllFig
+geSelectArea
+geSelectByLine
+geSelectBy2PointsLine
+geSelectFig
+geSelectFigs
+geSelectFigNoFilter
+geSelectFigPoint
+geSelectObject
+geSelectObjectNoFilter
+geSelectPoint
+geSelectProtected
+geSelectViaPile
+geSetEnterFunctionSelectionMode
+geSelObjectsPartiallySelected
+geSetSelProtection
+geSetSelProtectionAllObjects
+geSetSelProtectionHighlightOptionForm
+geSetSelProtectionHighlightOptions
+geSingleSelectBox
+geSingleSelectPoint
+geSubSelectBox
+geSubSelectPoint
+geToggleAreaSelectOption
+geToggleDisplayResolution
+geTogglePartialSelect
+geToggleWindowSelProtectionHighlight
+geToggleWindowSelProtectionSelectability
+geUnhighlightProtected
+geUnsetAllSelProtection
+geUnsetSelProtection
+Stored Selection Functions
+
+geDeleteStoredSelectionSet
+geDeselectStoredSelectionSet
+geGetStoredSelectionSets
+geHiStoreSelectionForm
+geIsAutoStoreSelectionOn
+geSelectNextAutoStoreSet
+geSelectPreviousAutoStoreSet
+geSelectStoredSelectionSet
+geSetAutoStoreSelection
+geStoreSelectionSet
+Highlight Functions
+
+Highlighting Shapes in a Cellview
+geAddHilightArc
+geAddHilightBlockage
+geAddHilightCircle
+geAddHilightCurvedPath
+geAddHilightCurvedPolygon
+geAddHilightDistance
+geAddHilightDonut
+geAddHilightDot
+geAddHilightEllipse
+geAddHilightFig
+geAddHilightLabel
+geAddHilightLine
+geAddHilightPath
+geAddHilightPathSeg
+geAddHilightPolygon
+geAddHilightRow
+geAddHilightRuler
+geAddHilightSlicedCircle
+geAddHilightSlicedDonut
+geAddHilightTrackPattern
+geAddHilightRectangle
+geChangeHilightPacketName
+geCreateHilightGroup
+geCreateHilightSet
+geCreateWindowHilightSet
+geDeleteAllHilightSet
+geDeleteAllWindowHilightSet
+geDeleteHilightGroup
+geDeleteHilightObject
+geDeleteHilightSet
+geDeleteHilightSetInWindows
+geDrawHilightSet
+geGetCurrentHilightSet
+geGetCurrentWindowHilightSet
+geGetFigHilightObjectId
+geGetHilightObjectFigId
+geInsertHilightObjectsInGroup
+geIsValidHilightGroup
+geIsValidHilightId
+geIsValidHilightObject
+geIsValidHilightSet
+gePopHilightStack
+gePopWindowHilightStack
+gePushHilightStack
+geResetHilightSetAlphaBlendingParameters
+geResetHilightSetHaloParameters
+geSetHilightSetAlphaBlendingParameters
+geSetHilightSetHaloParameters
+geShareWindowHilightSet
+Background Cellview Functions
+
+geBackgroundCellView
+geDisableBackgroundCellView
+geEnableBackgroundCellView
+geGetBackgroundCellView
+geResetBackgroundCellView
+geSetBackgroundCellView
+geZoomToBackgroundAndEditCV
+geZoomToBackgroundCV
+Marker Functions
+
+geCreateMarker
+geCreateMarkerByBBox
+geCreateMarkerByPoints
+geDeleteAllMarker
+geGetMarkerDisplayText
+geGetMarkerOwner
+geGetMarkerReason
+geGetMarkerType
+geHasMarker
+geHiCommonFindMarker
+geHiDeleteAllMarker
+geHiDeleteMarker
+geHiExplainMarker
+geHiFindMarker
+geIsMarkerShape
+Probe Functions
+
+Probe Types
+Probe Object
+Probe Function SKILL Interface
+Probe File Format
+geAddInstProbe
+geAddNetProbe
+geAddNetProbeFromTo
+geAddPathProbe
+geAddTermProbe
+geClearProbeNetFilter
+geDeleteAllProbe
+geDeleteInstProbe
+geDeleteNetProbe
+geDeletePathProbe
+geDeleteProbe
+geDeleteTermProbe
+geEnterAddInstProbe
+geEnterAddNetProbe
+geEnterAddTermProbe
+geEnterDeleteInstProbe
+geEnterDeleteNetProbe
+geEnterDeleteTermProbe
+geExplainProbe
+geGetAdjustedPath
+geGetAllProbe
+geGetCrossProbeValue
+geGetProbeNetFilter
+geGetProbeNetStopLevel
+geGetProbeUserLPP
+geiLoadProbe
+geiSaveProbe
+geLoadNextProbe
+geLoadProbe
+geMakeProbeWithColor
+geMakeProbeWithLabel
+geMakeProbeWithOnColor
+geMakeProbeWithPacket
+geMakeProbeWithoutColor
+gePrintAllProbe
+geProbeP
+geRegCrossProbeTrigger
+geSaveProbe
+geSaveProbeNetFilter
+geSetCrossProbeValue
+geSetLimitedProbe
+geSetMaxCreatedProbe
+geSetProbeDirection
+geSetProbeNetFilter
+geSetProbeNetStopLevel
+geSetProbeUserLPP
+geUnRegCrossProbeTrigger
+Icon Creation and Loading Functions
+
+geCellViewToDlist
+geLoadIcon
+geSaveIcon
+Utility Functions
+
+geAskOverwriteMode
+geClosePolygon
+geCompressPointArray
+geCoordp
+geCreatePacket
+geGetInstTransform
+geGetLockInfo
+geInstIdToFileSpec
+geIsPathReentrant
+geIsPolygonReentrant
+geOpen
+geQuerySelSet
+geRegSaveAllTrigger
+geResetCellView
+geTransformUserBBox
+geTransformUserPoint
+geValidateWindow
+geWriteCellView
+Microwave Object Functions
+
+geCreateBend
+geCreateTaper
+geCreateTrl
+Mouse Functions
+
+mouseAddPt
+mouseAddSelectPt
+mouseFinishPt
+mousePopUp
+mouseSingleSelectPt
+mouseSubSelectPt
+mouseUndoPt
+2
+Database Access Functions
+Data Stored as Objects
+
+dbGetDatabaseType
+Object Identifier (dbObject)
+Object Types and Classes
+Relationships Among Objects
+Database Access Function Argument Types
+dbIsId
+dbValidP
+dbobjectp
+dbDeleteObject
+Inherited Connections Functions
+
+dbCreateSigNetExpr
+dbCreateTermNetExpr
+dbCVHasInheritedSig
+dbCVHasInheritedTerm
+dbCVHasNetSetProp
+dbDeleteSigNetExpr
+dbDeleteTermNetExpr
+dbFix
+dbGetCellViewInheritedSig
+dbGetCellViewInheritedTerm
+dbGetSigNetExpr
+dbGetTermNetExpr
+dbIsValidSigNetExpr
+dbIsValidTermNetExpr
+dbIsSigInherited
+dbIsTermInherited
+dbParseSigNetExpr
+dbParseTermNetExpr
+dbReplaceSigNetExpr
+dbReplaceTermNetExpr
+Net and Terminal Name Syntax
+Instance Name Syntax
+Undo and Redo Functions
+
+dbSetUndoHandle
+dbUndoToHandle
+dbGetUndoHandles
+dbGetRedoHandles
+dbRedoToHandle
+dbEnableUndo
+Fluid Shape Functions
+
+dbGetFluidShapeByName
+dbGetFluidShapeName
+dbGetFluidShapes
+dbIsFluidPcell
+dbIsFluidShape
+dbSetFluidShape
+Pcell Abutment Support Functions
+
+dbAbutIsInteractive
+dbAbutIsReAbutGroup
+dbSetFigAbutName
+dbSetFigAbutRefName
+dbGetFigAbutName
+dbGetFigAbutRefName
+dbHasFigAbutName
+dbHasFigAbutRefName
+dbFindAbutFig
+dbUnabutGroup
+Object Creation and Retrieval Functions
+
+dbCopyShape
+dbCreateDiameterDot
+dbCreateLine
+dbCreatePath
+dbCreatePolygon
+dbCreateRect
+dbCreateRuler
+dbCreateEllipse
+dbCreateArc
+dbCreateDonut
+dbCreateDot
+dbCreateLabel
+dbCreateTextDisplay
+dbHasShape
+dbMoveShape
+dbSetTextDisplayNameValueVisible
+Shape Conversion Functions
+
+dbConvertArcToLine
+dbConvertDonutToPolygon
+dbConvertEllipseToPolygon
+dbConvertPathToPolygon
+dbConvertPathSegToPolygon
+dbConvertLineToPath
+dbConvertRectToPolygon
+Mosaic Creation and Retrieval Functions
+
+dbCreateParamSimpleMosaic
+dbCreateParamSimpleMosaicByMasterName
+dbCreateSimpleMosaic
+dbFindMosaicByName
+Property Creation and Modification Functions
+
+dbCreateProp
+dbCreateRangeProp
+dbCreateEnumProp
+dbCreateHierProp
+dbFindProp
+dbGetPropByName
+dbReplaceProp
+dbReplaceRangeProp
+dbReplaceEnumProp
+dbReplaceHierProp
+dbCopyProp
+dbCopyPropList
+dbResetPropList
+dbDeletePropByName
+dbCopySingleProp
+dbMergeSingleProp
+dbReplacePropList
+dbSearchPropByName
+Group Creation and Modification Functions
+
+dbAddObjectToGroup
+dbChangeGroupType
+dbCreateGroup
+dbDeleteGroupByName
+dbDeleteObjectFromGroup
+dbGetGroupByName
+dbGetGroupsWithDef
+dbMoveGroupMember
+dbDeleteGroupMemberFromGroup
+Shape Transformation Functions
+
+dbTransformCellView
+dbTransformPoint
+dbTransformPointList
+dbTransformBBox
+dbConcatTransform
+dbCanonicalizeAnyAngleTransform
+dbConvertAnyAngleTransformFromDbToMY
+Bounding Box Functions
+
+lowerLeft
+upperRight
+leftEdge
+rightEdge
+bottomEdge
+topEdge
+centerBox
+isLocation
+isBBox
+Property Bag Functions
+
+dbOpenBag
+dbReOpenBag
+dbGetBag
+dbGetBagOwner
+dbCloseBag
+dbPurgeBag
+dbRefreshBag
+dbMakeBagCurrent
+dbSaveBag
+dbIsBagReadable
+dbIsBagWritable
+dbGetBagTimeStamp
+dbFindOpenBag
+dbGetBagDdId
+dbGetOpenBags
+dbIsBagId
+Layer Boolean Functions
+
+dbLayerAnd
+dbLayerAndNot
+dbLayerOr
+dbLayerXor
+dbLayerSize
+dbLayerTile
+dbLayerStraddle
+dbLayerNoHoles
+dbLayerHoles
+dbLayerInside
+dbLayerOutside
+dbLayerEnclose
+Point Array Functions
+
+dbCompressPointArray
+dbPointArrayAnd
+dbPointArrayAndNot
+dbPointArrayOr
+dbPointArraySize
+dbPointArrayXor
+Soft Connect Terminal Functions
+
+dbSetTermSoftConnect
+dbGetSoftConnectTermConnectToLayer
+dbGetSoftConnectTermPinlessLayer
+dbIsTermSoftConnect
+dbSetSoftConnectTermConnectToLayer
+dbSetSoftConnectTermPinlessLayer
+dbSoftConnectTermHasConnectToLayer
+dbSoftConnectTermHasPinlessLayer
+Information Retrieval Functions
+
+dbDebugStats2
+dbGetBuildInfo
+dbGetFileDatabaseType
+dbGetVersion
+dbSetNIMsgMode
+Blockage Functions
+
+dbCreateAreaBlockage
+dbCreateAreaHalo
+dbCreateLayerBlockage
+dbCreateLayerHalo
+Boundary Functions
+
+dbCreateAreaBoundary
+dbCreateClusterBoundary
+dbCreateCoverObstruction
+dbCreatePRBoundary
+dbCreateSnapBoundary
+dbFindAreaBoundaryByName
+dbFindClusterBoundaryByName
+dbSetBoundaryEdge
+Bus Definition and Bit Order Functions
+
+dbCreateBusNetDef
+dbCreateBusTermDef
+dbCreateVectorInstDef
+dbFindBusNetDefByName
+dbFindBusTermDefByName
+dbFindVectorInstDefByName
+Cluster Functions
+
+dbCreateCluster
+dbFindClusterByName
+Counter Functions
+
+dbDisableCellViewCounter
+dbEnableCellViewCounter
+dbGetCellViewCounter
+dbGetFileTimeStamp
+dbIsConnCurrent
+dbSetConnCurrent
+dbSetInstHeadersCounter
+Interconnect Functions
+
+dbCreateGuide
+dbCreatePathSeg
+dbCreateRoute
+dbCreateVia
+dbCreateCustomViaVariant
+dbCreateStdViaVariant
+dbFindViaVariantByName
+dbGetViaLayer
+dbIsCellViewStdViaMaster
+dbSetPathSegPoints
+dbSetViaParamDefault
+dbSetViaShapePurpose
+dbGetRouteAuthor
+dbSetRouteAuthor
+dbGetRouteSubAuthor
+dbSetRouteSubAuthor
+xdvReplaceInstWithVias
+Trim Functions
+
+dbGetAllTrimFillShapes
+dbGetShapeTrimFillType
+Patch Functions
+
+dbGetPatchType
+dbSetBeginPatch
+dbSetEndPatch
+dbSetFullPatch
+dbSetPatchType
+Marker Functions
+
+dbCreateMarker
+dbAddObjectsToMarker
+dbRemoveObjectsFromMarker
+dbGetMarkerName
+dbSetMarkerName
+Query Functions
+
+dbBoundaryQuery
+dbFigGroupQuery
+dbGuideQuery
+dbInstQuery
+dbLayerBlockageQuery
+dbMarkerQuery
+dbPlacementBlockageQuery
+dbRowQuery
+dbShapeQuery
+dbSteinerQuery
+dbViaQuery
+Row Functions
+
+dbCreateRow
+dbFindRowByName
+dbFindRowHeader
+Steiner Functions
+
+dbCreateSteiner
+dbCreateTapSteiner
+dbIsTapSteiner
+Supply and Ground Sensitivity Functions
+
+dbGetTermGroundSensitivity
+dbGetTermSupplySensitivity
+dbSetTermGroundSensitivity
+dbSetTermSupplySensitivity
+Terminal Ordering Functions
+
+dbCreateInstTermByPosition
+dbFindTermByPosition
+Terminal Antenna Functions
+
+dbDeleteAllTerminalAntennaRules
+dbDeleteTerminalAntennaRuleOnLayer
+dbDeleteTerminalAntennaRules
+dbGetTerminalAntennaRuleOnLayer
+dbGetTerminalAntennaRules
+dbSetTerminalAntennaRuleOnLayer
+dbSetTerminalAntennaRules
+Track Pattern Functions
+
+dbCreateTrackPattern
+GCell Pattern Function
+
+dbCreateGCellPattern
+Via Functions
+
+Via GenVia Functions
+dbCreateGenViaVariant
+dbIsCellViewGenViaMaster
+dbIsGenVia
+dbIsGenViaHeader
+dbIsGenViaVariant
+dbSetGenViaParamDefault
+Via Header Functions
+dbFindViaHeaderByName
+Fixed Via Function
+dbIsFixedVia
+Optical Data Functions
+
+dbCellViewHasOpticalData
+dbIsNetOptical
+dbListTypes
+Remaster SKILL Functions
+
+dbRemasterAnyInst
+dbRemasterInstHeader
+Alternate Foundry Constraint Group SKILL Functions
+
+dbGetPerDesignAFCGName
+dbSetPerDesignAFCGName
+3
+Cellview Input/Output Database Access Functions
+dbAllCellViews
+dbCellViewHasVirtHier
+dbCheckCellViewUsage
+dbCheckRecursion
+dbClose
+dbComputeBBox
+dbComputeBBoxNoNLP
+dbCopyCellView
+dbCreateLib
+dbDefineProc
+dbFeaturePrintInfo
+dbFindOpenCellView
+dbFindOpenCellViewByName
+dbFlattenInst
+dbFlattenInst2
+dbFullLibPath
+dbFullPath
+dbGetAnyInstSwitchMaster
+dbGetCellViewDdId
+dbGetCellViewUsage
+dbGetLibDataCompressionLevel
+dbGetOpenCellViews
+dbHasAutoSavedFile
+dbHasPanicFile
+dbIsNonSKILLPcell
+dbOpenAutoSavedCellView
+dbOpenCellViewByType
+dbOpenHier
+dbOpenPanicCellView
+dbOpenParamCellView
+dbOpenScratchDesign
+dbProduceMemName
+dbPurge
+dbRefreshCellView
+dbRefreshLibDataCompressionLevel
+dbRegPostSaveAsTrigger
+dbRegPostSaveTrigger
+dbRegPurgeTrigger
+dbRegSaveTrigger
+dbReopen
+dbRestoreAndOpenAutoSavedFile
+dbRestoreAndOpenPanicFile
+dbSave
+dbSearchCDF
+dbSetAutoSave
+dbSetAutoSaveCallback
+dbSetLibDataCompressionLevel
+dbUndefineProc
+dbUnregPostSaveAsTrigger
+dbUnregPostSaveTrigger
+dbUnregPurgeTrigger
+dbUnregSaveTrigger
+dbUnsetLibDataCompressionLevel
+dbWriteSkill
+dbWriteSkillWithLib
+4
+Instance Creation and Retrieval Database Access Functions
+dbCreateInst
+dbCreateParamInst
+dbCreateExtParamInst
+dbCreateExtParamInstByMasterName
+dbCreateXformPCell
+dbDumpPcDefinePcell
+dbCheckParamCell
+dbEvalParamCell
+dbFixParamCell
+dbFreeze
+dbHasInstance
+dbIsCellViewModified
+dbReplaceParam
+dbReplaceInstParamList
+dbFindAnyInstByName
+dbFindMemInstByName
+dbGetHierPathTransform
+dbGetInstByName
+dbGetInstanceByName
+dbGetInstNameNumInst
+dbGetInstTransform
+dbIsAnyInstBaseNameUsed
+dbCreateInstByMasterName
+dbCreateParamInstByMasterName
+dbDumpPcell
+dbDumpPcellWithLib
+dbCreateViaShapeArray
+dbSetInstHeaderMasterName
+dbIsSameMaster
+dbIsObjectBound
+dbGetCellViewSymmetry
+dbSetCellViewSymmetry
+dbGetCellViewEEQMaster
+dbSetCellViewEEQMaster
+dbIsInstTransparent
+dbSetInstTransparent
+5
+Connectivity Database Access Functions
+Connectivity Creation and Modification Functions
+
+dbCreateNet
+dbCreateNamedSubNet
+dbMakeNet
+dbMergeNet
+dbCreateUniqueNamedNet
+dbSetNetNameDescend
+dbIsNetNameDescend
+dbNetIsSig
+dbDeleteAllNet
+dbCreateTerm
+dbCreateInstTerm
+dbHasShortedTerminals
+dbCreatePin
+dbCreateConn
+dbCreateConnByName
+dbCreateConnByNewName
+dbSubFigFromNet
+dbAddFigToNet
+dbGetNetVoltageRange
+dbSetNetVoltageRange
+dbUnsetNetVoltageRange
+dbGetNetVoltageRangeSource
+dbSetNetVoltageRangeSource
+dbUnsetNetVoltageRangeSource
+dbGetCellViewNetVoltageRange
+dbSetCellViewNetVoltageRange
+dbIsCellViewNetVoltageRangeSet
+dbIsNetVoltageRangeSet
+dbUnsetCellViewNetVoltageRange
+dbGetNetPowerDomain
+dbSetNetPowerDomain
+dbGetPowerDomainClusters
+dbRenameNet
+dbIsCellViewPhysicalOnly
+dbUnsetCellViewPhysicalOnly
+dbGetAnyTermGroundSensitivity
+dbGetAnyTermSupplySensitivity
+dbIsAnyTermGroundSensitivityConsistent
+dbIsAnyTermSupplySensitivityConsistent
+dbSetAnyTermGroundSensitivity
+dbSetAnyTermSupplySensitivity
+Equivalent Connectivity Time Functions
+
+dbCellViewHasEquivalentConnectivityTime
+dbGetCellViewEquivalentConnectivityTime
+dbSetCellViewEquivalentConnectivityTime
+dbUnsetCellViewEquivalentConnectivityTime
+Connectivity Access Functions
+
+dbDeleteEmptyNet
+dbFindNetByName
+dbFindTermByName
+dbFindSigByName
+dbFindSigByAlias
+dbGetMemNetSig
+dbGetMemNetSigName
+dbGetNetTerms
+dbGetSigNameMemNets
+dbIsSigNameGlobal
+dbGetMemName
+dbExpandToMemNameExpr
+dbGetMaxNumBit
+dbGetNameNumBit
+dbMergeSignal
+dbMoveChildNet
+dbMovePinToNet
+6
+Pin Database Access Functions
+Pin Connection Functions
+
+External, Strong, and Weak Pin Connections
+dbCreateStrongGroup
+dbExternallyConnectPins
+dbGetPinConnection
+dbGetStrongGroups
+dbHasExternalConnections
+dbHasMustConnections
+dbMergeStrongGroups
+dbMustConnectPins
+dbStronglyConnectPins
+dbTransformAccessDirection
+dbWeaklyConnectPins
+dbAddFigsToPin
+dbAddFigToPin
+dbGetPinFigAccessDirection
+dbGetPinFigName
+dbGetPinFigPlacementStatus
+dbSetPinFigAccessDirection
+dbSetPinFigName
+dbSetPinFigPlacementStatus
+dbSetTermMustJoin
+dbSubFigFromPin
+dbSubFigsFromPin
+dbUnsetTermMustJoin
+dbSetTermMustConnectAllPins
+dbTermHasMustConnectAllPins
+Pin Group Guide Functions
+
+dbCreateAreaPinGroupGuide
+dbCreateEdgePinGroupGuide
+dbFindPinGroupGuideByName
+dbGetAreaBoundaryPinGroupGuide
+dbGetAreaPinGroupGuideAreas
+dbGetFigPinGroupGuide
+dbGetPRBoundaryPinGroupGuides
+dbGetPinGroupGuideEdgeBoundary
+dbGetPinGroupGuideEdgeName
+dbGetPinGroupGuideEdgeStartOffset
+dbGetPinGroupGuideEdgeStopOffset
+dbGetPinGroupGuides
+dbGetPinPinGroupGuides
+dbAddAreaToPinGroupGuide
+dbAddFigToPinGroupGuide
+dbAddPinToPinGroupGuide
+dbSubAreaFromPinGroupGuide
+dbSubFigFromPinGroupGuide
+dbSubPinFromPinGroupGuide
+dbRemovePinGroupGuideEdge
+dbSetPinGroupGuideEdge
+dbSetPinGroupGuideEdgeStartOffset
+dbSetPinGroupGuideEdgeStopOffset
+dbGetAreaBoundaryValidRoutingLayers
+dbAreaBoundaryHasLayerPriorityOrder
+dbAreaBoundaryHasValidRoutingLayers
+dbGetAreaBoundaryLayerPriorityOrder
+dbGetPinGroupGuideKeepoutSpacing
+dbGetPinGroupGuideLayerPriorityOrder
+dbGetPinGroupGuideMinPinSpacing
+dbGetPinGroupGuideMinPinWidth
+dbGetPinGroupGuideValidRoutingLayers
+dbGetPinMinPinSpacing
+dbGetPinMinPinWidth
+dbPinGroupGuideHasKeepoutSpacing
+dbPinGroupGuideHasLayerPriorityOrder
+dbPinGroupGuideHasMinPinSpacing
+dbPinGroupGuideHasMinPinWidth
+dbPinGroupGuideHasValidRoutingLayers
+dbPinHasMinPinSpacing
+dbPinHasMinPinWidth
+dbSetAreaBoundaryLayerPriorityOrder
+dbSetAreaBoundaryValidRoutingLayers
+dbSetPinGroupGuideKeepoutSpacing
+dbSetPinGroupGuideLayerPriorityOrder
+dbSetPinGroupGuideMinPinSpacing
+dbSetPinGroupGuideMinPinWidth
+dbSetPinGroupGuideValidRoutingLayers
+dbSetPinMinPinSpacing
+dbSetPinMinPinWidth
+dbUnsetAreaBoundaryLayerPriorityOrder
+dbUnsetAreaBoundaryValidRoutingLayers
+dbUnsetPinGroupGuideKeepoutSpacing
+dbUnsetPinGroupGuideLayerPriorityOrder
+dbUnsetPinGroupGuideMinPinSpacing
+dbUnsetPinGroupGuideMinPinWidth
+dbUnsetPinGroupGuideValidRoutingLayers
+dbUnsetPinMinPinSpacing
+dbUnsetPinMinPinWidth
+7
+Placement Database Access Functions
+dbCreateBackgroundDef
+dbCreateBackgroundDefByAttr
+dbGetBackgroundDefAttr
+dbGetCellViewBackgroundDef
+dbCreateCompTypeSetDef
+dbCreateCompTypeSetDefByAttr
+dbGetCellViewCompTypeSetDef
+dbGetCompTypeSetDefAttr
+dbGetCompTypeSetDefCompFilters
+dbSetCompTypeSetDefCompFilters
+dbUnsetCompTypeSetDefCompFilters
+dbCreateRailDef
+dbCreateRailDefByAttr
+dbGetCellViewRailDef
+dbGetRailDefAttr
+dbGetRailDefFigType
+dbSetRailDefFigType
+dbAddPlaceAreaBackgroundDef
+dbAddPlaceAreaCompTypeSetDef
+dbAddPlaceAreaRailDef
+dbCreatePlaceArea
+dbGetCellViewPlaceArea
+dbGetPlaceAreaBackgroundDef
+dbGetPlaceAreaCompTypeSetDef
+dbGetPlaceAreaOrient
+dbGetPlaceAreaRailDef
+dbGetPlaceAreaUtilization
+dbGetPlacementGrid
+dbRemovePlaceAreaBackgroundDef
+dbRemovePlaceAreaCompTypeSetDef
+dbRemovePlaceAreaRailDef
+dbSetPlaceAreaOrient
+dbSetPlaceAreaUtilization
+dbSetPlacementGrid
+dbAddRowBackgroundDef
+dbAddRowCompTypeSetDef
+dbGetRowBackgroundDef
+dbGetRowCompTypeSetDef
+dbAddRowRailDef
+dbGetRowRailDef
+dbRemoveRowCompTypeSetDef
+dbRemoveRowBackgroundDef
+dbRemoveRowRailDef
+dbCreateRowRegionSpec
+dbFindRowRegionSpec
+dbGetCellViewRowRegionSpecs
+dbAttachRowRegionToPRBoundary
+dbCreateRowRegion
+dbDetachPRBoundaryFromRowRegion
+dbFindRowRegion
+dbFlattenRowRegion
+dbGetCellViewRowRegions
+dbGetRowRegionAttachedToPRBoundary
+dbGetRowRegionPlaceRows
+dbGetRowRegionPoints
+dbGetRowRegionRowRegionSpec
+dbGetRowRegionSpecRowRegions
+dbGetRowRegionUsesPartialRowSpec
+dbIsRowRegion
+dbIsRowRegionAttachedToPRBoundary
+dbRowRegionPointsCutOut
+dbRebuildRowRegion
+dbRowRegionMatchesSpec
+dbSetRowRegionPoints
+dbSetRowRegionRowRegionSpec
+dbSetRowRegionUsesPartialRowSpec
+dbGetPlaceRowVersion
+dbGetRowRegionVersion
+dbIsImplicit
+dbIsInRowRegion
+8
+Topology Pattern Database Access Functions
+dbCreateTopology
+dbDeleteTopology
+dbGetCellViewTopologies
+dbGetNetTopologies
+dbGetTopologyName
+dbGetTopologyNet
+dbGetTopologyObjects
+dbGetTopologyPatternType
+dbSetTopologyName
+dbSetTopologyNet
+dbCreateTrunk
+dbDeleteTrunk
+dbGetTrunkAnchor
+dbGetTrunkDirection
+dbGetTrunkLongOffset1
+dbGetTrunkLongOffset2
+dbGetTrunkLongOffsetSource
+dbGetTrunkLongOffsetSource1
+dbGetTrunkLongOffsetSource2
+dbGetTrunkName
+dbGetTrunkOrthoOffset
+dbGetTrunkSide
+dbGetTrunkTopology
+dbGetTrunkTwigs
+dbSetTrunkAnchor
+dbSetTrunkLongOffset1
+dbSetTrunkLongOffset2
+dbSetTrunkLongOffsetSource
+dbSetTrunkLongOffsetSource1
+dbSetTrunkLongOffsetSource2
+dbSetTrunkName
+dbSetTrunkDirection
+dbSetTrunkOrthoOffset
+dbSetTrunkSide
+dbCreateTwig
+dbDeleteTwig
+dbGetTwigName
+dbGetTwigObject
+dbGetTwigPinName
+dbGetShapeTwigs
+dbGetInstTermTwigs
+dbGetViaTwigs
+dbGetTwigTrunk
+dbSetTwigName
+dbSetTwigObject
+dbSetTwigPinName
+dbCreateTrunkConnect
+dbDeleteTrunkConnect
+dbGetTrunkConnectName
+dbGetTrunkConnectTopology
+dbGetTrunkConnectTrunks
+dbSetTrunkConnectName
+dbSetTrunkConnectTrunks
+dbCreateStrap
+dbDeleteStrap
+dbGetStrapName
+dbGetStrapObjects
+dbGetStrapTopology
+dbGetStrapTwig
+dbGetInstTermStraps
+dbGetViaStraps
+dbGetShapeStraps
+dbAddStrapObject
+dbRemoveStrapObject
+dbSetStrapName
+dbSetStrapTwig
+dbIsTopologyPatternId
+dbNetHasTopology
+9
+Generator Database Access Functions
+dbStartGenAnyInstToInstTerm
+dbStartGenInstHeader
+dbStartGenInstHeaderToAnyInst
+dbStartGenLPPHeaderToShape
+dbStartGenLPToShape
+dbStartGenMarker
+dbStartGenNet
+dbStartGenNetToInstTerm
+dbStartGenNetToRoute
+dbStartGenRoute
+dbStartGenShape
+dbStartGenTerm
+dbStartGenViaHeader
+dbStartGenViaHeaderToVia
+dbStopGen
+10
+InPlace Cover Obstruction Database Access Functions
+dbCreateInPlaceCoverObstruction
+dbDestroyInPlaceCoverObstruction
+dbGetInPlaceCoverObstructionAbstractFileName
+dbGetInPlaceCoverObstructionAbstractFilePath
+dbGetInPlaceCoverObstructionAbstractViewName
+dbGetInPlaceCoverObstructionBloat
+dbGetInPlaceCoverObstructionBlockageAttributeValue
+dbGetInPlaceCoverObstructionBlockageModel
+dbGetInPlaceCoverObstructionDoughnutHalo
+dbGetInPlaceCoverObstructionLayers
+dbGetInPlaceCoverObstructionMaxMask
+dbGetInPlaceCoverObstructionMergeDistance
+dbGetInPlaceCoverObstructionMinMask
+dbGetInPlaceCoverObstructionNeedsRemodeling
+dbGetInPlaceCoverObstructionPinCutOut
+dbGetInPlaceCoverObstructionPinRemodeling
+dbGetInPlaceCoverObstructionSpacingModel
+dbInPlaceCoverObstructionExists
+dbSetInPlaceCoverObstructionAbstractFileName
+dbSetInPlaceCoverObstructionAbstractFilePath
+dbSetInPlaceCoverObstructionAbstractViewName
+dbSetInPlaceCoverObstructionBloat
+dbSetInPlaceCoverObstructionBlockageAttributeValue
+dbSetInPlaceCoverObstructionBlockageModel
+dbSetInPlaceCoverObstructionDoughnutHalo
+dbSetInPlaceCoverObstructionMergeDistance
+dbSetInPlaceCoverObstructionNeedsRemodeling
+dbSetInPlaceCoverObstructionPinCutOut
+dbSetInPlaceCoverObstructionPinRemodeling
+dbSetInPlaceCoverObstructionSpacingModel
+11
+Figure Database Access Functions
+FigGroup Creation and Modification Functions
+
+dbCreateFigGroup
+dbAddFigToFigGroup
+dbRemoveFigFromFigGroup
+dbGetFigGroupByName
+Figure Creation and Retrieval Functions
+
+dbCopyFig
+dbMoveFig
+dbGetOverlaps
+dbGetTrueOverlaps
+dbGetNeighbor
+dbGetNeighborList
+dbGetMaxHierDepth
+dbGetPathSegStyle
+dbSetPathSegStyle
+dbGetPathBoundary
+dbCheckParentChild
+dbProduceOverlap
+dbProduceOverlapInst
+12
+Figure Set Database Access Functions
+FigSet Functions
+
+txCreateFigSet
+txGetFigSetData
+txAppendObjectToFigSet
+txClearFigSet
+txCloneFigSet
+txConcatFigSet
+txCopyFigSet
+txFindFigSet
+txDeleteFigSet
+txGetCellViewFigSets
+txGetFigSetBBox
+txIsFigSet
+txMakeFigSet
+txMoveFigSet
+txPrependObjectToFigSet
+txRemoveFigSetData
+txRemoveObjectFromFigSet
+FigSetGroup Functions
+
+Use of the SKILL Operator ~> with FigGroups
+dbMakeFigSetGroup
+dbFindFigSetGroup
+dbFindFigSetGroupByName
+dbGetFigSetGroupName
+dbGetCellViewFigSetGroups
+dbIsFigSetGroup
+dbDeleteFigSetGroup
+13
+Multi-Patterning Technology Database Access Functions
+dbCellViewAreLayerShiftsValid
+dbCellViewClearLayerShifts
+dbCellViewHasLayerShifts
+dbCellViewUpdateLayerShifts
+dbCellViewInitForLayerShifting
+dbClearUnusedOccShapeColorData
+dbInstGetLayerShifts
+dbInstGetLayerShifts2
+dbInstHasLayerShifts
+dbInstSetLayerShifts
+dbInstSetLayerShifts2
+dbInstClearLayerShifts
+dbIsShapeColoringAllowed
+dbIsShapeColored
+dbGetShapeColor
+dbSetShapeColor
+dbIsShapeColorLocked
+dbSetShapeColorLocked
+dbIsBlockageColored
+dbIsBlockageColoringAllowed
+dbGetBlockageColor
+dbSetBlockageColor
+dbIsViaColorStateLocked
+dbSetViaColorStateLocked
+dbIsViaColorStateLayerLocked
+dbSetViaColorStateLayerLocked
+dbGetViaLayerNumColorMasks
+dbGetViaLayer1Control
+dbGetViaLayer2Control
+dbGetViaCutLayerControl
+dbGetViaLayerControl
+dbSetViaLayer1Control
+dbSetViaLayer2Control
+dbSetViaCutLayerControl
+dbSetViaLayerControl
+dbSetViaColorInfo
+dbIsTrackPatternColored
+dbIsTrackPatternColorAlternating
+dbIsTrackPatternColoringAllowed
+dbGetTrackPatternFirstTrackColor
+dbSetTrackPatternFirstTrackColor
+dbSetTrackPatternColorAlternating
+dbCreateSameMaskGroup
+dbCreateDiffMaskGroup
+dbGetSameMaskDiffMaskGroups
+dbGetShapeSameMaskGroups
+dbColorShapeQuery
+dbGetIntegrationColorModel
+dbGetColorModel
+dbSetIntegrationColorModel
+dbSetColorModel
+dbRemoveLayerColorData
+dbColorShapeQuery2
+dbGetColoredOccShapes
+dbGetShapeEffectiveColor
+dbSetOccShapeColor
+dbSetOccShapeColorLocked
+dbGetHierColorOverride
+dbGetShapeColorLockType
+dbSetShapeColorLockType
+dbGetViaLayerColorLockType
+dbSetViaLayerColorLockType
+dbCellViewHasUnknownColorLockChanges
+dbGetShapeEffectiveColorLockType
+dbCellViewResetAllColorLockTypes
+dbSetOccShapeColorLockType
+14
+Width Spacing Pattern Database Access Functions
+Width Spacing Pattern Functions
+
+dbCreateWidthSpacingPattern
+dbCreateWidthSpacingPatternWithColor
+dbFindWidthSpacingPattern
+dbGetWidthSpacingPatternAllowedRepeatMode
+dbGetWidthSpacingPatternDefaultRepeatMode
+dbGetWidthSpacingPatterns
+dbSetWidthSpacingPatternRepeatMode
+Width Spacing Pattern Group Functions
+
+dbCreateWidthSpacingPatternGroup
+dbGetWidthSpacingPatternGroups
+dbFindWidthSpacingPatternGroup
+Width Spacing Snap Pattern Def Functions
+
+dbCreateWidthSpacingSnapPatternDef
+dbFindWidthSpacingSnapPatternDefByName
+dbDeleteWidthSpacingSnapPatternDef
+dbGetWidthSpacingSnapPatternDefsByLP
+Related Snap Pattern Functions
+
+dbCreateRelatedSnapPatterns
+dbGetRelatedSnapPatterns
+dbFindRelatedSnapPatterns
+Pattern Region Functions
+
+dbGetPatternRegionActivePattern
+dbSetPatternRegionActivePattern
+dbHasPatternRegionActivePattern
+dbGetPatternRegionAllowedPatterns
+dbSetPatternRegionAllowedPatterns
+dbGetPatternRegionAllowedPatternGroups
+dbSetPatternRegionAllowedPatternGroups
+dbGetPatternRegionCommittedPatterns
+dbGetPatternRegionCommittedPatternShiftColor
+dbGetPatternRegionCreateType
+dbGetPatternRegionShiftColor
+dbSetPatternRegionShiftColor
+dbHasPatternRegionInfo
+dbGetPatternRegionName
+dbSetPatternRegionName
+dbGetPatternRegionWidthSpacingSnapPatternDefName
+dbSetPatternRegionWidthSpacingSnapPatternDefName
+dbGetPatternRegionDefaultRepeatMode
+dbSetPatternRegionDefaultRepeatMode
+dbGetPatternRegionRepeatMode
+dbSetPatternRegionRepeatMode
+Active Wire Types Functions
+
+Per-Design Database Basis Functions
+dbGetCellViewActiveWireTypes
+dbSetCellViewActiveWireTypes
+dbClearAllActiveWireTypes
+Per-widthSpacingSnapPatternDef Basis Functions
+dbGetCellViewActiveWireTypesForWidthSpacingSnapPatternDef
+dbSetCellViewActiveWireTypesForWidthSpacingSnapPatternDef
+Per-Pattern Region Basis Functions
+dbGetPatternRegionActiveWireTypes
+dbSetPatternRegionActiveWireTypes
+dbSetPatternRegionNoActiveWireTypes
+dbHasPatternRegionNoActiveWireTypes
+Global Grid Offset Functions
+
+dbSetGlobalGridOffsetReferenceType
+dbGetGlobalGridOffsetReferenceType
+dbGetGlobalGridDefaultRepeatMode
+dbSetGlobalGridDefaultRepeatMode
+dbGetGlobalGridRepeatMode
+dbSetGlobalGridRepeatMode
+15
+Hierarchical Design Functions
+Hierarchy Database Functions
+
+dbDeleteHierCache
+dbGetHierCacheUsage
+dbHasValidHierCache
+dbSetHierCacheUsage
+hdbAddConfigToBag
+hdbBind
+hdbCloseConfigsInBag
+hdbCreateConfigBag
+hdbCreatePathVectorStack
+hdbConfigHasOccRules
+hdbExplainBinding
+hdbExplainSignature
+hdbExplainStop
+hdbGetPathStackStr
+hdbGetPathStr
+hdbGetPathVectorStackTop
+hdbIsAtStopPoint
+hdbIsConfig
+hdbIsOpenConfig
+hdbReOpenNewConfig
+hdbPopPathVect
+hdbPushPathVect
+hdbSaveACopy
+hdbSaveAs
+hdbSave
+hdbClose
+hdbOpen
+hdbCreatePathVector
+hdbDestroyPathVector
+hdbGetCellName
+hdbGetLibName
+hdbGetTopCellName
+hdbGetTopLibName
+hdbGetTopViewName
+hdbGetViewName
+hdbPopCell
+hdbPushCell
+hdbSetObjBindRule
+hdbSetDefaultLibListString
+hdbSetDefaultViewListString
+hdbSetDefaultStopListString
+hdbSetTopCellViewName
+hdbBindBit
+hdbBitHasRules
+hdbHasIterInstBitRules
+hdbIsIterInst
+hdbIterInstHasBitRules
+hdbPushBitCell
+Occurrence Property Functions
+
+occpClose
+occpCreateProp
+occpGetBestProp
+occpGetBitInstProp
+occpGetCellProp
+occpGetDefaultProp
+occpGetInstProp
+occpGetPathProp
+occpOpen
+occpRmBitInstProp
+occpRmCellProp
+occpRmDefaultProp
+occpRmPathProp
+occpRmInstProp
+occpSave
+occpSetBitInstProp
+occpSetCellProp
+occpSetDefaultProp
+occpSetInstProp
+occpSetPathProp
+Parent/Child Database Functions
+
+pcdbClose
+pcdbGetInstGen
+pcdbGetInstMasterGen
+pcdbGetIgnoredInstMasterGen
+pcdbInstMasterCell
+pcdbInstMasterCellFixed
+pcdbInstMasterLib
+pcdbInstMasterLibFixed
+pcdbInstMasterView
+pcdbInstMasterViewFixed
+pcdbInstName
+pcdbInstWidth
+pcdbNextInst
+pcdbNextInstMaster
+pcdbOpen
+pcdbViewHasPcdbInfo
+pcdbSave
+Example for all pcdb Functions
+16
+Virtuoso MultiTech Framework Functions (Virtuoso MultiTech Framework)
+Enable Virtuoso RF Solution and MultiTech Framework Functions
+dbIsMultiTechEnabled
+dbIsVRFEnabled
+dbIsVRFInfraEnabled
+Curved Shape Functions
+
+dbAddPinToPinGroup
+dbCreateCurvedAreaBoundary
+dbCreateCurvedPath
+dbGetCurvedPathRealWidth
+dbSetCurvedPathRealWidth
+dbCreateCurvedPolygon
+dbCreateMultipleCurvedPolygons
+dbCreatePlaceBound
+dbGetPlaceBounds
+dbIsCurved
+dbGetCurvedAreaBoundaryPoints
+dbGetCurvedPolygonPoints
+dbSetCurvedAreaBoundaryPoints
+dbCreatePinGroup
+dbGetPinGroupPlaceBoundNameAndFace
+dbGetPinGroups
+dbSetCurvedPolygonPoints
+dbCreateRegionBoundary
+dbGetPlaceBoundMaxHeight
+dbSetPlaceBoundMaxHeight
+dbGetPlaceBoundMinHeight
+dbSetPlaceBoundMinHeight
+dbGetDieStack
+dbGetDieStacks
+dbGetRegionBoundaryLayer
+dbGetRegionBoundaryLayerType
+dbGetRegionBoundaryName
+dbIsRegionBoundary
+dbMapPinGroupPins
+Virtuoso RF Solution Package Infrastructure Functions
+pkxAddFuncDefPin
+pkxCreateCompDef
+pkxCreateCompDefPin
+pkxCreateFuncDef
+pkxCreateFuncDefPin
+pkxDeleteCompDef
+pkxFindCompDef
+pkxFindCompDefPin
+pkxFindFuncDef
+pkxFindFuncDefPin
+pkxGetCompDefPins
+pkxGetCompDefs
+pkxGetFuncDefPins
+pkxGetFuncDefs
+pkxGetProp
+pkxGetProps
+pkxSetProp
+pkxPadFile
+pkxUnPadFile
+17
+Photonics Functions (Virtuoso Photonics Option)
+ccIsEnabled
+Curvy Core Mathematical Object Creation Functions
+
+ccCreateCurve
+ccCreateExpression
+ccCreateFacet
+ccCreateLineSegment
+ccCreatePolyCurve
+ccGetFacetCorners
+ccGetFacetOrigin
+Curvy Core Shape Creation Functions
+
+ccCreateEllipse
+ccCreateLine
+ccCreatePath
+ccCreatePie
+ccCreatePolygon
+ccCreateRect
+ccCreateSurface
+ccCreateSurfaceFromPath
+Curvy Core Shape Geometry Functions
+
+ccCopyFig
+ccConvertIntoCurvy
+ccGenFigs
+ccGenOffsetFig
+ccGetFromFig
+ccMoveFig
+ccRemoveFigs
+Curvy Core Mathematical Object Functions
+
+ccLayerOffset
+ccOffsetPolyCurve
+ccOrientCurve
+ccRenameFacet
+Curvy Core Mathematical Object Attribute Query Functions
+
+ccCubicSplineConnector
+ccGetCurveLength
+ccGetCurvePoint
+ccGetCurveDerivative
+ccGetCurveSection
+ccGetPolyCurveMinRadius
+ccIsLinearCurve
+Curvy Core Shape Object Attribute Query Functions
+
+ccGetAll
+ccGetBBox
+ccGetPathBoundary
+ccGetPathCenterLine
+ccGetPathEdge
+ccFindSurfaceFacet
+Curvy Core Transformations Functions
+
+ccInterpolateCurve
+ccLayerAnd
+ccLayerAndNot
+ccLayerOr
+ccLayerMerge
+ccMirrorFacet
+ccReversePolyCurve
+ccSmoothenFig
+ccSmoothenPolyCurve
+ccTransformFacet
+ccTransformPolyCurve
+Curvy Core Connector Functions
+
+ccBendConnector
+ccCreateConnectorWidthExpressionList
+ccCurveConnector
+ccSpiralConnector
+ccTromboneConnector
+ccWaypointConnector
+ccWideConnector
+Curvy Core Optical Rule Engine Functions
+
+ccORE
+ccORECompile
+ccOREGetContext
+ccOREGetContextObject
+ccOREGetContexts
+ccOREPurgeContext
+ccOREPurgeContexts
+Photonics Database Functions
+
+dbCellViewHasPhotonicPinFig
+dbGetPhotonicPinFigAngle
+dbGetPhotonicPinFigRadius
+dbGetPhotonicPinFigWidth
+dbIsPhotonicsEnabled
+dbSetPhotonicPinFigAngle
+dbSetPhotonicPinFigRadius
+dbSetPhotonicPinFigWidth
+dbUnsetPhotonicPinFigAngle
+dbUnsetPhotonicPinFigRadius
+dbUnsetPhotonicPinFigWidth
+Photonics Flow Functions
+
+phoAddWaveguidePorts
+phoCompose
+phoComputeModeProps
+phoHiCompose
+phoCreatePort
+phoGetConnectorAnchors
+phoGenWaveguide
+phoHiDecompose
+phoHiEditCompositeWG
+phoIsWaveguide
+phoTechDeleteModePropDataTable
+phoTechGetModePropDataTableParamValues
+phoTechHasModeProp
+phoTechHasModePropDataTable
+phoTechIsModePropLocalOnly
+phoTechLoadModePropDataTable
+phoRegisterInstTermOpticalMonitorMenuItem
+phoOMGetObject
+Photonics Symbol Generator Functions
+
+Symbol Pcell Example
+phoDrawBalancedPhotoDiodeBBSymbol
+phoDrawBendConnectorSymbol
+phoDrawCWLaserSymbol
+phoDrawCompWaveguideSymbol
+phoDrawCrossBBSymbol
+phoDrawCurveDeltaConnectorSymbol
+phoDrawDCSymbol
+phoDrawEdgeCouplerBBSymbol
+phoDrawMMISymbol
+phoDrawPhotoDiodeBBSymbol
+phoDrawRingModulatorBBSymbol
+phoDrawSBendWaveguideSymbol
+phoDrawStraightModulatorSymbol
+phoDrawStraightWaveguideSymbol
+phoDrawThMZI2x2BBSymbol
+phoDrawWayPointConnectorSymbol
+phoDrawYSplitterSymbol
+Photonics Connector Functions
+
+phoBendConnector
+phoCurveDeltaConnector
+phoDrawCompWaveguideLayout
+phoSineDeltaConnector
+phoStraightConnector
+phoWayPointConnector
+18
+Pegasus Interactive and Virtuoso Integrated Physical Verification System Functions
+pgssDRC
+pvsApplyDRC
+19
+Attribute Retrieval and Modification Functions
+dbGet Functions
+
+dbGetq, dbGet
+dbSet Functions
+
+dbSetq, dbSet
+Generic Attributes
+
+Generic Object Attributes
+Generic Figure Attributes
+Generic Shape Attributes
+Generic anyInst Attributes
+Generic Boundary Attributes
+Generic Blockage Attributes
+Generic Via Attributes
+Generic Via Header Attributes
+Generic widthSpacingPattern Attributes
+Generic widthSpacingPatternGroup Attributes
+Generic relatedSnapPattern Attributes
+Generic widthSpacingSnapPatternDef Attributes
+Generic rowRegion Attributes
+Cellview Attributes
+
+Instance Attributes
+
+Instance Header Attributes
+
+Mosaic Attributes
+
+Instance Terminal Attributes
+
+Pin Attributes
+
+Terminal Attributes
+
+Bus Net Definition Attributes
+
+Bus Terminal Definition Attributes
+Vector Instance Definition Attributes
+Net Attributes
+Signal Attributes
+Layer-Purpose Pair Attributes
+
+Layer Header Attributes
+Group Attributes
+Group Member Attributes
+Property Attributes
+Attributes of Objects and Figures
+
+Area Blockage Attributes
+Area Halo Attributes
+Layer Blockage Attributes
+Layer Halo Attributes
+Area Boundary Attributes
+Cluster Boundary Attributes
+prBoundary Attributes
+Snap Boundary Attributes
+Cluster Attributes
+figGroup Attributes
+GCellPatterns Attributes
+Guide Attributes
+Marker Attributes
+Route Attributes
+Row Attributes
+Row Header Attributes
+Steiner Attributes
+Track Pattern Attributes
+Custom Via Attributes
+Standard Via Attributes
+Custom Via Header Attributes
+Standard Via Header Attributes
+Custom viaVariant Attributes
+Attributes
+
+Arc Attributes
+Donut Attributes
+Dot Attributes
+Ellipse Attributes
+Label Attributes
+Line Attributes
+Path Attributes
+pathSeg Attributes
+Polygon Attributes
+Rectangle Attributes
+Text Display Attributes
+Technology File Attributes
+
+Generic Technology File Object Attributes
+Technology File Attributes
+Layer Attributes
+Display Attributes
+Color Attributes
+Stipple Attributes
+Line Style Attributes
+Two-Layer Attributes
+Via Spec Attributes
+SiteDef Attributes
+20
+Design Management Functions
+ddAmUsingDM
+ddAutoCheckin
+ddAutoCheckout
+ddAutoCtlGetVars
+ddAutoCtlSetVars
+ddCatRefresh
+ddCheckin
+ddCheckout
+ddClearLibUnmanaged
+ddCreateLib
+ddDeleteObj
+ddDeleteLocal
+ddDumpLibList
+ddGetCoManagedSet
+ddGetCombineValue
+ddGetDisplayValue
+ddGetForcedLib
+ddGetForcedLibEx
+ddGetHiddenCellsFuncList
+ddGetLibList
+ddsGetLibManLogFileName
+ddsHiCheckCompromisedData
+ddGetObj
+ddGetObjAccess
+ddGetObjAccessEx
+ddGetObjChildren
+ddGetObjChildrenEx
+ddGetObjDMSys
+ddGetObjFiles
+ddGetObjFilesEx
+ddGetObjGroup
+ddGetObjGroupEx
+ddGetObjLastModify
+ddGetObjLastModifyEx
+ddGetObjLib
+ddGetObjName
+ddGetObjOwner
+ddGetObjOwnerEx
+ddGetObjParent
+ddGetObjReadPath
+ddGetObjReadPathEx
+ddGetObjSize
+ddGetObjSizeEx
+ddGetObjType
+ddGetObjWritePath
+ddGetObjWritePathEx
+ddGetPathDMSys
+ddGetStartup
+ddGetTmpdirWarn
+ddGetTriggerList
+ddGetUpdatedLib
+ddIsId
+ddIsHiddenCell
+ddIsObjLibMarked
+ddIsObjReadable
+ddIsObjReadableEx
+ddIsObjWritable
+ddIsObjWritableEx
+ddIsPathManageable
+ddIsPathManaged
+ddLibIs5X
+ddLibHasTmpDir
+ddLockDescribe
+ddLockFree
+ddLockGetStatus
+ddLockPath
+ddLockSet
+ddLockSetEx
+ddMapGetDataTypeFileName
+ddMapGetDataTypeList
+ddMapGetFileDataType
+ddMapGetFileTool
+ddMapGetFileViewType
+ddMapGetToolNameDataType
+ddMapGetToolNameList
+ddMapGetToolNameViewType
+ddMapGetViewTypeFileName
+ddMapGetViewTypeList
+ddMapIsFileNameKnown
+ddMapIsToolLegal
+ddMapIsToolNameKnown
+ddMarkObjMaster
+ddNeedCheckout
+ddObjHasNamedObj
+ddObjHasNamedObjEx
+ddObjIsInMaster
+ddObjIsInTmp
+ddProduceObjRelNames
+ddProduceObjRelNamesEx
+ddRegHiddenCellsFunc
+ddRegTrigger
+ddReleaseObj
+ddSetForcedLib
+ddSetForcedLibEx
+ddSetLibUnmanaged
+ddSetLibDmType
+ddSetTmpdirWarn
+ddUnregHiddenCellsFunc
+ddUnregTrigger
+ddUpdateLibList
+Design Data Services
+
+Design Data Services Environment Variables
+Library Functions
+Library Synchronization Functions
+Customer Library Browser Integration
+CIW Menu Customization
+ciwAddTranslatorItem
+ciwCreateMenu
+ciwCreatePulldown
+ciwHiExit
+ciwMenuInit
+ciwMenuInstall
+ciwMenuLoadFile
+ciwRemoveTranslatorItem
+ddsAboutDFII
+ddsBrowserAction
+ddsCheckinPreferences
+ddsCheckoutPreferences
+ddsCheckSessionName
+ddsCloseLibManager
+ddsEditProp
+ddsEndSyncWithForm
+ddsFileBrowseCB
+ddsGetCurrentLib
+ddsGetCustomLibSelect
+ddsGetServiceName
+ddsHiCloseData
+ddsHiCreateLibrary
+ddsHiMakeReadOnly
+ddsHiOpenCdsLibEditor
+ddsHiPreferences
+ddsHiRefresh
+ddsLEWhatsNewAtStartup
+ddsOnLineHelp
+ddsOpenConvertToolBox
+ddsOpenLibManager
+ddsProgramName
+ddsRefresh
+ddsRegCkinUI
+ddsRegPreRefreshTrigger
+ddsRegPostRefreshTrigger
+ddsRegCustomLibSelect
+ddsHiSaveData
+ddsServSelect
+ddsSetLibManLCV
+ddsGetLibManLCV
+ddsSyncWithForm
+ddsUnregCustomLibSelect
+ddsUpdateSyncWithForm
+ddsViewDDProp
+ddsWhatsNew
+Custom Library Browser Template
+
+dmb Compatibility Functions
+
+dmbGetCurrentLib
+dmbLibBrowserFormDone
+dmbOpenLibBrowser
+dmbSetBrowserInteractions
+dmbSyncWithForm
+dmbSyncWithCellForm
+dmbUpdateBrowser
+Cell Category Functions (ddCat Interface)
+
+ddCatOpen
+ddCatOpenEx
+ddCatAddItem
+ddCatSubItem
+ddCatSave
+ddCatRemove
+ddCatClose
+ddCatGetCatName
+ddCatGetCatMembers
+ddCatGetLibCats
+ddCatFindCat
+ddCatGetCellsNotInCat
+ddCatIsObjInCat
+Old Cell Category Functions
+
+dmAddCellToCategory
+dmCreateCellCategory
+dmRemoveCellCategory
+dmRemoveCellFromCategory
+Design Editor Functions
+
+Registering and Unregistering Applications
+deAddAppCapabilities
+deRegApp
+deRemoveAppCapabilities
+deUnRegApp
+deRegUserTriggers
+deUnRegUserTriggers
+deInheritEnabling
+deUnInheritEnabling
+deInheritMenus
+deUnInheritMenus
+deRegProbeTrigger
+deUnRegProbeTrigger
+deGetProbeTrigger
+deGetAppInfo
+deHiSetDefaultApplication
+deSetWorkspace
+deRegPlugin
+deInstallPlugin
+deRemovePlugin
+deFindPlugin
+deBeginConfigurePlugins
+deEndConfigurePlugins
+deFindAssistant
+deGetPlugins
+deGetAppClassInfo
+deoEnableTrigger
+deoExitTrigger
+deoGetAssistantList
+deoGetBindkeys
+deoMenuTrigger
+deoOnTabSwitch
+deoOnApplicationChange
+deoPostInstallTrigger
+deoRequireToolbars
+deoUpdateToolbar
+deoOnEvent
+Client Interface
+
+deFileNew
+deOpen
+deFileOpen
+deNew
+deNewCellView
+deOpenCellView
+deBack
+deForward
+dePush
+deSetHistoryOpenMode
+deSwap
+deToggleAssistants
+deToggleAssistantVisibility
+deToggleToolbars
+deFindToolbar
+deManageToolbar
+deCustomizeToolbars
+deUnmanageToolbar
+deEditInPlace
+deReturn
+deCopy
+Trigger Functions
+
+dataTrigger
+appTrigger
+userAppTrigger
+enableTrigger
+menuTrigger
+userMenuTrigger
+postInstallTrigger
+userPostInstallTrigger
+probeTrigger
+Licensing Functions
+
+lbuiGetCheckedOutLicenses
+lbuiPrintLicenseUseReport
+iclicCheckOutAndLock
+eliCheckOutAndLock
+eliResetNonexistentLicense
+Design Editor Support Routines
+
+deGetCellView
+deGetEditCellView
+deSetCellView
+deGetViewType
+deGetEditViewType
+deGetRootType
+deGetEditRootType
+deGetContext
+deGetEditContext
+deIsEditInContext
+deSetContext
+deGetMaxInContextLevel
+deGetConfigId
+deSetConfigId
+deGetVector
+deGetEIP
+deGetPushed
+deGetProbeContext
+deSetProbeContext
+deGetEditLevel
+deGetMaxEditLevel
+deEnableApp
+deDisableApp
+deInstallApp
+deGetAllApplicationNames
+deGetAllRootTypes
+deGetAllViewTypes
+deGetRootViewTypeList
+deMapUserTypeToViewType
+deMapViewTypeToUserType
+deViewTypeIsRegistered
+deGetLowerTierApp
+Extended Design Editor Example
+
+
+Return to top

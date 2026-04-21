@@ -10,7 +10,7 @@
 _base_: ../base/21x27_finetune.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_finetune_to_large_3"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_finetune_to_large_4"
 
 grid:
   rows: 25       # TODO: adjust to target large-grid size

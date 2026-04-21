@@ -11,3 +11,27 @@ Please figure out the plan and let me know how to impelent the open port in the 
 ### Update 3
 
 We supprot a new simulation component. This is a via for shorting pixel and gnd. to do this we need to insert the port on the metal layer, and during the spectre simulation, connect this kind of port directly to gnd. Similar to how inductor works but more simple. You can treat this as a new pixel type (index 4). During the plotting, we want to use a new color to represent this type of pixel.
+
+## Another new sim mode
+We already have the pixelated design simple, where we don't build the full layout but use a combination of simulated pixels and spectre components. We want to build a full simulation mode. It will Read some configuration same as the configuration for pixelated deisgn  simple,  but will generate a full layout.  Let's do not worry about EMX simulation and spectre for now. Let's just build the layout first.
+
+The cell name and lib name specification are similar to what we have right now, we should meanually specify them in the configuration.
+
+The configuration for this sim mode will be put into one section of the configuration file. It should not be interfering other configuratios. If this simulation mode is not selected all the previous mode will not be affected.
+
+This mode will involve creating cap pairs, inductors and switches, and vias according to the configuration file. For the switch design,we already have that single pixel Demo. the goal is to convert the cap values to cap dimensions through a table (these tables can be csv files and referenced in the configuration). You can make up this table for now and i will provide later. Then we will use the switch script that already exists to generate the pixels.
+
+when creating cap pairs, we have to adapt to horizontal and vertical caps. We need to rotate them respectively and make sure the wiring wires both ends to the pixel centers.
+
+For the cap pairs we need to read from a different table to get the cap dimensions since we will have a different aspect ratio for the cap pairs. This part of the script does not exist yet. So you will need to write the skill script to connect the center of the pixel to one end of the cap, then connet the other end of the cap pair to the other pixel. You need to create vias and adaptive to the size of the cap pair.
+
+For the via pixel, we just need a via size configuration and create the via form the pixel all the way to the ground.
+
+For the active inductor pixel, this one requires reading from a already built active inductor. This inductor is drawn in virtuoso layout. So I will need to know  what files do i need (provide that in your plan). The job of this part is to duplicate and  move this layout to its corresponding location.
+
+
+Testing: Let's create a single configuration for testing right now. Let's have some simple deisgn that can fit in one horizontal pair,  one vertical cap pair,  two inductors and two switches one vias. And then we can run this simple configuration to test.
+
+
+Cap pair description:
+Series cap logic change: The correct series cap placement: If the series if defined horizontal, the cap need to be rotated 90 degree. If the series cap is vertical, it does not need to be rotated. The series cap need to be placed  in the middle point of the line connectng the two pixel centers. after placing the pixels we will wire it in the M8 layer. We first find the PLUS like how we find it in switches, wire it to the center of the left pixel (or top pixel). Take horizontal as example. This will align in the x direction with the pix center. We need  another wire to start from x to the corresponding y, then use via to connect to the top metal layer. It is like a Ninety-degree zigzag line. SImilarly we do for the minus. For the bulk we will connect it to the ground like how we do to the switch.

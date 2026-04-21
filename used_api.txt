@@ -1,0 +1,88 @@
+
+dbCreateInst
+
+dbCreateInst( 
+d_cellView 
+d_master 
+t_name 
+l_point 
+t_orient 
+[ x_stopIndex ] 
+[ g_physOnly]
+) 
+=> d_inst / nil 
+Description
+Creates an instance (of cellview d_master) in the cellview d_cellView with an origin and orientation specified by l_point and t_orient. This function creates a named object and has a ROD ID associated with this object.
+
+Arguments
+d_cellView
+
+Cellview where the instance is placed.
+
+d_master
+
+Master cellview of the instance to be created.
+This parameter must be a super master; use of a submaster can cause unexpected behavior.
+
+t_name
+
+If specified, the instance is named by t_name; if nil the program assigns a unique name to the instance. t_name can be a unique name, such as "Inst1" or, a hierarchy name, such as "moduleA`moduleB`Inst" with at least one hierarchy delimiter (`). It must obey the syntax of instance names as defined at the beginning of this chapter.
+
+l_point
+
+Origin of the new instance.
+
+t_orient
+
+Orientation of the new instance.
+
+x_stopIndex 
+
+Number of instances; When specified and when its value is greater than 0, the starting index value is 0, and therefore, the resulting width of the instance is stopIndex +1.
+
+Default value: 'nil
+
+If t_name is given, any value specified by x_ stopIndex is overridden. (that is, the number of instances is derived from the name, instead of being taken from the x_ stopIndex argument).
+g_physOnly
+
+Optional boolean argument that specifies whether cellview data is physical or both physical and logical. A cellview may contain both physical and logical data when it contains EMH type data. When t, the cellview is physical only. Default is nil.
+
+Value Returned
+d_inst
+
+The dbObject of the instance.
+
+nil
+
+The instance is not created.
+
+
+dbFindTermByName
+
+dbFindTermByName( 
+d_cellView 
+t_name 
+) 
+=> d_term / nil 
+Description
+Finds a terminal in a cellview.
+
+Arguments
+d_cellView
+
+Name of the cellview.
+
+t_name
+
+Name of the terminal to search for.
+
+Value Returned
+d_term
+
+The terminal.
+
+nil
+
+The terminal is not found.
+
+Example

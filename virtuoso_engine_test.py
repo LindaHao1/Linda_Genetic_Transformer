@@ -41,13 +41,22 @@ from virtuoso_engine import ParallelVirtuosoEngine
 # Both pixels are type-1 (metal), so they already have patches — no matrix change needed.
 # Expected: EMX sees 10 ports (8 base + CP_0A + CP_0B); each state's .scs contains
 #           "c_pair0 (cp_0a cp_0b) capacitor c=1e-12"
-with VirtuosoPixelEngine("virtuoso_engine/config.yaml") as engine:
-    # result = engine.run({
-    #     "pixelated": {
-    #         "cap_pixel_pairs": [[[0, 1], [1, 2]]],
-    #         "cap_pair_values": [1.0e-12],
-    #     }
-    # })
-    result = engine.run({})
-    print("Cap pair run success:", result.success)
-    print("S-param files:", result.s_param_files)
+# with VirtuosoPixelEngine("virtuoso_engine/config.yaml") as engine:
+#     # result = engine.run({
+#     #     "pixelated": {
+#     #         "cap_pixel_pairs": [[[0, 1], [1, 2]]],
+#     #         "cap_pair_values": [1.0e-12],
+#     #     }
+#     # })
+#     result = engine.run({})
+#     print("Cap pair run success:", result.success)
+#     print("S-param files:", result.s_param_files)
+
+
+### FULL DESIGN TEST ###
+from virtuoso_engine.engine import VirtuosoPixelEngine
+
+with VirtuosoPixelEngine("virtuoso_engine/config_base.yaml") as engine:
+    # result = engine.run("virtuoso_optimization_GA/configs/test/full_layout_test.yaml")
+    result = engine.run("candidate_design/sim_20260419_234158_config.yaml")
+    print(result.success, result.run_dir)

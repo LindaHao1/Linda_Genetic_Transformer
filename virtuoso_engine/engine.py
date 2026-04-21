@@ -72,6 +72,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import csv
+
 import yaml
 from virtuoso_engine.config_loader import load_config
 
@@ -111,6 +113,9 @@ _MODE_TEMPLATES: Dict[str, dict] = {
     "pixelated_design_simple": {
         "layout": "pixelated_design_simple/layout.il",
         "emx":    "pixelated_design_simple/emx.il",
+    },
+    "full_layout": {
+        "layout": "full_layout/layout.il",
     },
 }
 
@@ -207,17 +212,25 @@ class VirtuosoPixelEngine:
     # Public interface
     # ------------------------------------------------------------------
 
-    def run(self, config_override: Optional[Dict] = None) -> RunResult:
+    def run(self, config_override: Optional[Dict | str | Path] = None) -> RunResult:
         """
         Execute one full layout + simulation run.
 
         Args:
-            config_override: Nested dict deep-merged over the base config.
-                             Only the keys you want to change need to be provided.
+            config_override: One of:
+              - A nested dict deep-merged over the base config (only changed keys
+                need to be provided).
+              - A path (str or Path) to a YAML config file.  The file is loaded
+                with ``load_config``, which resolves any ``_base_`` inheritance,
+                and the fully-merged result is then deep-merged over the engine's
+                base config.  This guarantees that values like ``layout.pixel_size``
+                set in child configs are visible to all renderers.
 
         Returns:
             RunResult with success flags, log text, and plot paths.
         """
+        if isinstance(config_override, (str, Path)):
+            config_override = load_config(Path(config_override))
         cfg  = _deep_merge(self.base_config, config_override or {})
         if self._worker_id is not None:
             cfg = _apply_worker_config(cfg, self._worker_id)
@@ -433,6 +446,8 @@ class VirtuosoPixelEngine:
             self._render_simplified_layout(cfg, cell_name, output_path)
         elif mode == "pixelated_design_simple":
             self._render_pixelated_simple_layout(cfg, cell_name, output_path)
+        elif mode == "full_layout":
+            self._render_full_layout(cfg, cell_name, output_path)
         else:
             raise ValueError(f"No layout renderer for mode {mode!r}")
 
@@ -451,6 +466,12 @@ class VirtuosoPixelEngine:
             self._render_simplified_sim(cfg, cell_name, emx_dir, output_path)
         elif mode == "pixelated_design_simple":
             self._render_pixelated_simple_emx(cfg, cell_name, emx_dir, output_path)
+        elif mode == "full_layout":
+            # EMX + Spectre not yet implemented for full_layout — emit a no-op script.
+            output_path.write_text(
+                '; full_layout: EMX/Spectre not yet implemented\n'
+                'printf("full_layout sim step skipped (layout-only mode).\\n")\n'
+            )
         else:
             raise ValueError(f"No sim renderer for mode {mode!r}")
 
@@ -786,6 +807,144 @@ class VirtuosoPixelEngine:
         return [p for p in s2p_paths if p is not None]
 
     # ------------------------------------------------------------------
+    # full_layout renderer
+    # ------------------------------------------------------------------
+
+    def _render_full_layout(
+        self,
+        cfg: dict,
+        cell_name: str,
+        output_path: Path,
+    ) -> None:
+        """Render layout.il for full_layout mode.
+
+        Reads the full_layout config section, resolves layer names, looks up
+        cap dimensions from CSV tables, and substitutes all parameters into
+        the SKILL template.
+        """
+        fl  = cfg["full_layout"]
+        pd  = cfg["pixelated"]
+        la  = cfg["layout"]
+        n   = cfg["nmos"]
+        m   = cfg["mim_cap"]
+
+        matrix      = pd["pixel_state_matrix"]
+        mat_info    = analyze_matrix(matrix)
+        num_rows    = mat_info["num_rows"]
+        num_cols    = mat_info["num_cols"]
+
+        pixel_size  = la["pixel_size"]
+        grid_size   = la.get("grid_size", pixel_size)
+
+        # --- Layer resolution: full_layout.layers overrides layout.* ---
+        layers_cfg      = fl.get("layers", {})
+        gnd_layer       = layers_cfg.get("gnd_layer")   or la["gnd_layer"]
+        pixel_layer     = layers_cfg.get("pixel_layer") or la["pixel_layer"]
+        cap_pair_route  = layers_cfg.get("cap_pair_route") or pixel_layer
+        drain_via_bot, drain_via_top = (layers_cfg.get("switch_drain_via") or ["M2", "M8"])
+        bulk_via_bot,  bulk_via_top  = (layers_cfg.get("switch_bulk_via")  or ["M1", "M4"])
+        mim_via_bot,   mim_via_top   = (layers_cfg.get("switch_mim_via")   or ["M8", "M9"])
+        via_stack_bot, via_stack_top = (layers_cfg.get("via_pixel_stack")  or ["M4", "AP"])
+
+        # --- Resolve table paths relative to config or repo root ---
+        repo_root = Path(__file__).parent.parent
+        sw_table_path  = _resolve_path(fl["switch_cap_table"], repo_root)
+        cap_table_path = _resolve_path(fl["cap_pair_table"],   repo_root)
+
+        # --- Switch cap dims: one (length, width) per switch pixel (row-major order) ---
+        sw_cap_values = pd.get("cap_values", [])
+        if len(sw_cap_values) != mat_info["num_sw"]:
+            raise ValueError(
+                f"pixelated.cap_values length ({len(sw_cap_values)}) must equal "
+                f"number of switch pixels ({mat_info['num_sw']})."
+            )
+        sw_dims = _lookup_cap_dims(sw_table_path, sw_cap_values)
+
+        # --- Cap pair dims and orientations ---
+        cap_pairs  = pd.get("cap_pixel_pairs", [])
+        cap_values = pd.get("cap_pair_values", [])
+        if len(cap_pairs) != len(cap_values):
+            raise ValueError(
+                f"pixelated.cap_pixel_pairs length ({len(cap_pairs)}) must equal "
+                f"cap_pair_values length ({len(cap_values)})."
+            )
+        cp_dims   = _lookup_cap_dims(cap_table_path, cap_values)
+        cp_orient = []
+        for pair in cap_pairs:
+            (r1, c1), (r2, c2) = pair
+            if r1 == r2:
+                cp_orient.append("H")
+            elif c1 == c2:
+                cp_orient.append("V")
+            else:
+                raise ValueError(
+                    f"Cap pair {pair} is neither horizontal nor vertical. "
+                    "Only axis-aligned pairs are supported."
+                )
+
+        # --- Feedline: row derived from matrix (same as pixelated_design_simple) ---
+        feed_row_left, feed_row_right = get_feed_rows(matrix)
+        feedline      = pd.get("feedline", {})
+        feedline_w    = feedline.get("feedline_width", 10.2)
+        feedline_pad  = feedline.get("feedline_padding", 10.0)
+
+        # --- Build SKILL array literals ---
+        sw_cap_dims_skill = _build_skill_list_of_pairs(sw_dims)
+        cp_dims_skill     = _build_skill_list_of_pairs(cp_dims)
+        cp_orient_skill   = _build_skill_string_list(cp_orient)
+        cp_pixels_skill   = _build_skill_cap_pair_pixels(cap_pairs)
+
+        # Flat pixel-types list in row-major order
+        pixel_types_flat  = [ptype for row in matrix for ptype in row]
+        pixel_types_skill = "list(" + " ".join(str(t) for t in pixel_types_flat) + ")"
+
+        template_text = (_TEMPLATES_DIR / "full_layout/layout.il").read_text()
+
+        rendered = string.Template(template_text).substitute(
+            LIB_NAME               = fl.get("lib_name", cfg["project"]["lib_name"]),
+            CELL_NAME              = cell_name,
+            PIXEL_SIZE             = pixel_size,
+            GRID_SIZE              = grid_size,
+            GND_LAYER              = gnd_layer,
+            PIXEL_LAYER            = pixel_layer,
+            SWITCH_DRAIN_VIA_BOT   = drain_via_bot,
+            SWITCH_DRAIN_VIA_TOP   = drain_via_top,
+            SWITCH_BULK_VIA_BOT    = bulk_via_bot,
+            SWITCH_BULK_VIA_TOP    = bulk_via_top,
+            SWITCH_MIM_VIA_BOT     = mim_via_bot,
+            SWITCH_MIM_VIA_TOP     = mim_via_top,
+            CAP_PAIR_ROUTE_LAYER   = cap_pair_route,
+            VIA_PIXEL_STACK_BOT    = via_stack_bot,
+            VIA_PIXEL_STACK_TOP    = via_stack_top,
+            NUM_ROWS               = num_rows,
+            NUM_COLS               = num_cols,
+            PIXEL_TYPES_SKILL      = pixel_types_skill,
+            SWITCH_CAP_DIMS_SKILL  = sw_cap_dims_skill,
+            NMOS_WIDTH             = n["width"],
+            NMOS_LENGTH            = n["length"],
+            NMOS_FINGERS           = n["fingers"],
+            PDK_LIB                = cfg["project"]["pdk_lib"],
+            NMOS_CELL              = n["cell_layout"],
+            MIM_CELL_LAYOUT        = m["cell_layout"],
+            INDUCTOR_LIB           = fl.get("inductor_lib", ""),
+            INDUCTOR_CELL          = fl.get("inductor_cell", ""),
+            INDUCTOR_OFFSET_X      = fl.get("inductor_offset", [0.0, 0.0])[0],
+            INDUCTOR_OFFSET_Y      = fl.get("inductor_offset", [0.0, 0.0])[1],
+            CAP_PAIR_WIRE_WIDTH    = fl.get("cap_pair_wire_width", 0.5),
+            CAP_PAIR_COUNT         = len(cap_pairs),
+            CAP_PAIR_PIXELS_SKILL  = cp_pixels_skill,
+            CAP_PAIR_DIMS_SKILL    = cp_dims_skill,
+            CAP_PAIR_ORIENT_SKILL  = cp_orient_skill,
+            VIA_SIZE               = fl.get("via_size", la.get("via_size", 3.8)),
+            GND_Y_EXTENSION        = la.get("gnd_y_extension", 0.0),
+            FEEDLINE_ROW_LEFT      = feed_row_left,
+            FEEDLINE_ROW_RIGHT     = feed_row_right,
+            FEEDLINE_WIDTH         = feedline_w,
+            FEEDLINE_PADDING       = feedline_pad,
+        )
+        output_path.write_text(rendered)
+
+    # ------------------------------------------------------------------
     # Cleanup
     # ------------------------------------------------------------------
 
@@ -841,6 +1000,77 @@ class VirtuosoPixelEngine:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _resolve_path(path_str: str, repo_root: Path) -> Path:
+    """Resolve a path that may be relative (to repo root) or absolute."""
+    p = Path(path_str)
+    return p if p.is_absolute() else (repo_root / p)
+
+
+def _lookup_cap_dims(
+    table_path: Path,
+    cap_values: List[float],
+) -> List[tuple]:
+    """
+    For each capacitance value, find the closest entry in the CSV lookup table
+    and return (length_um, width_um).
+
+    CSV format (first non-comment row is header):
+        cap_value_f, length_um, width_um
+    """
+    if not table_path.exists():
+        raise FileNotFoundError(
+            f"Cap dimension table not found: {table_path}\n"
+            "Check the switch_cap_table / cap_pair_table config keys."
+        )
+    rows: List[tuple] = []
+    with table_path.open() as f:
+        reader = csv.DictReader(row for row in f if not row.startswith("#"))
+        for r in reader:
+            rows.append((float(r["cap_value_f"]), float(r["length_um"]), float(r["width_um"])))
+    if not rows:
+        raise ValueError(f"Cap dimension table is empty: {table_path}")
+
+    result = []
+    for cv in cap_values:
+        closest = min(rows, key=lambda r, cv=cv: abs(r[0] - cv))
+        result.append((closest[1], closest[2]))
+    return result
+
+
+def _build_skill_list_of_pairs(pairs: List[tuple]) -> str:
+    """Build a SKILL list of quoted-string (length width) pairs with 'u' unit suffix.
+
+    dbCreateParamInst expects string-typed params like list("lt" "string" "12u").
+    Values from the CSV table are floats (um); appending 'u' matches what the
+    single-pixel layout_pixel mode passes via mim_cap.length / mim_cap.width.
+    """
+    if not pairs:
+        return "list()"
+    inner = " ".join(f'list("{l}u" "{w}u")' for l, w in pairs)
+    return f"list({inner})"
+
+
+def _build_skill_string_list(strings: List[str]) -> str:
+    """Build a SKILL list of quoted strings: list("H" "V" ...)"""
+    if not strings:
+        return "list()"
+    inner = " ".join(f'"{s}"' for s in strings)
+    return f"list({inner})"
+
+
+def _build_skill_cap_pair_pixels(
+    cap_pairs: List[List[List[int]]],
+) -> str:
+    """Build a SKILL list of (r1 c1 r2 c2) per cap pair."""
+    if not cap_pairs:
+        return "list()"
+    entries = []
+    for pair in cap_pairs:
+        (r1, c1), (r2, c2) = pair
+        entries.append(f"list({r1} {c1} {r2} {c2})")
+    return "list(" + " ".join(entries) + ")"
+
 
 def _build_cap_port_data_skill(
     cap_pixel_pairs: List[List[List[int]]],
@@ -929,6 +1159,9 @@ def _make_cell_name(cfg: dict) -> str:
             f"_frl{frl}frr{frr}"
         ) + suffix
 
+    if mode == "full_layout":
+        return cfg["full_layout"]["cell_name"] + suffix
+
     # Default: layout_pixel
     n = cfg["nmos"]
     m = cfg["mim_cap"]
@@ -956,6 +1189,8 @@ def _get_run_labels(cfg: dict) -> list:
     if mode == "pixelated_design_simple":
         n_states = len(cfg.get("pixelated", {}).get("state_list", []))
         return [f"state{i}" for i in range(n_states)]
+    if mode == "full_layout":
+        return []  # No Spectre states in layout-only mode
     return cfg["simulation"]["control_voltages"]
 
 

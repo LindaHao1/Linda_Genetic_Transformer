@@ -30,9 +30,9 @@ project:
 # TUNABLE PARAMETERS — layout_pixel mode
 # ============================================================
 nmos:
-  width: "3u"
-  length: "80n"
-  fingers: 4
+  width: "2u"
+  length: "60n"
+  fingers: 32
   cell_layout: "nmos_rf"
   cell_spectre: "nmos_rf"
 
@@ -114,6 +114,48 @@ pixelated:
 
   cap_pixel_pairs: []
   cap_pair_values: []
+
+# ============================================================
+# FULL LAYOUT MODE
+# This section is only used when mode: "full_layout".
+# All other modes are unaffected when this section is present.
+# ============================================================
+full_layout:
+  # Cell identity — manually specified (not auto-generated)
+  lib_name: "pySim"
+  cell_name: "full_layout_test"
+
+  # Layout geometry inherits layout.pixel_size / layout.grid_size
+  # Design fields (pixel_state_matrix, switch_cap_values, cap_pixel_pairs,
+  # cap_pair_values, feedline) live in the pixelated: section so configs
+  # are shared between pixelated_design_simple and full_layout modes.
+
+  # Inductors: lib/cell of an existing Virtuoso layout cell to duplicate
+  # Leave empty until the real inductor cell is available.
+  inductor_lib: "Doherty_design"
+  inductor_cell: "Activeinductance_Gyratorbased_200pH_v1"
+  # Offset applied after aligning the inductor IN pin to the pixel centre [x, y] in um
+  inductor_offset: [-80.0, 50.0]
+
+  # Lookup tables (relative to repo root or absolute paths)
+  switch_cap_table: "virtuoso_engine/data/switch_cap_table.csv"
+  cap_pair_table:   "virtuoso_engine/data/cap_pair_table.csv"
+
+  # Via pixel dimensions, for switch design
+  via_size: 3.8              # square via size (um)
+
+  # Layer configuration — null fields inherit from layout.gnd_layer / layout.pixel_layer
+  layers:
+    gnd_layer: null                      # null → use layout.gnd_layer
+    pixel_layer: null                    # null → use layout.pixel_layer
+    switch_drain_via: ["M2", "M8"]       # drain via stack (bottom, top)
+    switch_bulk_via:  ["M1", "M4"]       # bulk connection via
+    switch_mim_via:   ["M8", "M9"]       # MIM cap minus-side via
+    cap_pair_route: null                 # null → same as pixel_layer
+    via_pixel_stack: ["M4", "AP"]        # type-4 via: full stack from gnd to top metal
+
+  # Wire width (um) for M8 routing paths in cap pair connections
+  cap_pair_wire_width: 1.0
 
 # ============================================================
 # CLEANUP

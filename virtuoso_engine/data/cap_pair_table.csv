@@ -1,0 +1,25 @@
+# Cap-pair MIM capacitor lookup table
+# cap_value_f: capacitance in Farads
+# length_um: cap length (long axis, oriented along the pair direction)
+# width_um:  cap width  (short axis, transverse to the pair direction)
+# Higher aspect ratio than switch caps — elongated to fit between pixel centers
+# PLACEHOLDER — replace with measured values from PDK
+cap_value_f,length_um,width_um
+1.9987e-13,9.78,9.78
+2.5e-13,10.96,10.96
+2.99e-13,12.02,12.02
+3.5e-13,13.0,13.0
+4.00e-13,14.89,13.0
+4.5e-13,16.77,13.0
+5.0e-13,18.65,13.0
+5.5e-13,20.54,13.0
+6.0e-13,22.42,13.0
+6.5e-13,24.3,13.0
+7.0e-13,26.19,13.0
+7.5e-13,28.07,13.0
+8.0e-13,29.96,13.0
+8.5e-13,31.84,13.0
+9.0e-13,33.72,13.0
+9.5e-13,35.61,13.0
+1.0e-12,37.49,13.0
+1.05e-12,39.37,13.0

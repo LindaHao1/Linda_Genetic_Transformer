@@ -1,0 +1,85 @@
+_base_: ../../../virtuoso_engine/config_base.yaml
+
+mode: "full_layout"
+
+layout:
+  pixel_size: 31.0
+  grid_size: 25.0
+
+# ============================================================
+# DESIGN — shared between full_layout and pixelated_design_simple.
+# Switch mode to "pixelated_design_simple" and this section works as-is.
+# ============================================================
+pixelated:
+  # 13-row x 13-col grid (active area: rows 0-12, active cols 1-11).
+  # Col 0 and col 12 are feedline columns: single 1 at the feedline row,
+  # all other rows 0 — identical convention to pixelated_design_simple.
+  #
+  # Feedline row: 6 (centre of grid).
+  #
+  # Device placement (clearance rules):
+  #   IND1 at (2,3):  5×5 clearance zone rows 0-4, cols 1-5  → only 0/1 inside
+  #   IND2 at (2,9):  5×5 clearance zone rows 0-4, cols 7-11 → only 0/1 inside
+  #   SW1  at (7,3):  3×3 clearance zone rows 6-8, cols 2-4  → only 0 inside
+  #   SW2  at (7,9):  3×3 clearance zone rows 6-8, cols 8-10 → only 0 inside
+  #   VIA  at (5,6):  no clearance requirement
+  #
+  # Cap pair endpoints (both type 1):
+  #   H pair: (7,5) ↔ (7,7)   — outside both switch clearance zones
+  #   V pair: (9,4) ↔ (12,4)  — outside all clearance zones
+  #
+  #   col:  0  1  2  3  4  5  6  7  8  9 10 11 12
+  # row  0: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row  1: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row  2: [0, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 0]  IND1, IND2
+  # row  3: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row  4: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row  5: [0, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1, 1, 0]  VIA at (5,6)
+  # row  6: [1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1]  feedline row + SW clearance
+  # row  7: [0, 1, 0, 3, 0, 1, 1, 1, 0, 3, 0, 1, 0]  SW1(7,3) SW2(7,9); H cap: (7,5)↔(7,7)
+  # row  8: [0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0]  SW clearance
+  # row  9: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]  V cap top: (9,4)
+  # row 10: [0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row 11: [0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+  # row 12: [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]  V cap bottom: (12,4)
+  pixel_state_matrix:
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 1, 2, 1, 1, 1, 1, 1, 2, 1, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 4, 1, 1, 1, 1, 1, 0]
+    - [1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1]
+    - [0, 1, 0, 3, 0, 1, 1, 1, 0, 3, 0, 1, 0]
+    - [0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+    - [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0]
+
+  # Two switch pixels — 1 pF each
+  cap_values: [1.0e-12, 1.0e-12]
+
+  # Cap pairs:
+  #   H pair: (7,5) ↔ (7,7)  same row → horizontal
+  #   V pair: (9,4) ↔ (12,4) same col → vertical
+  cap_pixel_pairs:
+    - [[7, 5], [7, 7]]
+    - [[9, 4], [12, 4]]
+
+  cap_pair_values: [5.0e-13, 5.0e-13]
+
+  feedline:
+    feedline_width: 10.2
+    feedline_padding: 10.0
+
+# ============================================================
+# FULL LAYOUT implementation details (mode-specific only)
+# ============================================================
+full_layout:
+  lib_name: "pySim"
+  cell_name: "full_layout_test_3"
+
+  # Inductor cell
+  inductor_lib: "Doherty_design"
+  inductor_cell: "Activeinductance_Gyratorbased_200pH_v1"

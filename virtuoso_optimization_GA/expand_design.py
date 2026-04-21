@@ -1,31 +1,28 @@
 """
-expand_design.py — Physically expand a smaller DesignState to a larger grid by
-inserting rows and columns one at a time.
+expand_design.py — Physically expand a smaller DesignState to a larger grid.
 
-How expansion works
--------------------
-We need to add exactly delta_cols columns and delta_rows rows to reach the target
-size.  The order of col/row insertions is shuffled so they are interleaved.
+Two top-level expansion modes are selected by weighted random (p_embed vs
+p_random_insertion):
 
-For each insertion we pick one of three modes:
+  p_embed         — Embed the seed design at the center of the target grid.
+                    Outside pixels are filled with a random density d drawn
+                    once per expansion call from Uniform(0, 1): each outside
+                    pixel is independently set to 1 with probability d (so
+                    d=0 gives pure zero-padding, d=1 gives all-ones).
+                    Feed rows are always extended with solid metal regardless
+                    of density.
 
-  "duplicate"  — copy the content of the adjacent row or column.
-                 Insertion position is chosen randomly in the interior.
-                 Special pixels (inductor/switch) in the source are demoted to
-                 metal (type 1) so Chebyshev spacing constraints are not broken.
+  p_random_insertion — Insert rows and columns one at a time in shuffled
+                    order.  Each insertion picks one of three sub-modes by
+                    weighted random (p_duplicate / p_random_fill / p_zero_pad):
 
-  "random_fill" — fill the new row/column with random 0/1 pixels.
-                  Insertion position is chosen randomly in the interior.
-                  No special pixels are ever placed.
+    "duplicate"   — copy the adjacent row/col at a random interior position.
+                    Special pixels (inductor/switch) are demoted to metal (type
+                    1) so Chebyshev spacing constraints are not broken.
 
-  "zero_pad"   — insert a row or column of all zeros (ground).
-                 Insertion position is always at a boundary (leftmost/rightmost
-                 interior column, or top/bottom row), so zero padding expands
-                 the design outward rather than slicing through the interior.
+    "random_fill" — random 0/1 content at a random interior position.
 
-The relative frequency of each mode is controlled by p_duplicate, p_random_fill,
-and p_zero_pad weights in the config.  Higher p_duplicate preserves more of the
-original design's RF performance topology.
+    "zero_pad"    — zeros inserted at the boundary edges only (not interior).
 """
 
 from __future__ import annotations
@@ -149,23 +146,24 @@ def _enforce_feed_adjacency(
     return result
 
 
-def zero_pad_centered_with_feed(
+def embed_centered_with_density(
     design: DesignState,
     target_rows: int,
     target_cols: int,
+    density: float,
+    rng: _random_module.Random,
 ) -> DesignState:
     """
-    Embed the original design at the center of a (target_rows x target_cols) grid
-    by adding zero-padding evenly on all four sides (extra pixel goes to top/right).
+    Embed the original design at the center of a (target_rows x target_cols) grid.
 
-    Feed connectivity is maintained by extending a horizontal metal trace from the
-    new edge columns to the original feed pixels:
-      - Left:  row (left_feed_row + pad_bottom) gets metal (type 1) at cols 0..pad_left-1
-      - Right: row (right_feed_row + pad_bottom) gets metal (type 1) at cols
-               pad_left+src_cols..target_cols-1
+    Outside pixels (not covered by the seed and not in feed-row extensions) are
+    filled with independent Bernoulli(density) draws: each pixel is 1 with
+    probability `density` and 0 otherwise.  density=0.0 gives pure zero-padding;
+    density=1.0 gives an all-ones background.
 
-    The new col 0 and col target_cols-1 each contain exactly one non-zero pixel,
-    satisfying the feed-column feasibility rule.
+    Feed connectivity is maintained by extending a solid metal trace (type 1)
+    from each new edge column to the original feed pixels, regardless of density.
+
     Cap-pair coordinates are shifted by (pad_bottom, pad_left); distances are
     unchanged so all pairs remain valid without filtering.
     """
@@ -183,17 +181,26 @@ def zero_pad_centered_with_feed(
     new_left_feed_row  = left_feed_row  + pad_bottom
     new_right_feed_row = right_feed_row + pad_bottom
 
-    # Build zero grid and embed original design
-    new_matrix = [[0] * target_cols for _ in range(target_rows)]
+    # Fill background with random density (skip feed columns 0 and N-1),
+    # then embed original design on top.
+    # Feed columns are kept all-zero here; feed extensions below set exactly one
+    # metal pixel in each, satisfying the one-non-zero-per-feed-column rule.
+    new_matrix = [
+        [
+            0 if (c == 0 or c == target_cols - 1) else (1 if rng.random() < density else 0)
+            for c in range(target_cols)
+        ]
+        for _ in range(target_rows)
+    ]
     for r in range(src_rows):
         for c in range(src_cols):
             new_matrix[r + pad_bottom][c + pad_left] = src[r][c]
 
-    # Left feed extension: horizontal metal trace from new col 0 to original left feed
+    # Left feed extension: solid metal from new col 0 to the embedded left feed
     for c in range(pad_left):
         new_matrix[new_left_feed_row][c] = 1
 
-    # Right feed extension: horizontal metal trace from original right feed to new col N-1
+    # Right feed extension: solid metal from embedded right feed to new col N-1
     for c in range(pad_left + src_cols, target_cols):
         new_matrix[new_right_feed_row][c] = 1
 
@@ -212,6 +219,15 @@ def zero_pad_centered_with_feed(
         cap_pixel_pairs        = shifted_pairs,
         cap_pair_values        = list(design.cap_pair_values),
     )
+
+
+def zero_pad_centered_with_feed(
+    design: DesignState,
+    target_rows: int,
+    target_cols: int,
+) -> DesignState:
+    """Convenience wrapper: embed with zero background (density=0)."""
+    return embed_centered_with_density(design, target_rows, target_cols, 0.0, _random_module.Random())
 
 
 def _shift_cap_pairs_col(
@@ -252,14 +268,12 @@ def expand_design_to_size(
     """
     Physically expand *design* to (target_rows x target_cols).
 
-    With probability cfg.finetune_expand_p_center_pad, uses zero_pad_centered_with_feed:
-      the original design is embedded at the center of the target grid with even
-      zero-padding on all four sides and horizontal feed traces extended to the new
-      edge columns.  This is deterministic (no rng needed for the expansion itself).
+    Two top-level modes are selected by weighted random draw:
 
-    Otherwise, rows and columns are inserted one at a time in shuffled order, each
-    using one of three modes (duplicate / random_fill / zero_pad) chosen by weighted
-    random from cfg.finetune_expand_p_*.
+      p_embed            — embed the seed at center; outside pixels filled with
+                           density d ~ Uniform(0, 1) drawn fresh each call.
+      p_random_insertion — insert rows/cols one at a time in shuffled order,
+                           each using duplicate / random_fill / zero_pad sub-modes.
 
     Returns a new DesignState; the input is not modified.
     """
@@ -274,9 +288,12 @@ def expand_design_to_size(
     if delta_rows == 0 and delta_cols == 0:
         return design.copy()
 
-    p_center = getattr(cfg, "finetune_expand_p_center_pad", 0.3)
-    if rng.random() < p_center:
-        return zero_pad_centered_with_feed(design, target_rows, target_cols)
+    p_embed = getattr(cfg, "finetune_expand_p_embed", 0.3)
+    p_ins   = getattr(cfg, "finetune_expand_p_random_insertion", 0.7)
+    total_top = p_embed + p_ins
+    if rng.random() * total_top < p_embed:
+        density = rng.random()
+        return embed_centered_with_density(design, target_rows, target_cols, density, rng)
 
     p_dup  = cfg.finetune_expand_p_duplicate
     p_rand = cfg.finetune_expand_p_random_fill

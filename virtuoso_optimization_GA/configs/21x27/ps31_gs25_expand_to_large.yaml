@@ -14,25 +14,30 @@
 _base_: ../base/21x27_finetune.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_2"
 
 grid:
   rows: 25       # TODO: adjust to target large-grid size
   cols: 37       # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
-  n_parallel: 4
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_ind_s1p_finetune/small_condidate.yaml" # "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
+  n_parallel: 6
 
   finetune_expand:
     enabled: true
-    # Expansion mode probabilities (must not necessarily sum to 1 — treated as weights):
-    #   p_center_pad:  embed original at center w/ even zero-padding + feed extension
+    # Top-level mode weights (treated as weights, need not sum to 1):
+    #   p_embed:             embed seed at center; outside pixels filled with a random
+    #                        density d ~ Uniform(0,1) drawn each call (d=0 → zeros, d=1 → all-ones)
+    #   p_random_insertion:  insert rows/cols one at a time using sub-modes below
+    # Note: the first seeded individual always uses zero-density embed (no mutations).
+    p_embed:             0.7
+    p_random_insertion:  0.3
+
+    # Sub-mode weights for p_random_insertion (treated as weights, need not sum to 1):
     #   p_duplicate:   copy the adjacent row/col at a random interior position
     #   p_random_fill: random 0/1 content at a random interior position
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
-    # Note: the first seeded individual always uses center_pad (no mutations).
-    p_center_pad:  0.3
     p_duplicate:   0.6
     p_random_fill: 0.2
     p_zero_pad:    0.2
