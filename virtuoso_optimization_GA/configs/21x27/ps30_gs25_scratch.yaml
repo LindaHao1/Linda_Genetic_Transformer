@@ -2,12 +2,14 @@
 # GA Experiment — 21×27 grid, pixel_size=30 um, grid_size=25 um, scratch
 # Engine: config_larger_pixel.yaml (single 200 nH inductor)
 # ===========================================================================
-_base_: ../base/21x27_scratch.yaml
+_base_: ../base/scratch.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_larger_pixel.yaml"
 output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_block_hybrid_larger_pixel"
 
 grid:
+  rows: 21
+  cols: 27
   n_inductor_values: 1
   single_inductor_value: true
   cap_pair_init_min: 2

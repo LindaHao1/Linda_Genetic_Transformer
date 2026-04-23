@@ -11,17 +11,17 @@
 #
 # IMPORTANT: set ga.finetune_design_path before running.
 # ===========================================================================
-_base_: ../base/21x27_finetune.yaml
+_base_: ../base/finetune.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_2"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_5state"
 
 grid:
-  rows: 25       # TODO: adjust to target large-grid size
+  rows: 30       # TODO: adjust to target large-grid size
   cols: 37       # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_ind_s1p_finetune/small_condidate.yaml" # "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_ind_s1p_finetune/sim_20260421_112845_config_cli_20260422_011151.yaml" # "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
   n_parallel: 6
 
   finetune_expand:
@@ -31,16 +31,16 @@ ga:
     #                        density d ~ Uniform(0,1) drawn each call (d=0 → zeros, d=1 → all-ones)
     #   p_random_insertion:  insert rows/cols one at a time using sub-modes below
     # Note: the first seeded individual always uses zero-density embed (no mutations).
-    p_embed:             0.7
-    p_random_insertion:  0.3
+    p_embed:             0.5
+    p_random_insertion:  0.5
 
     # Sub-mode weights for p_random_insertion (treated as weights, need not sum to 1):
     #   p_duplicate:   copy the adjacent row/col at a random interior position
     #   p_random_fill: random 0/1 content at a random interior position
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
-    p_duplicate:   0.6
-    p_random_fill: 0.2
-    p_zero_pad:    0.2
+    p_duplicate:   1.0
+    p_random_fill: 0.1
+    p_zero_pad:    0.1
     n_immigrants_expanded: 2   # expanded immigrants injected each generation
 
 seed: 42

@@ -50,7 +50,7 @@ let( ( cv libName cellName
        fl_x_left fl_x_right
        pin_size feedline_pin_size
        sw_idx ind_idx
-       ind_inst_list
+       keepout_list gnd_fill_list
      )
 
 libName              = "${LIB_NAME}"
@@ -192,9 +192,10 @@ printf(" [3] Feedlines drawn. left_y=%.2f  right_y=%.2f\n"
 ; SECTION 4 — ACTIVE PIXEL GRID  (cols 1 to num_cols-2)
 ; ============================================================
 
-sw_idx       = 0   ; running index into switch_cap_dims
-ind_idx      = 0   ; running index for inductor placement
-ind_inst_list = list()  ; collect placed inductor insts for ground carve-out
+sw_idx       = 0      ; running index into switch_cap_dims
+ind_idx      = 0      ; running index for inductor placement
+keepout_list = list() ; keepout bBoxes from switches and inductors — carved from ground fill
+gnd_fill_list = list() ; tracked ground fill shapes for explicit dbLayerAndNot carve-out
 
 for( row_i 0 (num_rows - 1)
     for( col_i 1 (num_cols - 2)
@@ -206,18 +207,13 @@ for( row_i 0 (num_rows - 1)
             cy       = (num_rows - 1 - row_i) * grid_size + grid_size / 2.0
 
             cond(
-                ; --- Type 0: ground fill only ---
+                ; --- Type 0: ground fill only (handled by column background fill) ---
                 ( ptype == 0
-                    dbCreateRect(cv gnd_layer
-                        list(list(cx - grid_size/2.0 cy - grid_size/2.0)
-                             list(cx + grid_size/2.0 cy + grid_size/2.0)))
+                    t  ; no per-pixel action — column fill covers this
                 )
 
-                ; --- Type 1: metal patch + ground fill ---
+                ; --- Type 1: metal patch only (ground covered by column background fill) ---
                 ( ptype == 1
-                    dbCreateRect(cv gnd_layer
-                        list(list(cx - grid_size/2.0  cy - grid_size/2.0)
-                             list(cx + grid_size/2.0  cy + grid_size/2.0)))
                     dbCreateRect(cv pixel_layer
                         list(list(cx - pixel_size/2.0 cy - pixel_size/2.0)
                              list(cx + pixel_size/2.0 cy + pixel_size/2.0)))
@@ -229,7 +225,7 @@ for( row_i 0 (num_rows - 1)
                         ind_inst = fl_place_inductor_at(cv cx cy inductor_lib inductor_cell ind_idx
                             inductor_offset_x inductor_offset_y)
                         when( ind_inst
-                            ind_inst_list = append(ind_inst_list list(ind_inst))
+                            keepout_list = append(keepout_list list(ind_inst~>bBox))
                         )
                     )
                     dbCreateRect(cv pixel_layer
@@ -239,12 +235,13 @@ for( row_i 0 (num_rows - 1)
                 )
 
                 ; --- Type 3: switch cell (NMOS + MIM cap) ---
+                ; fl_build_switch_at returns keepout_expanded box — add to keepout_list
                 ( ptype == 3
-                    let( (sw_dim mim_l mim_w)
+                    let( (sw_dim mim_l mim_w sw_ko)
                         sw_dim = nth(sw_idx switch_cap_dims)
                         mim_l  = car(sw_dim)
                         mim_w  = cadr(sw_dim)
-                        fl_build_switch_at(cv cx cy mim_l mim_w viaOptions
+                        sw_ko = fl_build_switch_at(cv cx cy mim_l mim_w viaOptions
                             nmos_width nmos_length nmos_fingers
                             pdk_lib nmos_cell mim_cell_layout
                             pixel_size gnd_layer pixel_layer
@@ -252,6 +249,9 @@ for( row_i 0 (num_rows - 1)
                             switch_bulk_via_bot  switch_bulk_via_top
                             switch_mim_via_bot   switch_mim_via_top
                             via_size sw_idx)
+                        when( sw_ko
+                            keepout_list = append(keepout_list list(sw_ko))
+                        )
                         sw_idx = sw_idx + 1
                     )
                 )
@@ -269,36 +269,29 @@ for( row_i 0 (num_rows - 1)
     ) ; end for col_i
 ) ; end for row_i
 
-; Ground fill for entire active area (background, under device cells)
+; Ground fill for entire active area — track shapes for explicit carve-out below
+gnd_fill_list = list()
 for( col_i 1 (num_cols - 2)
-    dbCreateRect(cv gnd_layer
-        list(list(col_i * grid_size       gnd_y_bottom)
-             list((col_i + 1) * grid_size gnd_y_top)))
+    gnd_fill_list = append(gnd_fill_list
+        list(dbCreateRect(cv gnd_layer
+            list(list(col_i * grid_size       gnd_y_bottom)
+                 list((col_i + 1) * grid_size gnd_y_top)))))
 )
 
-; Carve out inductor bounding boxes from ground layer.
-; dbLayerAndNot creates new carved shapes but does NOT delete the originals —
-; we must explicitly delete the original shapes and the keepout rect.
-when( ind_inst_list
-    foreach( ind_inst ind_inst_list
-        let( (ind_bbox ko_shape all_gnd)
-            ind_bbox = ind_inst~>bBox
-            ; Create keepout rect FIRST so we can exclude it from the shape list
-            ko_shape = dbCreateRect(cv gnd_layer ind_bbox)
-            ; Collect all gnd_layer shapes that are NOT the keepout itself
-            all_gnd  = setof(s cv~>shapes
-                             (s~>layer == gnd_layer && s != ko_shape))
-            when( all_gnd
-                ; Creates new carved shapes (originals are NOT auto-deleted)
-                dbLayerAndNot(cv gnd_layer all_gnd list(ko_shape))
-                ; Delete the un-carved originals
-                foreach(s all_gnd dbDeleteObject(s))
-            )
-            dbDeleteObject(ko_shape)
-            printf("  [inductor carve-out] gnd_layer cleared at bBox (%.2f %.2f)→(%.2f %.2f)\n"
-                   xCoord(lowerLeft(ind_bbox))  yCoord(lowerLeft(ind_bbox))
-                   xCoord(upperRight(ind_bbox)) yCoord(upperRight(ind_bbox)))
+; Carve device keepout regions (switches + inductors) from the ground fill.
+; Works identically to the switch's own keepout pattern: create explicit ko rects,
+; call dbLayerAndNot on the tracked fill shapes, then delete originals and ko rects.
+when( keepout_list
+    let( (ko_shapes)
+        ko_shapes = list()
+        foreach( ko_box keepout_list
+            ko_shapes = append(ko_shapes list(dbCreateRect(cv gnd_layer ko_box)))
         )
+        dbLayerAndNot(cv gnd_layer gnd_fill_list ko_shapes)
+        foreach(s gnd_fill_list dbDeleteObject(s))
+        foreach(s ko_shapes     dbDeleteObject(s))
+        printf("  [ground carve-out] %d keepout region(s) subtracted from ground fill\n"
+               length(keepout_list))
     )
 )
 
@@ -570,21 +563,16 @@ if( drain_box then
         list(xCoord(target_point) + pixel_size/2.0  pixel_center_y + pixel_size/2.0))
     dbCreateRect(cv pixel_layer pixel_box)
 
-    ; Ground fill with keepout around drain via
+    ; Return keepout_expanded so caller can collect it for the unified ground carve-out
     spacing          = 1.0
     keepout_expanded = list(
         list(xCoord(lowerLeft(keepout_box))  - spacing yCoord(lowerLeft(keepout_box))  - spacing)
         list(xCoord(upperRight(keepout_box)) + spacing yCoord(upperRight(keepout_box)) + spacing))
-    let( (gnd_fig ko_rect)
-        gnd_fig  = dbCreateRect(cv gnd_layer pixel_box)
-        ko_rect  = dbCreateRect(cv gnd_layer keepout_expanded)
-        dbLayerAndNot(cv gnd_layer list(gnd_fig) list(ko_rect))
-        dbDeleteObject(gnd_fig)
-        dbDeleteObject(ko_rect)
-    )
+    keepout_expanded  ; return value
 
 else
     warn("[fl_build_switch_at] Drain pin D not found on NMOS at (%.2f, %.2f)" cx cy)
+    nil
 ) ; end if drain_box
 
 ) ; end let

@@ -95,3 +95,19 @@ All insertion mode
 3. Regular column duplicating
 
 Break of constraints. When we add column. It is not possible to break inductor spacing or switch spacing constriants. But it's possible that the switch pair constraints be broken. Let's remove the switch pairs if such constraints are broken.
+
+Immigrant: On top of completely generated immigrant, we will also bring immigrant in the way described above.
+
+# Finetune designs
+New cost mode: peak valley contrast mode:
+We will calculate the average value in the pass band, comparing the distance between the passband distance and the average value of the worst 15 points averaging in the stopband and cross-stop band. This is one term of the loss.
+
+The other term is how the pass band is closer to zero. Similar to what we have now.
+
+Balancing: the current best design has aroung -5 to -7 db in passband and average -15db in stop band. I want the cost to be balanced for both terms at this kind of design point. Please think of some way to balance this
+
+This is a cost for S21 only. If this cost mode is turned on, all other modes will be not effective. Please raise error if other modes are turned on.
+
+
+
+wider inductor constraints: the inductors need to make sure its 5 by 5 blocks with the center its self only contains 0/1 pixels. (previous 3 by 3). Please ensure this constraint in both initialization of the population and also the mutation.

@@ -3,12 +3,14 @@
 # Engine: config_reduced_inductor_set.yaml (single layout-extracted EM inductor)
 # Seeds 70% of the population from a known-good design.
 # ===========================================================================
-_base_: ../base/21x27_finetune.yaml
+_base_: ../base/finetune.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_reduced_inductor_set.yaml"
 output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_finetune_cap_2"
 
 grid:
+  rows: 21
+  cols: 27
   n_inductor_values: 1
   single_inductor_value: true
   cap_pair_init_min: 0

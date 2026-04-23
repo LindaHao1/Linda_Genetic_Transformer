@@ -1,26 +1,30 @@
 # ===========================================================================
-# GA Base Config — 21×27 Grid, Scratch (from-random) Initialisation
+# GA Base Config — Scratch (from-random) Initialisation
 #
 # This file is a SHARED BASE — do not run it directly.
-# Create an experiment config in configs/21x27/ that sets:
-#   _base_: ../base/21x27_scratch.yaml
+# Create an experiment config that sets:
+#   _base_: ../base/scratch.yaml
 #   virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_<variant>.yaml"
 #   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   grid:
+#     rows: <R>   # REQUIRED — grid rows
+#     cols: <C>   # REQUIRED — grid cols
 #   seed: 42
 #
-# Three-state switchable filter:
+# Five-state switchable filter:
 #   State 0: passband at  7 GHz  ( 6– 8 GHz)
-#   State 1: passband at 24 GHz  (22–26 GHz)
-#   State 2: passband at 40 GHz  (38–42 GHz)
+#   State 1: passband at 15 GHz  (13–17 GHz)
+#   State 2: passband at 24 GHz  (22–26 GHz)
+#   State 3: passband at 32 GHz  (30–34 GHz)
+#   State 4: passband at 40 GHz  (38–42 GHz)
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
 # GRID / DESIGN SPACE
 # ---------------------------------------------------------------------------
 grid:
-  rows: 21
-  cols: 27
-  n_states: 3
+  # rows and cols MUST be set in the experiment config
+  n_states: 5
 
   # --- Feasibility constraints ---
   min_switches: 2
@@ -57,7 +61,7 @@ grid:
   cap_pair_max_dist: 3
 
 # ---------------------------------------------------------------------------
-# FILTER TARGET SPECIFICATIONS  (7 / 24 / 40 GHz)
+# FILTER TARGET SPECIFICATIONS  (7 / 15 / 24 / 32 / 40 GHz)
 # ---------------------------------------------------------------------------
 filter_specs:
   - state_index:     0
@@ -85,8 +89,43 @@ filter_specs:
     enable_spurious_peak_penalty: true
     spurious_peak_max_db:        -10.0
     spurious_peak_weight:          1.0
+    enable_pv_contrast:            false
+    pv_contrast_k:                 15
+    pv_contrast_weight:            2.0
+    pv_passband_weight:            3.0
 
   - state_index:     1
+    passband:        [13.0e9, 17.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [9.0e9,  13.0e9]
+      - [17.0e9, 22.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions:
+      - [4.0e9,   9.0e9]
+      - [22.0e9, 65.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.0
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: true
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+    enable_pv_contrast:            false
+    pv_contrast_k:                 15
+    pv_contrast_weight:            2.0
+    pv_passband_weight:            3.0
+
+  - state_index:     2
     passband:        [22.0e9, 26.0e9]
     passband_min_db: -0.0
     stopband_regions:
@@ -112,8 +151,43 @@ filter_specs:
     enable_spurious_peak_penalty: true
     spurious_peak_max_db:        -10.0
     spurious_peak_weight:          1.0
+    enable_pv_contrast:            false
+    pv_contrast_k:                 15
+    pv_contrast_weight:            2.0
+    pv_passband_weight:            3.0
 
-  - state_index:     2
+  - state_index:     3
+    passband:        [30.0e9, 34.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [26.0e9, 30.0e9]
+      - [34.0e9, 38.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions:
+      - [4.0e9,  26.0e9]
+      - [38.0e9, 65.0e9]
+    cross_stopband_max_db: -20.0
+    cross_stopband_weight: 1.0
+    enable_s11_cost:           true
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.0
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: true
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+    enable_pv_contrast:            false
+    pv_contrast_k:                 15
+    pv_contrast_weight:            2.0
+    pv_passband_weight:            3.0
+
+  - state_index:     4
     passband:        [38.0e9, 42.0e9]
     passband_min_db: -0.0
     stopband_regions:
@@ -139,6 +213,10 @@ filter_specs:
     enable_spurious_peak_penalty: true
     spurious_peak_max_db:        -10.0
     spurious_peak_weight:          1.0
+    enable_pv_contrast:            false
+    pv_contrast_k:                 15
+    pv_contrast_weight:            2.0
+    pv_passband_weight:            3.0
 
 # ---------------------------------------------------------------------------
 # GENETIC ALGORITHM PARAMETERS

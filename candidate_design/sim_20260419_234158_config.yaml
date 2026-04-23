@@ -9,7 +9,7 @@ project:
   display: :99
 full_layout:
   lib_name: "pySim"
-  cell_name: "candidate02"
+  cell_name: "candidate04"
 
   # Inductor cell
   inductor_lib: "Doherty_design"

@@ -1070,6 +1070,23 @@ class SwitchableFilterGA:
             # Normalize seed design if single_inductor_value is enabled
             if cfg.single_inductor_value and seed_design.inductor_values:
                 seed_design.inductor_values = [seed_design.inductor_values[0]] * len(seed_design.inductor_values)
+            # Pad missing states with random switch/inductor assignments when the seed
+            # has fewer states than the current target (e.g. loading a 3-state design
+            # into a 5-state run).  Only appends new rows — existing states are untouched.
+            if seed_design.n_states < cfg.n_states:
+                n_missing = cfg.n_states - seed_design.n_states
+                n_switches  = len(seed_design.switch_states[0])  if seed_design.switch_states          else 0
+                n_inductors = len(seed_design.inductor_switch_states[0]) if seed_design.inductor_switch_states else 0
+                print(f"[GA] Fine-tune: seed has {seed_design.n_states} states; "
+                      f"appending {n_missing} random state(s) to reach {cfg.n_states}.")
+                for _ in range(n_missing):
+                    seed_design.switch_states.append(
+                        [self.rng.randint(0, 1) for _ in range(n_switches)]
+                    )
+                    if n_inductors > 0:
+                        seed_design.inductor_switch_states.append(
+                            [self.rng.randint(0, 1) for _ in range(n_inductors)]
+                        )
             self._finetune_seed_design = seed_design
 
             # Detect whether physical expansion to target grid size is requested
@@ -1486,15 +1503,24 @@ class SwitchableFilterGA:
     @staticmethod
     def _print_cost_breakdown(breakdown: List[dict]) -> None:
         """Print a formatted cost breakdown table to stdout."""
+        has_pv  = any(b.get("pv_contrast", 0) != 0 or b.get("pv_cost_term1", 0) != 0
+                      or b.get("pv_cost_term2", 0) != 0 for b in breakdown)
         has_s11 = any(b.get("s11_passband", 0) + b.get("s11_stopband", 0) + b.get("s11_crossband", 0) > 0
                       for b in breakdown)
         has_sp  = any(b.get("s21_spurious", 0) > 0 for b in breakdown)
-        header = (
-            f"  {'Spec':>4}  {'Passband(GHz)':>14}  "
-            f"{'S21-PB':>8}  {'S21-SB':>8}  {'S21-CB':>8}"
-        )
-        if has_sp:
-            header += f"  {'S21-SP':>8}"
+
+        if has_pv:
+            header = (
+                f"  {'Spec':>4}  {'Passband(GHz)':>14}  "
+                f"{'PB-avg':>8}  {'SB-avg':>8}  {'Contrast':>8}  {'PV-T1':>8}  {'PV-T2':>8}"
+            )
+        else:
+            header = (
+                f"  {'Spec':>4}  {'Passband(GHz)':>14}  "
+                f"{'S21-PB':>8}  {'S21-SB':>8}  {'S21-CB':>8}"
+            )
+            if has_sp:
+                header += f"  {'S21-SP':>8}"
         if has_s11:
             header += f"  {'S11-PB':>8}  {'S11-SB':>8}  {'S11-CB':>8}"
         header += f"  {'State':>8}"
@@ -1503,12 +1529,20 @@ class SwitchableFilterGA:
         print(f"  {'─'*len(header.rstrip())}")
         for b in breakdown:
             pb_ghz = f"{b['passband_hz'][0]/1e9:.0f}–{b['passband_hz'][1]/1e9:.0f}"
-            row = (
-                f"  {b['spec_idx']:>4}  {pb_ghz:>14}  "
-                f"{b['s21_passband']:>8.4f}  {b['s21_stopband']:>8.4f}  {b['s21_crossband']:>8.4f}"
-            )
-            if has_sp:
-                row += f"  {b.get('s21_spurious', 0.0):>8.4f}"
+            if has_pv:
+                row = (
+                    f"  {b['spec_idx']:>4}  {pb_ghz:>14}  "
+                    f"{b.get('pv_pb_avg', 0.0):>8.3f}  {b.get('pv_sb_avg', 0.0):>8.3f}  "
+                    f"{b.get('pv_contrast', 0.0):>8.3f}  "
+                    f"{b.get('pv_cost_term1', 0.0):>8.4f}  {b.get('pv_cost_term2', 0.0):>8.4f}"
+                )
+            else:
+                row = (
+                    f"  {b['spec_idx']:>4}  {pb_ghz:>14}  "
+                    f"{b['s21_passband']:>8.4f}  {b['s21_stopband']:>8.4f}  {b['s21_crossband']:>8.4f}"
+                )
+                if has_sp:
+                    row += f"  {b.get('s21_spurious', 0.0):>8.4f}"
             if has_s11:
                 row += (
                     f"  {b['s11_passband']:>8.4f}  {b['s11_stopband']:>8.4f}  {b['s11_crossband']:>8.4f}"
@@ -1517,7 +1551,10 @@ class SwitchableFilterGA:
             print(row)
         total = sum(b["total"] for b in breakdown)
         print(f"  {'─'*len(header.rstrip())}")
-        ncols = 3 + (1 if has_sp else 0) + (3 if has_s11 else 0)
+        if has_pv:
+            ncols = 5 + (3 if has_s11 else 0)
+        else:
+            ncols = 3 + (1 if has_sp else 0) + (3 if has_s11 else 0)
         pad = "  " + " "*4 + "  " + " "*14 + "  " + "  ".join([" "*8]*ncols) + "  "
         print(f"{pad}{total:>8.4f}  (total)")
 

@@ -5,7 +5,7 @@
 #
 # IMPORTANT: set ga.finetune_design_path before running.
 # ===========================================================================
-_base_: ../base/21x27_finetune.yaml
+_base_: ../base/finetune.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps37_gs30.yaml"
 output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps37_gs30_finetune"
@@ -13,5 +13,9 @@ output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps37_gs30_f
 ga:
   finetune_design_path: null   # TODO: set path to the design to fine-tune from
   n_parallel: 4
+
+grid:
+  rows: 21
+  cols: 27
 
 seed: 42

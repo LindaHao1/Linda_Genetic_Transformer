@@ -167,6 +167,19 @@ class FilterStateSpec:
     spurious_peak_max_db:         float = -10.0  # S21 above this outside passband = spurious
     spurious_peak_weight:         float = 1.0    # fusion weight, scaled by spec.weight
 
+    # Peak-valley contrast mode: measures passband-to-stopband separation directly.
+    # When enabled, ALL standard S21 penalty terms (passband/stopband/crossband/spurious)
+    # are replaced by two terms:
+    #   term1 = −(pb_avg − worst_k_sb_avg)  [maximise contrast]
+    #   term2 = |pb_avg|                     [minimise passband distance from 0 dB]
+    # s21_cost = (pv_contrast_weight * term1 + pv_passband_weight * term2) * weight
+    # Raises ValueError at construction if enable_peak_matching or
+    # enable_spurious_peak_penalty are also True on this spec.
+    enable_pv_contrast:  bool  = False
+    pv_contrast_k:       int   = 15    # top-k worst (highest S21) stopband+crossband points
+    pv_contrast_weight:  float = 2.0   # weight for −contrast term
+    pv_passband_weight:  float = 3.0   # weight for |pb_avg| term
+
 
 # ---------------------------------------------------------------------------
 # Peak matching helper
@@ -213,6 +226,14 @@ def compute_state_cost(
     Each penalty class is normalised by its own point count.  The S21 and S11
     components are summed to form the final state cost.
     """
+    # --- PV contrast mode validation ---
+    if spec.enable_pv_contrast and (spec.enable_peak_matching or spec.enable_spurious_peak_penalty):
+        raise ValueError(
+            f"FilterStateSpec (state_index={spec.state_index}): enable_pv_contrast cannot be "
+            "combined with enable_peak_matching or enable_spurious_peak_penalty. "
+            "Disable those modes before enabling PV contrast mode."
+        )
+
     # --- Peak matching preamble ---
     # When enabled: find the S21 peak near the passband, shift all frequency
     # ranges to follow it, then add a linear multiplier penalty proportional
@@ -251,6 +272,56 @@ def compute_state_cost(
     pb_hi = spec.passband[1] + applied_shift
     sb_regions_eff = [(lo + applied_shift, hi + applied_shift) for lo, hi in spec.stopband_regions]
     cs_regions_eff = [(lo + applied_shift, hi + applied_shift) for lo, hi in spec.cross_stopband_regions]
+
+    # --- Peak-valley contrast mode (replaces all standard S21 penalty terms) ---
+    if spec.enable_pv_contrast:
+        pb_vals:    List[float] = []
+        sb_cs_vals: List[float] = []
+        for f, s21 in zip(freqs, s21_db_values):
+            if pb_lo <= f <= pb_hi:
+                pb_vals.append(s21)
+            else:
+                in_sb = any(lo <= f <= hi for lo, hi in sb_regions_eff)
+                in_cs = any(lo <= f <= hi for lo, hi in cs_regions_eff)
+                if in_sb or in_cs:
+                    sb_cs_vals.append(s21)
+        pb_avg = float(np.mean(pb_vals)) if pb_vals else 0.0
+        sb_cs_vals_sorted = sorted(sb_cs_vals, reverse=True)  # highest (worst) first
+        worst_k_vals = sb_cs_vals_sorted[:spec.pv_contrast_k]
+        worst_k_avg  = float(np.mean(worst_k_vals)) if worst_k_vals else 0.0
+        contrast = pb_avg - worst_k_avg   # positive = passband above stopband (desired)
+        s21_cost = (
+            spec.pv_contrast_weight * (-contrast)
+            + spec.pv_passband_weight * abs(pb_avg)
+        ) * spec.weight
+        # S11 cost still runs below if enabled; skip standard S21 terms
+        s11_cost = 0.0
+        if spec.enable_s11_cost and s11_db_values is not None:
+            s11_pb_penalties: List[float] = []
+            s11_sb_penalties: List[float] = []
+            s11_cs_penalties: List[float] = []
+            for f, s11 in zip(freqs, s11_db_values):
+                if pb_lo <= f <= pb_hi:
+                    excess = s11 - spec.s11_passband_max_db
+                    s11_pb_penalties.append(excess ** spec.cost_order if excess > 0 else 0.0)
+                for sb_lo, sb_hi in sb_regions_eff:
+                    if sb_lo <= f <= sb_hi:
+                        shortfall = spec.s11_stopband_min_db - s11
+                        s11_sb_penalties.append(shortfall ** spec.cost_order if shortfall > 0 else 0.0)
+                for cs_lo, cs_hi in cs_regions_eff:
+                    if cs_lo <= f <= cs_hi:
+                        shortfall = spec.s11_cross_stopband_min_db - s11
+                        s11_cs_penalties.append(shortfall ** spec.cost_order if shortfall > 0 else 0.0)
+            s11_mean_pb = _worst_k_mean(s11_pb_penalties, spec.worst_k)
+            s11_mean_sb = _worst_k_mean(s11_sb_penalties, spec.worst_k)
+            s11_mean_cs = _worst_k_mean(s11_cs_penalties, spec.worst_k)
+            s11_cost = (
+                spec.passband_weight * s11_mean_pb
+                + spec.stopband_weight * s11_mean_sb
+                + spec.cross_stopband_weight * s11_mean_cs
+            ) * spec.weight
+        return (s21_cost + s11_cost) * shift_penalty_multiplier
+    # --- end PV contrast mode ---
 
     pb_penalties: List[float] = []
     sb_penalties: List[float] = []
@@ -363,6 +434,14 @@ def compute_state_cost_breakdown(
       peak_shift_hz         — S21 peak shift from passband centre in Hz (0 if peak matching disabled)
       peak_shift_ratio      — shift / (threshold * centre), clamped to [0,1] (0 if disabled)
       shift_penalty_multiplier — total cost multiplier from peak shift, in [1.0, 2.0] (1.0 if disabled)
+
+    When enable_pv_contrast is True, all s21_* keys above are zero and the
+    following additional keys are populated instead:
+      pv_pb_avg             — mean S21 in passband (dB)
+      pv_sb_avg             — mean of worst-k S21 in stopband+crossband (dB)
+      pv_contrast           — pv_pb_avg − pv_sb_avg (dB; larger = better)
+      pv_cost_term1         — −contrast * pv_contrast_weight * weight
+      pv_cost_term2         — |pv_pb_avg| * pv_passband_weight * weight
     """
     # --- Peak matching preamble (identical to compute_state_cost) ---
     shift = 0.0
@@ -391,6 +470,91 @@ def compute_state_cost_breakdown(
     pb_hi = spec.passband[1] + applied_shift
     sb_regions_eff = [(lo + applied_shift, hi + applied_shift) for lo, hi in spec.stopband_regions]
     cs_regions_eff = [(lo + applied_shift, hi + applied_shift) for lo, hi in spec.cross_stopband_regions]
+
+    _zero_s21_breakdown = dict(
+        s21_passband_raw=0.0, s21_stopband_raw=0.0, s21_crossband_raw=0.0, s21_spurious_raw=0.0,
+        s21_passband_all_mean=0.0, s21_stopband_all_mean=0.0,
+        s21_crossband_all_mean=0.0, s21_spurious_all_mean=0.0,
+        s21_passband=0.0, s21_stopband=0.0, s21_crossband=0.0, s21_spurious=0.0,
+    )
+    _zero_pv_breakdown = dict(
+        pv_pb_avg=0.0, pv_sb_avg=0.0, pv_contrast=0.0, pv_cost_term1=0.0, pv_cost_term2=0.0,
+    )
+
+    # --- PV contrast mode breakdown ---
+    if spec.enable_pv_contrast:
+        pb_vals: List[float] = []
+        sb_cs_vals: List[float] = []
+        for f, s21 in zip(freqs, s21_db_values):
+            if pb_lo <= f <= pb_hi:
+                pb_vals.append(s21)
+            else:
+                in_sb = any(lo <= f <= hi for lo, hi in sb_regions_eff)
+                in_cs = any(lo <= f <= hi for lo, hi in cs_regions_eff)
+                if in_sb or in_cs:
+                    sb_cs_vals.append(s21)
+        pb_avg = float(np.mean(pb_vals)) if pb_vals else 0.0
+        sb_cs_sorted = sorted(sb_cs_vals, reverse=True)
+        worst_k_vals = sb_cs_sorted[:spec.pv_contrast_k]
+        worst_k_avg  = float(np.mean(worst_k_vals)) if worst_k_vals else 0.0
+        contrast  = pb_avg - worst_k_avg
+        term1     = spec.pv_contrast_weight  * (-contrast)  * spec.weight
+        term2     = spec.pv_passband_weight  * abs(pb_avg)  * spec.weight
+        s21_cost_pv = term1 + term2
+        # S11 cost (same as standard path)
+        s11_pb_raw_pv = s11_sb_raw_pv = s11_cs_raw_pv = 0.0
+        s11_pb_all_pv = s11_sb_all_pv = s11_cs_all_pv = 0.0
+        s11_pb_w_pv   = s11_sb_w_pv   = s11_cs_w_pv   = 0.0
+        if spec.enable_s11_cost and s11_db_values is not None:
+            s11_pb_p: List[float] = []
+            s11_sb_p: List[float] = []
+            s11_cs_p: List[float] = []
+            for f, s11 in zip(freqs, s11_db_values):
+                if pb_lo <= f <= pb_hi:
+                    excess = s11 - spec.s11_passband_max_db
+                    s11_pb_p.append(excess ** spec.cost_order if excess > 0 else 0.0)
+                for sb_lo, sb_hi in sb_regions_eff:
+                    if sb_lo <= f <= sb_hi:
+                        shortfall = spec.s11_stopband_min_db - s11
+                        s11_sb_p.append(shortfall ** spec.cost_order if shortfall > 0 else 0.0)
+                for cs_lo, cs_hi in cs_regions_eff:
+                    if cs_lo <= f <= cs_hi:
+                        shortfall = spec.s11_cross_stopband_min_db - s11
+                        s11_cs_p.append(shortfall ** spec.cost_order if shortfall > 0 else 0.0)
+            s11_pb_raw_pv = _worst_k_mean(s11_pb_p, spec.worst_k)
+            s11_sb_raw_pv = _worst_k_mean(s11_sb_p, spec.worst_k)
+            s11_cs_raw_pv = _worst_k_mean(s11_cs_p, spec.worst_k)
+            s11_pb_all_pv = (sum(s11_pb_p) / len(s11_pb_p)) if s11_pb_p else 0.0
+            s11_sb_all_pv = (sum(s11_sb_p) / len(s11_sb_p)) if s11_sb_p else 0.0
+            s11_cs_all_pv = (sum(s11_cs_p) / len(s11_cs_p)) if s11_cs_p else 0.0
+            s11_pb_w_pv = spec.passband_weight       * s11_pb_raw_pv * spec.weight
+            s11_sb_w_pv = spec.stopband_weight       * s11_sb_raw_pv * spec.weight
+            s11_cs_w_pv = spec.cross_stopband_weight * s11_cs_raw_pv * spec.weight
+        total_pv = (s21_cost_pv + s11_pb_w_pv + s11_sb_w_pv + s11_cs_w_pv) * shift_penalty_multiplier
+        return {
+            **_zero_s21_breakdown,
+            **_zero_pv_breakdown,
+            "pv_pb_avg":     pb_avg,
+            "pv_sb_avg":     worst_k_avg,
+            "pv_contrast":   contrast,
+            "pv_cost_term1": term1,
+            "pv_cost_term2": term2,
+            "s11_passband_raw":       s11_pb_raw_pv,
+            "s11_stopband_raw":       s11_sb_raw_pv,
+            "s11_crossband_raw":      s11_cs_raw_pv,
+            "s11_passband_all_mean":  s11_pb_all_pv,
+            "s11_stopband_all_mean":  s11_sb_all_pv,
+            "s11_crossband_all_mean": s11_cs_all_pv,
+            "s11_passband":           s11_pb_w_pv,
+            "s11_stopband":           s11_sb_w_pv,
+            "s11_crossband":          s11_cs_w_pv,
+            "total":                  total_pv,
+            "peak_shift_hz":          shift,
+            "peak_applied_shift_hz":  applied_shift,
+            "peak_shift_ratio":       shift_ratio,
+            "shift_penalty_multiplier": shift_penalty_multiplier,
+        }
+    # --- end PV contrast breakdown ---
 
     pb_penalties: List[float] = []
     sb_penalties: List[float] = []
@@ -494,6 +658,8 @@ def compute_state_cost_breakdown(
         "peak_applied_shift_hz":     applied_shift,  # shift used for ranges (0 if |shift|>threshold)
         "peak_shift_ratio":          shift_ratio,
         "shift_penalty_multiplier":  shift_penalty_multiplier,
+        # PV contrast keys (zero in standard mode)
+        **_zero_pv_breakdown,
     }
 
 
@@ -760,5 +926,9 @@ def specs_from_config(filter_specs_cfg: list) -> List[FilterStateSpec]:
             enable_spurious_peak_penalty  = bool( entry.get("enable_spurious_peak_penalty",  False)),
             spurious_peak_max_db          = float(entry.get("spurious_peak_max_db",          -10.0)),
             spurious_peak_weight          = float(entry.get("spurious_peak_weight",            1.0)),
+            enable_pv_contrast            = bool( entry.get("enable_pv_contrast",             False)),
+            pv_contrast_k                 = int(  entry.get("pv_contrast_k",                     15)),
+            pv_contrast_weight            = float(entry.get("pv_contrast_weight",               2.0)),
+            pv_passband_weight            = float(entry.get("pv_passband_weight",               3.0)),
         ))
     return specs
