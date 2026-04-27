@@ -292,7 +292,9 @@ def expand_design_to_size(
     p_ins   = getattr(cfg, "finetune_expand_p_random_insertion", 0.7)
     total_top = p_embed + p_ins
     if rng.random() * total_top < p_embed:
-        density = rng.random()
+        d_min = getattr(cfg, "finetune_expand_embed_density_min", 0.0)
+        d_max = getattr(cfg, "finetune_expand_embed_density_max", 1.0)
+        density = d_min + rng.random() * (d_max - d_min)
         return embed_centered_with_density(design, target_rows, target_cols, density, rng)
 
     p_dup  = cfg.finetune_expand_p_duplicate

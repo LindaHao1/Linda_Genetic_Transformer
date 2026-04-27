@@ -5,13 +5,15 @@ Design rules
 ------------
 a. Connectivity:     8-connected path (no 0 pixels) from the feed pixel in col 0
                      to the feed pixel in col N-1.
-b/c. Special spacing: Every pair of switch (3) and/or inductor (2) pixels must have
-                     Chebyshev distance ≥ 3, i.e. max(|Δrow|, |Δcol|) ≥ 3.
-                     Diagonal counts as 1, so this forbids a 5×5 box around each
-                     special pixel from containing any other special pixel.
-                     The old 8-neighbour check (distance ≥ 2) was too weak — it
-                     allowed two switches separated by a single pixel, which still
-                     leaves insufficient physical clearance.
+b/c. Special spacing: Footprints of inductor (5×5) and switch (3×3) pixels must not
+                     overlap with each other or with cap pair 3×3 corridors.
+                     Required Chebyshev distances between centers:
+                       Switch  ↔ Switch  : ≥ 3  (1+1+1)
+                       Inductor ↔ Switch  : ≥ 4  (2+1+1)
+                       Inductor ↔ Inductor: ≥ 5  (2+2+1)
+                     Cap pair path-cell corridors (half=1) must not overlap with:
+                       switch footprint (half=1): Chebyshev(path_cell, switch)   ≥ 3
+                       inductor footprint (half=2): Chebyshev(path_cell, inductor) ≥ 4
 d. Inductor count:   Total number of type-2 pixels ≤ max_inductors.
 e. Switch count:     Total number of type-3 pixels == n_switches_required.
 f. Feed columns:     Exactly one non-zero pixel in col 0 AND in col N-1.
@@ -24,6 +26,13 @@ from collections import deque
 from typing import List, Optional, Tuple
 
 from .design import DesignState
+
+
+# ---------------------------------------------------------------------------
+# Footprint half-sizes (pixels): inductor=5×5 → half=2, switch=3×3 → half=1
+# ---------------------------------------------------------------------------
+
+_FOOTPRINT_HALF: dict = {2: 2, 3: 1}
 
 
 # ---------------------------------------------------------------------------
@@ -113,17 +122,16 @@ def check_connectivity_4way(matrix: List[List[int]]) -> bool:
     return check_connectivity(matrix, four_connected=True)
 
 
-def check_special_pixel_spacing(matrix: List[List[int]], min_dist: int = 3) -> bool:
+def check_special_pixel_spacing(matrix: List[List[int]]) -> bool:
     """
-    Rules b/c: every pair of switch (3) and/or inductor (2) pixels must have
-    Chebyshev distance ≥ min_dist, where Chebyshev distance = max(|Δrow|, |Δcol|).
-
-    This is stricter than the old 8-neighbour check (which only enforced distance ≥ 2).
-    With min_dist=3 the forbidden zone around each special pixel is a 5×5 box.
+    Rules b/c: footprints of inductor (5×5) and switch (3×3) pixels must not overlap.
+    Required Chebyshev distance = half_A + half_B + 1:
+      Switch  (half=1) ↔ Switch  (half=1): ≥ 3
+      Inductor(half=2) ↔ Switch  (half=1): ≥ 4
+      Inductor(half=2) ↔ Inductor(half=2): ≥ 5
     """
     rows = len(matrix)
     cols = len(matrix[0])
-    # Collect all special pixel positions once
     specials = [
         (r, c)
         for r in range(rows)
@@ -131,19 +139,21 @@ def check_special_pixel_spacing(matrix: List[List[int]], min_dist: int = 3) -> b
         if matrix[r][c] in (2, 3)
     ]
     for i, (r1, c1) in enumerate(specials):
+        h1 = _FOOTPRINT_HALF[matrix[r1][c1]]
         for r2, c2 in specials[i + 1:]:
-            if max(abs(r1 - r2), abs(c1 - c2)) < min_dist:
+            h2 = _FOOTPRINT_HALF[matrix[r2][c2]]
+            if max(abs(r1 - r2), abs(c1 - c2)) < h1 + h2 + 1:
                 return False
     return True
 
 
 def check_switch_spacing(matrix: List[List[int]]) -> bool:
-    """Rule b: switches must be at Chebyshev distance ≥ 3 from all other special pixels."""
+    """Rule b: switch footprints must not overlap with any other special pixel footprint."""
     return check_special_pixel_spacing(matrix)
 
 
 def check_inductor_spacing(matrix: List[List[int]]) -> bool:
-    """Rule c: inductors must be at Chebyshev distance ≥ 3 from all other special pixels."""
+    """Rule c: inductor footprints must not overlap with any other special pixel footprint."""
     return check_special_pixel_spacing(matrix)
 
 
@@ -345,17 +355,24 @@ def check_cap_pair_valid(
 
     all_path_cells = [(r1, c1), (r2, c2)] + interior
 
-    # Rule 5: every cell in the full path must have no special pixel (type 2
-    # or 3) within Chebyshev distance ≤ 1 (3×3 box).
+    # Rule 5: the 3×3 corridor (half=1) around each full-path cell must not
+    # overlap with any special pixel's footprint.
+    # Required Chebyshev(path_cell, special) ≥ corridor_half + footprint_half + 1:
+    #   switch  (half=1): ≥ 3   inductor (half=2): ≥ 4
+    _CAP_CORRIDOR_HALF = 1
+    _max_check = _CAP_CORRIDOR_HALF + max(_FOOTPRINT_HALF.values())
     for (pr, pc) in all_path_cells:
-        r_lo = max(0, pr - 1)
-        r_hi = min(rows - 1, pr + 1)
-        c_lo = max(0, pc - 1)
-        c_hi = min(cols - 1, pc + 1)
+        r_lo = max(0, pr - _max_check)
+        r_hi = min(rows - 1, pr + _max_check)
+        c_lo = max(0, pc - _max_check)
+        c_hi = min(cols - 1, pc + _max_check)
         for nr in range(r_lo, r_hi + 1):
             for nc in range(c_lo, c_hi + 1):
-                if matrix[nr][nc] in (2, 3):
-                    return False
+                t = matrix[nr][nc]
+                if t in (2, 3):
+                    required = _CAP_CORRIDOR_HALF + _FOOTPRINT_HALF[t] + 1
+                    if max(abs(pr - nr), abs(pc - nc)) < required:
+                        return False
 
     # Rule 6: the 3×3 corridor around the full path of this pair must not
     # contain any path cell (endpoint or interior) of another existing pair.
@@ -458,24 +475,30 @@ def _special_pixel_too_close(
     matrix: List[List[int]],
     r: int,
     c: int,
-    min_dist: int = 3,
+    new_type: int,
 ) -> bool:
     """
-    Return True if any existing special pixel (type 2 or 3) is within Chebyshev
-    distance < min_dist of (r, c).  Used by placement helpers.
+    Return True if placing a pixel of new_type at (r, c) would cause its footprint
+    to overlap with any existing special pixel's footprint.
+    Required distance = _FOOTPRINT_HALF[new_type] + _FOOTPRINT_HALF[existing] + 1.
     """
     rows = len(matrix)
     cols = len(matrix[0])
-    r_lo = max(0, r - (min_dist - 1))
-    r_hi = min(rows - 1, r + (min_dist - 1))
-    c_lo = max(0, c - (min_dist - 1))
-    c_hi = min(cols - 1, c + (min_dist - 1))
+    new_half = _FOOTPRINT_HALF[new_type]
+    max_search = new_half + max(_FOOTPRINT_HALF.values())
+    r_lo = max(0, r - max_search)
+    r_hi = min(rows - 1, r + max_search)
+    c_lo = max(0, c - max_search)
+    c_hi = min(cols - 1, c + max_search)
     for nr in range(r_lo, r_hi + 1):
         for nc in range(c_lo, c_hi + 1):
             if nr == r and nc == c:
                 continue
-            if matrix[nr][nc] in (2, 3):
-                return True
+            t = matrix[nr][nc]
+            if t in (2, 3):
+                required = new_half + _FOOTPRINT_HALF[t] + 1
+                if max(abs(r - nr), abs(c - nc)) < required:
+                    return True
     return False
 
 
@@ -485,15 +508,15 @@ def _can_place_switch_at(
     c: int,
 ) -> bool:
     """
-    Return True if placing a switch at (r, c) would not violate rule b.
-    Enforces Chebyshev distance ≥ 3 from all other special pixels (types 2, 3).
+    Return True if placing a switch (3×3 footprint) at (r, c) would not violate rule b.
+    Checks that its 3×3 footprint does not overlap any other special pixel's footprint.
     Assumes the cell is currently type 1 (metal).
     Also checks that this cell is not in the feed columns.
     """
     cols = len(matrix[0])
     if c == 0 or c == cols - 1:
         return False
-    return not _special_pixel_too_close(matrix, r, c)
+    return not _special_pixel_too_close(matrix, r, c, new_type=3)
 
 
 def _can_place_inductor_at(
@@ -502,14 +525,14 @@ def _can_place_inductor_at(
     c: int,
 ) -> bool:
     """
-    Return True if placing an inductor at (r, c) would not violate rule c.
-    Enforces Chebyshev distance ≥ 3 from all other special pixels (types 2, 3).
+    Return True if placing an inductor (5×5 footprint) at (r, c) would not violate rule c.
+    Checks that its 5×5 footprint does not overlap any other special pixel's footprint.
     Assumes the cell is currently type 1 (metal).
     """
     cols = len(matrix[0])
     if c == 0 or c == cols - 1:
         return False
-    return not _special_pixel_too_close(matrix, r, c)
+    return not _special_pixel_too_close(matrix, r, c, new_type=2)
 
 
 def _can_place_via_at(

@@ -11,28 +11,42 @@
 #
 # IMPORTANT: set ga.finetune_design_path before running.
 # ===========================================================================
-_base_: ../base/finetune.yaml
+_base_: ../base/finetune_3_states.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_5state"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_update_cap_model"
 
-grid:
-  rows: 30       # TODO: adjust to target large-grid size
-  cols: 37       # TODO: adjust to target large-grid size
+grid:  
+  n_states: 3
+  rows: 27       # TODO: adjust to target large-grid size
+  cols: 33      # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/Change_ind_s1p_finetune/sim_20260421_112845_config_cli_20260422_011151.yaml" # "/disk/mcao53/Sim_engine_results/test_sims/Change_inductor_s1p/config_small.yaml"
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/layout_candidate_1/sim_new_small_design_seed.yaml"
   n_parallel: 6
-
   finetune_expand:
     enabled: true
-    # Top-level mode weights (treated as weights, need not sum to 1):
+
+    # Fraction of pop_size_start generated completely at random (no seed).
+    p_completely_random: 0.4
+
+    # Mutations applied to each seeded individual at init (uniform draw 1..N).
+    init_max_mutations: 5
+
+    # Top-level mode weights for the seeded fraction (treated as weights, need not sum to 1):
     #   p_embed:             embed seed at center; outside pixels filled with a random
-    #                        density d ~ Uniform(0,1) drawn each call (d=0 → zeros, d=1 → all-ones)
+    #                        density d ~ Uniform(embed_density_min, embed_density_max) drawn each call
     #   p_random_insertion:  insert rows/cols one at a time using sub-modes below
-    # Note: the first seeded individual always uses zero-density embed (no mutations).
-    p_embed:             0.5
-    p_random_insertion:  0.5
+    p_embed:             0.6
+    p_random_insertion:  0.0
+
+    # Density range for p_embed background pixels (d=0 → zeros, d=1 → all-ones).
+    embed_density_min: 0.6
+    embed_density_max: 1.0
+
+    # If true, individual 0 is always a zero-padded embed of the seed (no mutations).
+    # Set to false to draw individual 0 from the normal expand distribution instead.
+    zero_pad_first: true
 
     # Sub-mode weights for p_random_insertion (treated as weights, need not sum to 1):
     #   p_duplicate:   copy the adjacent row/col at a random interior position
@@ -40,7 +54,7 @@ ga:
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
     p_duplicate:   1.0
     p_random_fill: 0.1
-    p_zero_pad:    0.1
-    n_immigrants_expanded: 2   # expanded immigrants injected each generation
+    p_zero_pad:    0.0
+    n_immigrants_expanded: 4   # expanded immigrants injected each generation
 
 seed: 42

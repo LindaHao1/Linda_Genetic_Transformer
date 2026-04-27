@@ -43,7 +43,7 @@ procedure( run_pixelated_emx()
         strmout_log = strcat(dest_folder "/strmout.log")
 
         strmout_cmd = sprintf(nil
-            "strmout -library %s -topCell %s -view layout -strmFile %s -logFile %s -pinAttNum 51"
+            "strmout -library %s -topCell %s -view layout -strmFile %s -logFile %s -pinAttNum 1"
             libName cellName gds_file strmout_log)
 
         printf("Executing: %s\n" strmout_cmd)
@@ -71,7 +71,7 @@ procedure( run_pixelated_emx()
         log_file        = strcat(dest_folder "/" cellName "_emx.log")
 
         emx_cmd = sprintf(nil
-            "cd %s && ${EMX_BINARY} %s %s %s --sweep ${EMX_FREQ_START} ${EMX_FREQ_STOP} --sweep-stepsize ${EMX_FREQ_STEP} ${EMX_PORT_FLAGS} -e 2.0 -t 2.0 -v 0.5 --3d=-* --message-file %s --log-time-level=0 --parallel ${EMX_PARALLEL} --simultaneous-frequencies=0 --recommended-memory --format touchstone2 -s %s --include-port-order --cadence-pins=51"
+            "cd %s && ${EMX_BINARY} %s %s %s --sweep ${EMX_FREQ_START} ${EMX_FREQ_STOP} --sweep-stepsize ${EMX_FREQ_STEP} ${EMX_PORT_FLAGS} --quasistatic -e 2.0 -t 2.0 -v 0.5 --3d=-* -l 0 --message-file %s --log-time-level=0 --parallel ${EMX_PARALLEL} --simultaneous-frequencies=0 --recommended-memory --format touchstone2 -s %s --include-port-order --cadence-pins=1"
             dest_folder gds_file cellName proc_file log_file s_param_pattern)
 
         printf("Executing: %s\n" emx_cmd)

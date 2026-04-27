@@ -78,3 +78,12 @@ In the folder for each simulation result, please save the configuraion that runs
 In the naming of the cell name and file name should have some name extension to ensure name does not clash between simulations. 
 
 One of the problem of the current simulation is virtuoso_session.log.cdslck and virtuoso_session.log in the logs/ folder will prevent virtuoso from starting. SO if these files are detected during start (for each thread) please remove them. Sometimes we might have crash or timeout for virtuoso or emx. In this case please restart the correcponding virtuoso server at the corresponding thread.
+
+
+
+Simplified pixel mode update
+In the simplified pixel design, we used an idealistic model for the capacitor. Also the switch abstraction is not correct. However, this is proven far from the TSMC model. Therefore we will use the  ${MIM_CELL_SPECTRE} This filed to replace the current ideal cap. As shown in layout pixel. This connection will have mim_m connected the pixel port, mim_p connected to the s1p that I will give you. This s1p is similar as the inductor. Which has an on s1p and off s1p. Based on the sates, we ned to change the snps. (instead of using an ideal model) mim_b will be connected to ground.
+
+For series cap we will also use the tsmc real cap. If the series cap is horizontal (left and right) mim_p will be connected to left pixel, mim_m will be connected to the right pixel.
+
+If the cap pair is vertical the top one is plus (mim_p) the bottom pixel is munus (mim_m). As usual, bulk is connected to ground

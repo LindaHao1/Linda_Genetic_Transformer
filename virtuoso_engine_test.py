@@ -58,5 +58,5 @@ from virtuoso_engine.engine import VirtuosoPixelEngine
 
 with VirtuosoPixelEngine("virtuoso_engine/config_base.yaml") as engine:
     # result = engine.run("virtuoso_optimization_GA/configs/test/full_layout_test.yaml")
-    result = engine.run("/disk/mcao53/RFIC_RL/candidate_design/sim_20260421_112845_config.yaml")
+    result = engine.run("/disk/mcao53/Sim_engine_results/test_sims/cand2/sim_20260425_222018_config.yaml")
     print(result.success, result.run_dir)

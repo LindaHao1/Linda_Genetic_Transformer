@@ -978,7 +978,7 @@ pixelated:
   inductor_off_translation_table:
   - /disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p
   inductor_off_s1p: /disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p
-  cap_pixel_pairs:
+  cap_pixel_pairs: # C2 C3 C1
   - - - 19
       - 14
     - - 19

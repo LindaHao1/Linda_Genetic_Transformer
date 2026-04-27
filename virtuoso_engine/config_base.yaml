@@ -40,6 +40,8 @@ mim_cap:
   length: "12u"
   width: "12u"
   total_c: "1p"
+  mimflag: 3
+  mismatchflag: 0
   cell_layout: "mimcap_um_rf"
   cell_spectre: "mimcap_um_sin_rf"
 
@@ -48,9 +50,8 @@ mim_cap:
 # ============================================================
 switch_model:
   cap_value: "1e-12"
-  r_on: 3
-  r_off: 260
-  c_off: "8e-14"
+  switch_on_s1p: "/disk/mcao53/RFIC_RL/Switch_spar/Switch_128um_on.s1p"
+  switch_off_s1p: "/disk/mcao53/RFIC_RL/Switch_spar/Switch_128um_off.s1p"
 
 # ============================================================
 # LAYOUT GEOMETRY — pixel_size and grid_size must be set in child configs

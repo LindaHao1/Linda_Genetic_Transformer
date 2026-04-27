@@ -197,7 +197,14 @@ class GAConfig:
     finetune_init_outer_only:     bool  = False         # if True, flip_01 at init only touches outer (non-inner) pixels
 
     # Expansion-based initialization: grow a smaller seed design to the target grid.
-    # Two top-level modes selected by weighted random (p_embed vs p_random_insertion):
+    # This is also the unified fine-tune path — use finetune_expand even when the
+    # input design is the same size as the target (0 rows/cols inserted = plain fine-tune).
+    #
+    # Top-level population split (weights, need not sum to 1):
+    #   p_completely_random:  fraction of pop_size_start generated fully at random
+    #   p_embed + p_random_insertion: seeded from the input design (remaining fraction)
+    #
+    # Seeded-individual expansion modes (p_embed vs p_random_insertion):
     #   p_embed:             embed seed at center; outside pixels filled with density
     #                        d ~ Uniform(0,1) drawn each call (0=zeros, 1=all-ones)
     #   p_random_insertion:  insert rows/cols one at a time using sub-modes below
@@ -207,12 +214,16 @@ class GAConfig:
     #   p_random_fill: random 0/1 content at a random interior position
     #   p_zero_pad:    zeros inserted at the boundary edges only (not interior)
     finetune_expand_enabled:            bool  = False
+    finetune_expand_p_completely_random: float = 0.3
     finetune_expand_p_embed:            float = 0.3
     finetune_expand_p_random_insertion: float = 0.7
     finetune_expand_p_duplicate:        float = 0.42
     finetune_expand_p_random_fill:      float = 0.21
     finetune_expand_p_zero_pad:         float = 0.07
     finetune_expand_n_immigrants:       int   = 2
+    finetune_expand_embed_density_min:  float = 0.0
+    finetune_expand_embed_density_max:  float = 1.0
+    finetune_expand_zero_pad_first:     bool  = True
 
     # Multi-champion: keep the top-k designs per filter state in the champion registry.
     # n_state_champions=1 reproduces the original single-champion behaviour exactly.
@@ -300,17 +311,24 @@ class GAConfig:
 
             finetune_design_path        = str(ga["finetune_design_path"]) if ga.get("finetune_design_path") else None,
             finetune_seed_ratio         = float(ga.get("finetune_seed_ratio",         0.7)),
-            finetune_init_max_mutations = int(  ga.get("finetune_init_max_mutations",   1)),
-            finetune_init_outer_only    = bool( ga.get("finetune_init_outer_only",  False)),
+            finetune_init_max_mutations = int(  _fex.get("init_max_mutations",
+                                               ga.get("finetune_init_max_mutations", 1))),
+            finetune_init_outer_only    = bool( _fex.get("init_outer_only",
+                                               ga.get("finetune_init_outer_only", False))),
 
             **{k: v for k, v in {
-                "finetune_expand_enabled":            bool( _fex.get("enabled",              False)),
-                "finetune_expand_p_embed":            float(_fex.get("p_embed",              0.3)),
-                "finetune_expand_p_random_insertion": float(_fex.get("p_random_insertion",   0.7)),
-                "finetune_expand_p_duplicate":        float(_fex.get("p_duplicate",          0.42)),
-                "finetune_expand_p_random_fill":      float(_fex.get("p_random_fill",        0.21)),
-                "finetune_expand_p_zero_pad":         float(_fex.get("p_zero_pad",           0.07)),
-                "finetune_expand_n_immigrants":       int(  _fex.get("n_immigrants_expanded",  2)),
+                "finetune_expand_enabled":             bool( _fex.get("enabled",              False)),
+                "finetune_expand_p_completely_random": float(_fex.get("p_completely_random",
+                                                             1.0 - ga.get("finetune_seed_ratio", 0.7))),
+                "finetune_expand_p_embed":             float(_fex.get("p_embed",              0.3)),
+                "finetune_expand_p_random_insertion":  float(_fex.get("p_random_insertion",   0.7)),
+                "finetune_expand_p_duplicate":         float(_fex.get("p_duplicate",          0.42)),
+                "finetune_expand_p_random_fill":       float(_fex.get("p_random_fill",        0.21)),
+                "finetune_expand_p_zero_pad":          float(_fex.get("p_zero_pad",           0.07)),
+                "finetune_expand_n_immigrants":        int(  _fex.get("n_immigrants_expanded",  2)),
+                "finetune_expand_embed_density_min":   float(_fex.get("embed_density_min",    0.0)),
+                "finetune_expand_embed_density_max":   float(_fex.get("embed_density_max",    1.0)),
+                "finetune_expand_zero_pad_first":      bool( _fex.get("zero_pad_first",       True)),
             }.items()},
 
             n_state_champions           = int(  ga.get("n_state_champions",             1)),
@@ -1063,16 +1081,21 @@ class SwitchableFilterGA:
         population: List[DesignState] = []
         effective_max_cap_pairs = cfg.max_cap_pairs if cfg.enable_cap_pairs else 0
 
-        # --- Phase 1: fine-tune seeding (optional) ---
+        # --- Phase 1: fine-tune / expand seeding (via finetune_expand, optional) ---
         self._finetune_seed_design: Optional[DesignState] = None
         if cfg.finetune_design_path:
+            if not cfg.finetune_expand_enabled:
+                raise ValueError(
+                    "finetune_design_path requires finetune_expand.enabled: true. "
+                    "Fine-tuning (same-size or expansion) is now configured exclusively "
+                    "via the finetune_expand block."
+                )
             seed_design = _load_design_from_config(cfg.finetune_design_path)
             # Normalize seed design if single_inductor_value is enabled
             if cfg.single_inductor_value and seed_design.inductor_values:
                 seed_design.inductor_values = [seed_design.inductor_values[0]] * len(seed_design.inductor_values)
             # Pad missing states with random switch/inductor assignments when the seed
-            # has fewer states than the current target (e.g. loading a 3-state design
-            # into a 5-state run).  Only appends new rows — existing states are untouched.
+            # has fewer states than the current target.
             if seed_design.n_states < cfg.n_states:
                 n_missing = cfg.n_states - seed_design.n_states
                 n_switches  = len(seed_design.switch_states[0])  if seed_design.switch_states          else 0
@@ -1089,18 +1112,15 @@ class SwitchableFilterGA:
                         )
             self._finetune_seed_design = seed_design
 
-            # Detect whether physical expansion to target grid size is requested
-            _do_expand = (
-                cfg.finetune_expand_enabled
-                and (cfg.rows > seed_design.rows or cfg.cols > seed_design.cols)
-            )
-            if _do_expand:
-                if cfg.rows < seed_design.rows or cfg.cols < seed_design.cols:
-                    raise ValueError(
-                        f"finetune_expand: target grid {cfg.rows}x{cfg.cols} is smaller "
-                        f"than seed design {seed_design.rows}x{seed_design.cols} in at least "
-                        "one dimension."
-                    )
+            if cfg.rows < seed_design.rows or cfg.cols < seed_design.cols:
+                raise ValueError(
+                    f"finetune_expand: target grid {cfg.rows}x{cfg.cols} is smaller "
+                    f"than seed design {seed_design.rows}x{seed_design.cols} in at least "
+                    "one dimension."
+                )
+
+            _expanding = cfg.rows > seed_design.rows or cfg.cols > seed_design.cols
+            if _expanding:
                 print(
                     f"[GA] Expansion mode: seed {seed_design.rows}x{seed_design.cols} "
                     f"→ {cfg.rows}x{cfg.cols} "
@@ -1110,39 +1130,47 @@ class SwitchableFilterGA:
                     f"p_rand={cfg.finetune_expand_p_random_fill}, "
                     f"p_zero_pad={cfg.finetune_expand_p_zero_pad})"
                 )
+            else:
+                print(
+                    f"[GA] Fine-tune mode: same-size ({cfg.rows}x{cfg.cols}), "
+                    f"expand path with 0 rows/cols inserted"
+                )
 
-            n_seeded = round(cfg.pop_size_start * cfg.finetune_seed_ratio)
-            print(f"[GA] Fine-tune mode: seeding {n_seeded}/{cfg.pop_size_start} "
-                  f"individuals by mutating {cfg.finetune_design_path}")
+            n_random  = round(cfg.pop_size_start * cfg.finetune_expand_p_completely_random)
+            n_seeded  = cfg.pop_size_start - n_random
+            print(
+                f"[GA] Seeding {n_seeded}/{cfg.pop_size_start} individuals from "
+                f"{cfg.finetune_design_path}  ({n_random} completely random, "
+                f"init_max_mutations={cfg.finetune_init_max_mutations})"
+            )
+
             _MAX_SEED_RETRIES = 200
             # When outer-only init is requested, flip_inner_prob=0 makes flip_01
             # skip inner-region pixels entirely (weight=0 → never sampled).
             _init_flip_inner_prob = 0.0 if cfg.finetune_init_outer_only else cfg.flip_inner_prob
             for i in range(n_seeded):
-                # Individual 0: always the original seed (or zero-padded embed expansion)
-                # with NO mutations — preserved exactly to anchor the population.
+                # Individual 0: always the seed (or zero-padded embed) with NO mutations —
+                # preserved exactly to anchor the population.
                 if i == 0:
-                    if _do_expand:
+                    if cfg.finetune_expand_zero_pad_first:
                         population.append(
                             embed_centered_with_density(seed_design, cfg.rows, cfg.cols, 0.0, self.rng)
                         )
                     else:
-                        population.append(seed_design.copy())
+                        population.append(
+                            expand_design_to_size(seed_design, cfg.rows, cfg.cols, cfg, self.rng)
+                        )
                     continue
 
                 mutant = None
                 for _ in range(_MAX_SEED_RETRIES):
-                    # Apply a random number of mutations (1..finetune_init_max_mutations)
-                    # so seeded individuals span a wider region of the outer search space.
+                    # Apply a random number of mutations (1..init_max_mutations).
+                    # Each retry uses a fresh expand so individuals differ in their
+                    # row/col insertion sequence; for same-size, expand returns a copy.
                     n_mutations = self.rng.randint(1, cfg.finetune_init_max_mutations)
-                    # Expansion mode: each retry uses a fresh random expansion so individuals
-                    # differ in their row/col insertion sequence (not just mutations).
-                    if _do_expand:
-                        current = expand_design_to_size(
-                            seed_design, cfg.rows, cfg.cols, cfg, self.rng
-                        )
-                    else:
-                        current = seed_design  # existing behaviour — unchanged
+                    current = expand_design_to_size(
+                        seed_design, cfg.rows, cfg.cols, cfg, self.rng
+                    )
                     for _ in range(n_mutations):
                         candidate, _ = random_action(
                             state                    = current,
@@ -1173,11 +1201,10 @@ class SwitchableFilterGA:
                         )
                         if candidate is not None:
                             current = candidate
-                    # Accept if the individual differs from the seed (expansion always
-                    # creates a new object, so _do_expand always passes this check).
-                    if current is not seed_design:
-                        mutant = current
-                        break
+                    # expand_design_to_size always returns a new object, so current
+                    # is always distinct from seed_design regardless of same-size mode.
+                    mutant = current
+                    break
                 if mutant is None:
                     raise RuntimeError(
                         f"Failed to generate seeded individual {i} after "

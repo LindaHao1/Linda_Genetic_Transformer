@@ -1497,27 +1497,36 @@ class SettingsDialog(QDialog):
         w  = QWidget()
         fl = QFormLayout(w)
 
-        self._sw_cap_spin  = QDoubleSpinBox()
-        self._sw_ron_spin  = QDoubleSpinBox()
-        self._sw_roff_spin = QDoubleSpinBox()
-        self._sw_coff_spin = QDoubleSpinBox()
+        self._sw_cap_spin     = QDoubleSpinBox()
+        self._sw_on_s1p_edit  = QLineEdit()
+        self._sw_off_s1p_edit = QLineEdit()
+        self._sw_mimflag_combo = QComboBox()
 
-        self._sw_cap_spin.setRange(1e-6, 1000.0);  self._sw_cap_spin.setDecimals(4)
+        self._sw_cap_spin.setRange(1e-6, 1000.0)
+        self._sw_cap_spin.setDecimals(4)
         self._sw_cap_spin.setSuffix(" pF")
-        self._sw_ron_spin.setRange(0.01, 1e6);     self._sw_ron_spin.setDecimals(2)
-        self._sw_ron_spin.setSuffix(" Ω")
-        self._sw_roff_spin.setRange(0.01, 1e8);    self._sw_roff_spin.setDecimals(1)
-        self._sw_roff_spin.setSuffix(" Ω")
-        self._sw_coff_spin.setRange(1e-6, 1000.0); self._sw_coff_spin.setDecimals(4)
-        self._sw_coff_spin.setSuffix(" fF")
+
+        self._sw_on_s1p_edit.setPlaceholderText("Path to switch ON  s1p file…")
+        self._sw_off_s1p_edit.setPlaceholderText("Path to switch OFF s1p file…")
+
+        self._sw_mimflag_combo.addItems([
+            "1 — 1.0 fF/μm²",
+            "2 — 1.5 fF/μm²",
+            "3 — 2.0 fF/μm²",
+        ])
 
         fl.addRow("Series cap (cap_value):", self._sw_cap_spin)
-        fl.addRow("R_on:",                   self._sw_ron_spin)
-        fl.addRow("R_off:",                  self._sw_roff_spin)
-        fl.addRow("C_off:",                  self._sw_coff_spin)
+        fl.addRow("Switch ON s1p:",          self._make_browse_row(self._sw_on_s1p_edit,  "file"))
+        fl.addRow("Switch OFF s1p:",         self._make_browse_row(self._sw_off_s1p_edit, "file"))
+        fl.addRow("MIM cap density (mimflag):", self._sw_mimflag_combo)
+
+        self._cleanup_cb = QCheckBox("Delete intermediate files after simulation")
+        fl.addRow("Cleanup:", self._cleanup_cb)
+
         fl.addRow(QLabel(
             "cap_value is the global default. Per-switch cap is set in the "
-            "Pixel Properties panel."))
+            "Pixel Properties panel.\n"
+            "Switch NMOS behavior is modeled via ON/OFF s1p files (TSMC mimcap_um_sin_rf model)."))
         return w
 
     # ── Browse-row helper ─────────────────────────────────────────────────────
@@ -1591,12 +1600,14 @@ class SettingsDialog(QDialog):
 
         self._sw_cap_spin.setValue(
             float(_get_nested(cfg, "switch_model.cap_value", 1e-12)) * 1e12)
-        self._sw_ron_spin.setValue(
-            float(_get_nested(cfg, "switch_model.r_on",  3)))
-        self._sw_roff_spin.setValue(
-            float(_get_nested(cfg, "switch_model.r_off", 260)))
-        self._sw_coff_spin.setValue(
-            float(_get_nested(cfg, "switch_model.c_off", 8e-14)) * 1e15)
+        self._sw_on_s1p_edit.setText(
+            str(_get_nested(cfg, "switch_model.switch_on_s1p", "")))
+        self._sw_off_s1p_edit.setText(
+            str(_get_nested(cfg, "switch_model.switch_off_s1p", "")))
+        mimflag = int(_get_nested(cfg, "mim_cap.mimflag", 1))
+        self._sw_mimflag_combo.setCurrentIndex(max(0, min(mimflag - 1, 2)))
+        self._cleanup_cb.setChecked(
+            bool(_get_nested(cfg, "cleanup.delete_intermediate_files", True)))
 
     def _save_and_accept(self) -> None:
         gs = self.gui_settings
@@ -1634,11 +1645,15 @@ class SettingsDialog(QDialog):
         _set_nested(cfg, "pixelated.feedline.feedline_padding",
                     self._fl_padding_spin.value())
         _set_nested(cfg, "switch_model.cap_value",
-                    self._sw_cap_spin.value()  * 1e-12)
-        _set_nested(cfg, "switch_model.r_on",  self._sw_ron_spin.value())
-        _set_nested(cfg, "switch_model.r_off", self._sw_roff_spin.value())
-        _set_nested(cfg, "switch_model.c_off",
-                    self._sw_coff_spin.value() * 1e-15)
+                    self._sw_cap_spin.value() * 1e-12)
+        v = self._sw_on_s1p_edit.text().strip()
+        if v:
+            _set_nested(cfg, "switch_model.switch_on_s1p", v)
+        v = self._sw_off_s1p_edit.text().strip()
+        if v:
+            _set_nested(cfg, "switch_model.switch_off_s1p", v)
+        _set_nested(cfg, "mim_cap.mimflag", self._sw_mimflag_combo.currentIndex() + 1)
+        _set_nested(cfg, "cleanup.delete_intermediate_files", self._cleanup_cb.isChecked())
 
         self.accept()
 

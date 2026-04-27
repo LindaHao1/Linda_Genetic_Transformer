@@ -5,6 +5,8 @@
 # Aspect ratio ~1:1 (square-ish caps for single-pixel switch)
 # PLACEHOLDER — replace with measured values from PDK
 cap_value_f,length_um,width_um
+1.0e-13,6.86,6.86
+1.5e-13,8.45,8.45
 1.9987e-13,9.78,9.78
 2.5e-13,10.96,10.96
 2.99e-13,12.02,12.02

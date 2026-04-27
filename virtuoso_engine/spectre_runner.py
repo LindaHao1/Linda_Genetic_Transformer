@@ -19,9 +19,10 @@ The Spectre netlist structure per state
   nport_ind0 (ind_0 0) nport file=<inductor.s1p> N=1
   ...
 
-  // Switch connections (state-dependent)
-  //  ON : c_sw<i>(sw_<i> sw_mid<i>) + r_on<i>(sw_mid<i> 0)
-  //  OFF: c_sw<i>(sw_<i> sw_mid<i>) + r_off<i>(sw_mid<i> 0) + c_off<i>(sw_mid<i> 0)
+  // Switch connections (state-dependent — TSMC mimcap_um_sin_rf model)
+  //  mimcap_sw<i>(sw_mid<i> sw_<i> 0) mimcap_um_sin_rf lt=...u wt=...u
+  //  nport_sw<i>(sw_mid<i> 0) nport file=<on|off.s1p> N=1
+  //  Topology: SW EMX port (mim_m) → mimcap → (mim_p) sw_mid → nport(s1p) → GND
 
   p_in  (pix_in  0) port r=50 num=1
   p_out (pix_out 0) port r=50 num=2
@@ -36,6 +37,8 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
+
+from .cap_utils import _lookup_cap_dims
 
 # ---------------------------------------------------------------------------
 # SNP port-order parser
@@ -103,21 +106,30 @@ def generate_state_netlist(
     sw_indices_in_port_order: List[int],
     ind_indices_in_port_order: List[int],
     gnd_indices_in_port_order: List[int],
-    r_on: float,
-    r_off: float,
-    c_off: float,
+    switch_on_s1p: str,
+    switch_off_s1p: str,
+    tsmc_models_path: str,
+    sw_dims: List[tuple],
     inductor_s1p_list: List[str],
     sim_cfg: dict,
     output_s2p: Path,
     netlist_dir: Path,
     cap_pair_indices: Optional[List[tuple]] = None,
     cap_pair_values: Optional[List[float]] = None,
+    cp_dims: Optional[List[tuple]] = None,
+    cap_pair_orientations: Optional[List[str]] = None,
     inductor_state_vector: Optional[List[int]] = None,
     via_indices_in_port_order: Optional[List[int]] = None,
     inductor_off_s1p_list: Optional[List[str]] = None,
+    mimflag: int = 3,
+    mismatchflag: int = 0,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
+
+    Switch model: pixel SW port → (mim_m) mimcap_um_sin_rf (mim_p) → sw_mid → nport(s1p) → GND
+                                                    ↓ um
+                                                   GND
 
     Args:
         snp_path                  Path to the EMX .snp file.
@@ -129,11 +141,11 @@ def generate_state_netlist(
         ind_indices_in_port_order Indices into port_order that are IND_* ports.
         gnd_indices_in_port_order Indices into port_order that are GND ref ports
                                   (PIX_IN_GND, PIX_OUT_GND) — shorted to ground.
-        r_on                      Switch ON resistance (ohm).
-        r_off                     Switch OFF resistance (ohm).
-        c_off                     Switch OFF capacitance (F).
+        switch_on_s1p             Path to the NMOS switch ON-state S1P file.
+        switch_off_s1p            Path to the NMOS switch OFF-state S1P file.
+        tsmc_models_path          Path to the TSMC Spectre models file (for rf_mim include).
+        sw_dims                   Per-switch (lt_um, wt_um) from _lookup_cap_dims.
         inductor_s1p_list         Per-inductor ON-state s1p file paths (IND_* order).
-                                  Length must equal len(ind_indices_in_port_order).
         inductor_off_s1p_list     Per-inductor OFF-state s1p paths (IND_* order).
                                   When None or entry is empty, falls back to large
                                   resistor (1 TΩ) for that inductor's OFF state.
@@ -142,8 +154,11 @@ def generate_state_netlist(
         netlist_dir               Directory to write the .scs file into.
         cap_pair_indices          List of (port_idx_a, port_idx_b) tuples for each
                                   capacitor pair (CP_{i}A, CP_{i}B ports).
-        cap_pair_values           Per-pair capacitance values (F), same order as
-                                  cap_pair_indices.
+        cap_pair_values           Per-pair capacitance values (F) — kept for reference.
+        cp_dims                   Per-pair (lt_um, wt_um) from _lookup_cap_dims.
+        cap_pair_orientations     Per-pair orientation: "H"/"H_rev" (horizontal) or
+                                  "V"/"V_rev" (vertical). Controls which node is mim_p.
+                                  Defaults to "H" (node_a = mim_p) when None.
 
     Returns:
         Path to the written .scs netlist file.
@@ -158,7 +173,10 @@ def generate_state_netlist(
     lines.append(f"// Pixelated Design Simple — state {state_index}")
     lines.append(f"// Switch state vector: {state_vector}")
     lines.append(f"// EMX SNP file: {snp_path}")
-    lines.append("simulator lang=spectre\n")
+    lines.append("simulator lang=spectre")
+    if tsmc_models_path:
+        lines.append(f'include "{tsmc_models_path}" section=tt_rfmim')
+    lines.append("")
 
     # --- EMX nport block ---
     # Node list: each port paired with node 0 (global ground)
@@ -210,32 +228,34 @@ def generate_state_netlist(
         lines.append("")
 
     # --- Switch connections (state-dependent) ---
+    # Topology: SW port (mim_m) → mimcap_um_sin_rf → (mim_p) sw_mid → nport(s1p) → GND
+    #           bulk (um/mim_b) connected to GND
     lines.append("// Switch connections")
     for local_sw_idx, port_idx in enumerate(sw_indices_in_port_order):
-        node   = node_names[port_idx]
-        sw_on  = bool(state_vector[local_sw_idx])
-        cap_v  = cap_values[local_sw_idx]
-        mid    = f"sw_mid{local_sw_idx}"
-
-        if sw_on:
-            lines.append(f"// SW_{local_sw_idx}: ON (c_sw → r_on → GND)")
-            lines.append(f"c_sw{local_sw_idx} ({node} {mid}) capacitor c={cap_v}")
-            lines.append(f"r_on{local_sw_idx} ({mid} 0) resistor r={r_on}")
-        else:
-            lines.append(f"// SW_{local_sw_idx}: OFF (c_sw → r_off || c_off → GND)")
-            lines.append(f"c_sw{local_sw_idx} ({node} {mid}) capacitor c={cap_v}")
-            lines.append(f"r_off{local_sw_idx} ({mid} 0) resistor r={r_off}")
-            lines.append(f"c_off{local_sw_idx} ({mid} 0) capacitor c={c_off}")
+        node  = node_names[port_idx]
+        sw_on = bool(state_vector[local_sw_idx])
+        mid   = f"sw_mid{local_sw_idx}"
+        lt, wt = sw_dims[local_sw_idx] if local_sw_idx < len(sw_dims) else (10.0, 10.0)
+        s1p = switch_on_s1p if sw_on else switch_off_s1p
+        state_label = "ON" if sw_on else "OFF"
+        lines.append(f"// SW_{local_sw_idx}: {state_label} (mimcap mim_m=pixel → mim_p=mid → switch s1p)")
+        lines.append(f"mimcap_sw{local_sw_idx} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
+        lines.append(f"nport_sw{local_sw_idx} ({mid} 0) nport file=\"{s1p}\" N=1")
     lines.append("")
 
     # --- Capacitor pair connections (state-independent) ---
+    # Topology: mim_p pixel → mimcap_um_sin_rf → mim_m pixel; bulk (um) → GND
+    # Orientation "H"/"V": node_a is mim_p; "H_rev"/"V_rev": node_b is mim_p.
     if cap_pair_indices:
         lines.append("// Capacitor pair connections (always connected)")
         for pair_idx, (idx_a, idx_b) in enumerate(cap_pair_indices):
             node_a = node_names[idx_a]
             node_b = node_names[idx_b]
-            cap_v  = (cap_pair_values or [])[pair_idx]
-            lines.append(f"c_pair{pair_idx} ({node_a} {node_b}) capacitor c={cap_v}")
+            lt, wt = (cp_dims or [])[pair_idx] if cp_dims and pair_idx < len(cp_dims) else (10.0, 10.0)
+            orientation = (cap_pair_orientations or [])[pair_idx] if cap_pair_orientations else "H"
+            if orientation in ("H_rev", "V_rev"):
+                node_a, node_b = node_b, node_a
+            lines.append(f"mimcap_pair{pair_idx} ({node_a} {node_b} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
         lines.append("")
 
     # --- I/O ports ---
@@ -336,6 +356,38 @@ def run_all_states(
     sw  = cfg.get("switch_model", {})
     sim = cfg["simulation"]
     pd  = cfg.get("pixelated", {})
+    fl  = cfg.get("full_layout", {})
+    p   = cfg.get("paths", {})
+    mc  = cfg.get("mim_cap", {})
+
+    mimflag      = int(mc.get("mimflag",      3))
+    mismatchflag = int(mc.get("mismatchflag", 0))
+
+    switch_on_s1p  = sw.get("switch_on_s1p", "")
+    switch_off_s1p = sw.get("switch_off_s1p", "")
+    tsmc_models    = p.get("tsmc_models", "")
+
+    # Resolve cap dimension tables (paths may be relative to repo root)
+    _repo_root = Path(__file__).parent.parent
+    sw_table = Path(fl.get("switch_cap_table", "virtuoso_engine/data/switch_cap_table.csv"))
+    cp_table = Path(fl.get("cap_pair_table",   "virtuoso_engine/data/cap_pair_table.csv"))
+    if not sw_table.is_absolute():
+        sw_table = _repo_root / sw_table
+    if not cp_table.is_absolute():
+        cp_table = _repo_root / cp_table
+
+    sw_dims = _lookup_cap_dims(sw_table, cap_values)
+    cp_dims = _lookup_cap_dims(cp_table, cap_pair_values) if cap_pair_values else []
+
+    # Infer cap pair orientations from pixel coordinates in config
+    raw_pairs = pd.get("cap_pixel_pairs", [])
+    cap_pair_orientations: List[str] = []
+    for pair in raw_pairs:
+        (r1, c1), (r2, c2) = pair
+        if r1 == r2:
+            cap_pair_orientations.append("H" if c1 <= c2 else "H_rev")
+        else:
+            cap_pair_orientations.append("V" if r1 <= r2 else "V_rev")
 
     # Build per-inductor s1p list from translation table + inductor_values indices.
     # Falls back to the legacy single inductor_s1p for all inductors when the
@@ -397,23 +449,28 @@ def run_all_states(
             sw_indices_in_port_order  = sw_indices,
             ind_indices_in_port_order = ind_indices,
             gnd_indices_in_port_order = gnd_indices,
-            r_on                      = sw.get("r_on",  3),
-            r_off                     = sw.get("r_off", 260),
-            c_off                     = sw.get("c_off", "8e-14"),
+            switch_on_s1p             = switch_on_s1p,
+            switch_off_s1p            = switch_off_s1p,
+            tsmc_models_path          = tsmc_models,
+            sw_dims                   = sw_dims,
             inductor_s1p_list         = inductor_s1p_list,
             sim_cfg                   = sim,
             output_s2p                = output_s2p,
             netlist_dir               = emx_dir,
             cap_pair_indices          = cap_pair_indices,
             cap_pair_values           = cap_pair_values,
+            cp_dims                   = cp_dims,
+            cap_pair_orientations     = cap_pair_orientations,
             inductor_state_vector     = inductor_state_vector,
             via_indices_in_port_order = via_indices,
             inductor_off_s1p_list     = inductor_off_s1p_list,
+            mimflag                   = mimflag,
+            mismatchflag              = mismatchflag,
         )
 
         # --- Run Spectre ---
         spectre_log = psf_dir / "spectre.log"
-        cmd = ["spectre", str(netlist_path), "-raw", str(psf_dir)]
+        cmd = ["spectre", "-64", str(netlist_path), "-raw", str(psf_dir), "+aps", "+mt"]
         print(f"  [spectre_runner] Executing: {' '.join(cmd)}")
 
         proc = subprocess.run(

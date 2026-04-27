@@ -74,12 +74,12 @@ def _fix_inductors(
     rows = len(matrix)
     cols = len(matrix[0])
 
-    # Pass 1: spacing violations — check 5×5 box (Chebyshev distance ≤ 2)
+    # Pass 1: spacing violations — inductor footprint overlap
     violators = []
     for r in range(rows):
         for c in range(cols):
             if matrix[r][c] == 2:
-                if _special_pixel_too_close(matrix, r, c):
+                if _special_pixel_too_close(matrix, r, c, new_type=2):
                     violators.append((r, c))
     # Remove in random order to avoid order bias
     rng.shuffle(violators)
@@ -119,12 +119,12 @@ def _fix_switches(
     rows = len(matrix)
     cols = len(matrix[0])
 
-    # Pass 1: spacing violations — check 5×5 box (Chebyshev distance ≤ 2)
+    # Pass 1: spacing violations — switch footprint overlap
     violators = []
     for r in range(rows):
         for c in range(cols):
             if matrix[r][c] == 3:
-                if _special_pixel_too_close(matrix, r, c):
+                if _special_pixel_too_close(matrix, r, c, new_type=3):
                     violators.append((r, c))
     rng.shuffle(violators)
     for r, c in violators:

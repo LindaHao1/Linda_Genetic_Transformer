@@ -35,6 +35,5 @@ ga:
 
   # REQUIRED: path to the design to fine-tune from
   finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_indefinite_init_count/sims/gen91_ind6/worker_1/pixsimple_r21c27_ps25p0_gs20p0_frl15frr7_w1/config.yaml"
-  finetune_seed_ratio: 0.7
 
 seed: 42
