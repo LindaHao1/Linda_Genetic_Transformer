@@ -186,10 +186,10 @@ filter_specs:
 
 ga:
   # Smaller population for fine-tune (exploiting a good starting point)
-  pop_size_start:    100
-  pop_size_end:       30
+  pop_size_start:    160
+  pop_size_end:       40
   pop_size_step_size: 20
-  pop_schedule_gens_per_step: 2
+  pop_schedule_gens_per_step: 4
   n_keep_bad: 1
 
 
@@ -207,13 +207,13 @@ ga:
     flip_inductor_value: 0.0
     perturb_caps:        4.0
     flip_switch_state:   5.0
-    add_cap_pair:        6.0
-    remove_cap_pair:     6.0
+    add_cap_pair:        8.0
+    remove_cap_pair:     8.0
     perturb_pair_caps:   6.0
     flip_inductor_state: 5.0
-    flip_via:            2.0
+    flip_via:            0.0
 
-  n_state_champions: 2
+  n_state_champions: 3
 
   # Fine-tune / expand seeding — unified via finetune_expand.
   # Set finetune_design_path in the experiment config.  When the seed is the same

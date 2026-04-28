@@ -14,15 +14,15 @@
 _base_: ../base/finetune_3_states.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_update_cap_model"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_update_cap_model_count"
 
 grid:  
   n_states: 3
-  rows: 27       # TODO: adjust to target large-grid size
+  rows: 30       # TODO: adjust to target large-grid size
   cols: 33      # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/Sim_engine_results/test_sims/layout_candidate_1/sim_new_small_design_seed.yaml"
+  finetune_design_path: "/disk/mcao53/RFIC_RL/candidate_design/new_cap_model/sim_20260427_132241_config.yaml"
   n_parallel: 6
   finetune_expand:
     enabled: true
@@ -46,7 +46,7 @@ ga:
 
     # If true, individual 0 is always a zero-padded embed of the seed (no mutations).
     # Set to false to draw individual 0 from the normal expand distribution instead.
-    zero_pad_first: true
+    zero_pad_first: false
 
     # Sub-mode weights for p_random_insertion (treated as weights, need not sum to 1):
     #   p_duplicate:   copy the adjacent row/col at a random interior position
