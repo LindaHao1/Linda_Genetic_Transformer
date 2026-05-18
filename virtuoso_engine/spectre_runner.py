@@ -41,6 +41,24 @@ from typing import Dict, List, Optional
 from .cap_utils import _lookup_cap_dims
 
 # ---------------------------------------------------------------------------
+# Backward-compatibility normalization helpers
+# ---------------------------------------------------------------------------
+
+def _normalize_cap_values(cap_values: list) -> list:
+    """Convert flat List[float] → List[List[float]] if needed."""
+    if cap_values and isinstance(cap_values[0], (int, float)):
+        return [[v] for v in cap_values]
+    return cap_values
+
+
+def _normalize_state_list(state_list: list) -> list:
+    """Convert List[List[int]] → List[List[List[int]]] if needed."""
+    if state_list and state_list[0] and isinstance(state_list[0][0], (int, float)):
+        return [[[bit] for bit in sv] for sv in state_list]
+    return state_list
+
+
+# ---------------------------------------------------------------------------
 # SNP port-order parser
 # ---------------------------------------------------------------------------
 
@@ -101,15 +119,15 @@ def generate_state_netlist(
     snp_path: Path,
     port_order: List[str],
     state_index: int,
-    state_vector: List[int],
-    cap_values: List[float],
+    state_vector: List[List[int]],
+    cap_values: List[List[float]],
     sw_indices_in_port_order: List[int],
     ind_indices_in_port_order: List[int],
     gnd_indices_in_port_order: List[int],
     switch_on_s1p: str,
     switch_off_s1p: str,
     tsmc_models_path: str,
-    sw_dims: List[tuple],
+    sw_dims: List[List[tuple]],
     inductor_s1p_list: List[str],
     sim_cfg: dict,
     output_s2p: Path,
@@ -123,6 +141,7 @@ def generate_state_netlist(
     inductor_off_s1p_list: Optional[List[str]] = None,
     mimflag: int = 3,
     mismatchflag: int = 0,
+    ind_dims: Optional[List[tuple]] = None,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
@@ -135,8 +154,8 @@ def generate_state_netlist(
         snp_path                  Path to the EMX .snp file.
         port_order                List of port names from parse_snp_port_order().
         state_index               Index of this state (0-based, used in filename).
-        state_vector              Binary list: 1 = switch ON, 0 = switch OFF.
-        cap_values                Per-switch series capacitance (same order as SW_*).
+        state_vector              List[List[int]]: outer = switch index, inner = on/off bits per cap in bank.
+        cap_values                List[List[float]]: outer = switch index, inner = cap values per bank.
         sw_indices_in_port_order  Indices into port_order that are SW_* ports.
         ind_indices_in_port_order Indices into port_order that are IND_* ports.
         gnd_indices_in_port_order Indices into port_order that are GND ref ports
@@ -144,7 +163,7 @@ def generate_state_netlist(
         switch_on_s1p             Path to the NMOS switch ON-state S1P file.
         switch_off_s1p            Path to the NMOS switch OFF-state S1P file.
         tsmc_models_path          Path to the TSMC Spectre models file (for rf_mim include).
-        sw_dims                   Per-switch (lt_um, wt_um) from _lookup_cap_dims.
+        sw_dims                   List[List[tuple]]: per-switch, per-cap (lt_um, wt_um) from _lookup_cap_dims.
         inductor_s1p_list         Per-inductor ON-state s1p file paths (IND_* order).
         inductor_off_s1p_list     Per-inductor OFF-state s1p paths (IND_* order).
                                   When None or entry is empty, falls back to large
@@ -159,6 +178,8 @@ def generate_state_netlist(
         cap_pair_orientations     Per-pair orientation: "H"/"H_rev" (horizontal) or
                                   "V"/"V_rev" (vertical). Controls which node is mim_p.
                                   Defaults to "H" (node_a = mim_p) when None.
+        ind_dims                  Per-inductor (lt_um, wt_um) for the series MIM cap.
+                                  Defaults to (10.0, 10.0) for each inductor when None.
 
     Returns:
         Path to the written .scs netlist file.
@@ -204,43 +225,54 @@ def generate_state_netlist(
         lines.append("")
 
     # --- Inductor connections (state-dependent) ---
+    # Topology: IND port (mim_m) → mimcap_um_sin_rf → (mim_p) ind_mid → nport(s1p) → GND
     if ind_indices_in_port_order:
-        lines.append("// Inductor connections (state-dependent)")
+        lines.append("// Inductor connections (state-dependent; series MIM cap)")
         for local_idx, port_idx in enumerate(ind_indices_in_port_order):
             node = node_names[port_idx]
             is_on = True
             if inductor_state_vector is not None and local_idx < len(inductor_state_vector):
                 is_on = bool(inductor_state_vector[local_idx])
 
+            mid = f"ind_mid{local_idx}"
+            lt, wt = (ind_dims[local_idx] if ind_dims and local_idx < len(ind_dims) else (10.0, 10.0))
+
             if is_on:
                 s1p = inductor_s1p_list[local_idx] if local_idx < len(inductor_s1p_list) else ""
-                lines.append(f"nport_ind{local_idx} ({node} 0) nport file=\"{s1p}\" N=1")
+                lines.append(f"// IND_{local_idx}: ON (mimcap mim_m=pixel → mim_p=mid → inductor s1p)")
+                lines.append(f"mimcap_ind{local_idx} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
+                lines.append(f"nport_ind{local_idx} ({mid} 0) nport file=\"{s1p}\" N=1")
             else:
                 off_s1p = ""
                 if inductor_off_s1p_list and local_idx < len(inductor_off_s1p_list):
                     off_s1p = inductor_off_s1p_list[local_idx] or ""
                 if off_s1p:
-                    lines.append(f"// IND_{local_idx}: OFF (layout s1p)")
-                    lines.append(f"nport_ind{local_idx} ({node} 0) nport file=\"{off_s1p}\" N=1")
+                    lines.append(f"// IND_{local_idx}: OFF (mimcap → layout off s1p)")
+                    lines.append(f"mimcap_ind{local_idx} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
+                    lines.append(f"nport_ind{local_idx} ({mid} 0) nport file=\"{off_s1p}\" N=1")
                 else:
-                    lines.append(f"// IND_{local_idx}: OFF (open-circuit termination)")
-                    lines.append(f"r_open_ind{local_idx} ({node} 0) resistor r=1e12")
+                    lines.append(f"// IND_{local_idx}: OFF (mimcap → open-circuit termination)")
+                    lines.append(f"mimcap_ind{local_idx} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
+                    lines.append(f"r_open_ind{local_idx} ({mid} 0) resistor r=1e12")
         lines.append("")
 
-    # --- Switch connections (state-dependent) ---
-    # Topology: SW port (mim_m) → mimcap_um_sin_rf → (mim_p) sw_mid → nport(s1p) → GND
-    #           bulk (um/mim_b) connected to GND
-    lines.append("// Switch connections")
+    # --- Switch connections (state-dependent, capacitor-bank model) ---
+    # Each switch pixel has a bank of N cap+switch pairs connected in parallel to the same
+    # EMX port node. Topology per cap j in bank i:
+    #   SW_i port (mim_m) → mimcap_um_sin_rf → (mim_p) sw_i_j_mid → nport(s1p) → GND
+    lines.append("// Switch connections (capacitor bank: N parallel mimcap+nport per switch pixel)")
     for local_sw_idx, port_idx in enumerate(sw_indices_in_port_order):
-        node  = node_names[port_idx]
-        sw_on = bool(state_vector[local_sw_idx])
-        mid   = f"sw_mid{local_sw_idx}"
-        lt, wt = sw_dims[local_sw_idx] if local_sw_idx < len(sw_dims) else (10.0, 10.0)
-        s1p = switch_on_s1p if sw_on else switch_off_s1p
-        state_label = "ON" if sw_on else "OFF"
-        lines.append(f"// SW_{local_sw_idx}: {state_label} (mimcap mim_m=pixel → mim_p=mid → switch s1p)")
-        lines.append(f"mimcap_sw{local_sw_idx} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
-        lines.append(f"nport_sw{local_sw_idx} ({mid} 0) nport file=\"{s1p}\" N=1")
+        node       = node_names[port_idx]
+        bank_states = state_vector[local_sw_idx]   # List[int]
+        bank_dims   = sw_dims[local_sw_idx]        # List[tuple]
+        lines.append(f"// SW_{local_sw_idx}: bank of {len(bank_states)} cap(s)")
+        for j, (is_on, (lt, wt)) in enumerate(zip(bank_states, bank_dims)):
+            mid = f"sw_{local_sw_idx}_{j}_mid"
+            s1p = switch_on_s1p if is_on else switch_off_s1p
+            state_label = "ON" if is_on else "OFF"
+            lines.append(f"// SW_{local_sw_idx} cap {j}: {state_label} (mimcap mim_m=pixel → mim_p=mid → switch s1p)")
+            lines.append(f"mimcap_sw{local_sw_idx}_{j} ({mid} {node} 0) mimcap_um_sin_rf wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}")
+            lines.append(f"nport_sw{local_sw_idx}_{j} ({mid} 0) nport file=\"{s1p}\" N=1")
     lines.append("")
 
     # --- Capacitor pair connections (state-independent) ---
@@ -284,8 +316,8 @@ def generate_state_netlist(
 
 def run_all_states(
     snp_path: Path,
-    state_list: List[List[int]],
-    cap_values: List[float],
+    state_list: List,
+    cap_values: List,
     cfg: dict,
     emx_dir: Path,
     cell_name: str,
@@ -309,6 +341,10 @@ def run_all_states(
     """
     snp_path = Path(snp_path)
     emx_dir  = Path(emx_dir)
+
+    # --- Normalize legacy flat formats to capacitor-bank format ---
+    cap_values = _normalize_cap_values(cap_values)
+    state_list = _normalize_state_list(state_list)
 
     # --- Parse port order from SNP header ---
     print(f"  [spectre_runner] Parsing port order from {snp_path.name} ...")
@@ -352,6 +388,14 @@ def run_all_states(
             f"state_list inner length ({len(state_list[0])}) does not match "
             f"number of SW_* ports ({len(sw_indices)})."
         )
+    if state_list:
+        for si, sv in enumerate(state_list):
+            for sw_i, bank in enumerate(sv):
+                if len(bank) != len(cap_values[sw_i]):
+                    raise ValueError(
+                        f"state_list[{si}][{sw_i}] bank length ({len(bank)}) does not match "
+                        f"cap_values[{sw_i}] bank length ({len(cap_values[sw_i])})."
+                    )
 
     sw  = cfg.get("switch_model", {})
     sim = cfg["simulation"]
@@ -376,8 +420,11 @@ def run_all_states(
     if not cp_table.is_absolute():
         cp_table = _repo_root / cp_table
 
-    sw_dims = _lookup_cap_dims(sw_table, cap_values)
+    sw_dims = [_lookup_cap_dims(sw_table, cap_bank) for cap_bank in cap_values]
     cp_dims = _lookup_cap_dims(cp_table, cap_pair_values) if cap_pair_values else []
+
+    inductor_cap_values_cfg: List[float] = pd.get("inductor_cap_values", [])
+    ind_dims = _lookup_cap_dims(sw_table, inductor_cap_values_cfg) if inductor_cap_values_cfg else []
 
     # Infer cap pair orientations from pixel coordinates in config
     raw_pairs = pd.get("cap_pixel_pairs", [])
@@ -434,7 +481,15 @@ def run_all_states(
         else:
             inductor_state_vector = None
 
-        print(f"  [spectre_runner] State {state_idx}: SW={state_vector}  IND={inductor_state_vector}")
+        sw_group_strs = []
+        for sw_i, bank in enumerate(state_vector):
+            bits_str = ",".join("ON" if b else "OFF" for b in bank)
+            if sw_i < len(cap_values):
+                caps_str = ",".join(f"{c*1e15:.0f}fF" for c in cap_values[sw_i])
+                sw_group_strs.append(f"SW{sw_i}([{bits_str}]|[{caps_str}])")
+            else:
+                sw_group_strs.append(f"SW{sw_i}([{bits_str}])")
+        print(f"  [spectre_runner] State {state_idx}: {' '.join(sw_group_strs)}  IND={inductor_state_vector}")
 
         output_s2p  = emx_dir / f"{cell_name}_state{state_idx}.s2p"
         psf_dir     = emx_dir / f"psf_state{state_idx}"
@@ -466,6 +521,7 @@ def run_all_states(
             inductor_off_s1p_list     = inductor_off_s1p_list,
             mimflag                   = mimflag,
             mismatchflag              = mismatchflag,
+            ind_dims                  = ind_dims,
         )
 
         # --- Run Spectre ---

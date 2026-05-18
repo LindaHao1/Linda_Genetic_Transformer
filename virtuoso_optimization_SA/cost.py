@@ -23,6 +23,7 @@ files produced by Spectre and EMX.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from itertools import permutations as _permutations
 from pathlib import Path
@@ -170,15 +171,35 @@ class FilterStateSpec:
     # Peak-valley contrast mode: measures passband-to-stopband separation directly.
     # When enabled, ALL standard S21 penalty terms (passband/stopband/crossband/spurious)
     # are replaced by two terms:
-    #   term1 = −(pb_avg − worst_k_sb_avg)  [maximise contrast]
-    #   term2 = |pb_avg|                     [minimise passband distance from 0 dB]
+    #   term1 = −(pb_avg − worst_k_sb_avg)        [maximise contrast]
+    #   term2 = pb_dev ** pv_passband_order        [enforce passband target level]
+    #     where pb_dev = max(0, passband_target_db − pb_avg)  if passband_target_db is set
+    #                  = |pb_avg|                              otherwise (targets 0 dB)
     # s21_cost = (pv_contrast_weight * term1 + pv_passband_weight * term2) * weight
     # Raises ValueError at construction if enable_peak_matching or
     # enable_spurious_peak_penalty are also True on this spec.
     enable_pv_contrast:  bool  = False
     pv_contrast_k:       int   = 15    # top-k worst (highest S21) stopband+crossband points
     pv_contrast_weight:  float = 2.0   # weight for −contrast term
-    pv_passband_weight:  float = 3.0   # weight for |pb_avg| term
+    pv_passband_weight:  float = 3.0   # weight for passband penalty term
+
+    # One-sided passband target for PV contrast mode.
+    # When set: penalise only when pb_avg < passband_target_db (cost ∝ shortfall^pv_passband_order).
+    # When None: use original |pb_avg| behaviour (both-sided penalty toward 0 dB).
+    passband_target_db: Optional[float] = None
+
+    # Exponent for the passband penalty term in PV contrast mode.
+    # 1.0 = linear, 2.0 = quadratic (large shortfalls dominate cost, enforcing passband first).
+    pv_passband_order: float = 2.0
+
+    # Worst-k for passband level penalty in PV mode.
+    # Uses the mean of the k *lowest* passband S21 points (mirrors stopband worst-k but inverted).
+    # 0 = use all points (legacy plain average). Recommended: 15.
+    pv_pb_worst_k:     int   = 0
+
+    # Weight for std(pb_vals) flatness penalty in PV mode. 0.0 = disabled.
+    # Penalises spread (slope/ripple) in the passband independently of the level target.
+    pv_flatness_weight: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -286,13 +307,27 @@ def compute_state_cost(
                 if in_sb or in_cs:
                     sb_cs_vals.append(s21)
         pb_avg = float(np.mean(pb_vals)) if pb_vals else 0.0
+        pb_std = float(np.std(pb_vals))  if len(pb_vals) > 1 else 0.0
+        # Worst-k passband level: mean of k lowest points (mirrors stopband worst-k but inverted).
+        if pb_vals and spec.pv_pb_worst_k > 0:
+            k_eff    = min(spec.pv_pb_worst_k, len(pb_vals))
+            pb_level = float(np.mean(sorted(pb_vals)[:k_eff]))
+        else:
+            pb_level = pb_avg
         sb_cs_vals_sorted = sorted(sb_cs_vals, reverse=True)  # highest (worst) first
         worst_k_vals = sb_cs_vals_sorted[:spec.pv_contrast_k]
         worst_k_avg  = float(np.mean(worst_k_vals)) if worst_k_vals else 0.0
         contrast = pb_avg - worst_k_avg   # positive = passband above stopband (desired)
+        # Passband penalty: one-sided toward target_db (using pb_level), or both-sided toward 0 dB.
+        if spec.passband_target_db is not None:
+            pb_dev = max(0.0, spec.passband_target_db - pb_level)
+        else:
+            pb_dev = abs(pb_level)
+        pb_term = pb_dev ** spec.pv_passband_order
         s21_cost = (
-            spec.pv_contrast_weight * (-contrast)
-            + spec.pv_passband_weight * abs(pb_avg)
+            spec.pv_contrast_weight  * (-contrast)
+            + spec.pv_passband_weight  * pb_term
+            + spec.pv_flatness_weight  * pb_std
         ) * spec.weight
         # S11 cost still runs below if enabled; skip standard S21 terms
         s11_cost = 0.0
@@ -331,7 +366,8 @@ def compute_state_cost(
     for f, s21 in zip(freqs, s21_db_values):
         # Passband penalty
         if pb_lo <= f <= pb_hi:
-            shortfall = spec.passband_min_db - s21
+            min_db = spec.passband_target_db if spec.passband_target_db is not None else spec.passband_min_db
+            shortfall = min_db - s21
             pb_penalties.append(shortfall ** spec.cost_order if shortfall > 0 else 0.0)
 
         # Stopband penalty
@@ -441,7 +477,8 @@ def compute_state_cost_breakdown(
       pv_sb_avg             — mean of worst-k S21 in stopband+crossband (dB)
       pv_contrast           — pv_pb_avg − pv_sb_avg (dB; larger = better)
       pv_cost_term1         — −contrast * pv_contrast_weight * weight
-      pv_cost_term2         — |pv_pb_avg| * pv_passband_weight * weight
+      pv_cost_term2         — pb_dev^pv_passband_order * pv_passband_weight * weight
+                               where pb_dev = max(0, passband_target_db − pb_avg) if target set, else |pb_avg|
     """
     # --- Peak matching preamble (identical to compute_state_cost) ---
     shift = 0.0
@@ -478,7 +515,9 @@ def compute_state_cost_breakdown(
         s21_passband=0.0, s21_stopband=0.0, s21_crossband=0.0, s21_spurious=0.0,
     )
     _zero_pv_breakdown = dict(
-        pv_pb_avg=0.0, pv_sb_avg=0.0, pv_contrast=0.0, pv_cost_term1=0.0, pv_cost_term2=0.0,
+        pv_pb_avg=0.0, pv_pb_level=0.0, pv_pb_std=0.0,
+        pv_sb_avg=0.0, pv_contrast=0.0,
+        pv_cost_term1=0.0, pv_cost_term2=0.0, pv_cost_flatness=0.0,
     )
 
     # --- PV contrast mode breakdown ---
@@ -493,14 +532,25 @@ def compute_state_cost_breakdown(
                 in_cs = any(lo <= f <= hi for lo, hi in cs_regions_eff)
                 if in_sb or in_cs:
                     sb_cs_vals.append(s21)
-        pb_avg = float(np.mean(pb_vals)) if pb_vals else 0.0
+        pb_avg  = float(np.mean(pb_vals)) if pb_vals else 0.0
+        pb_std  = float(np.std(pb_vals))  if len(pb_vals) > 1 else 0.0
+        if pb_vals and spec.pv_pb_worst_k > 0:
+            k_eff    = min(spec.pv_pb_worst_k, len(pb_vals))
+            pb_level = float(np.mean(sorted(pb_vals)[:k_eff]))
+        else:
+            pb_level = pb_avg
         sb_cs_sorted = sorted(sb_cs_vals, reverse=True)
         worst_k_vals = sb_cs_sorted[:spec.pv_contrast_k]
         worst_k_avg  = float(np.mean(worst_k_vals)) if worst_k_vals else 0.0
         contrast  = pb_avg - worst_k_avg
-        term1     = spec.pv_contrast_weight  * (-contrast)  * spec.weight
-        term2     = spec.pv_passband_weight  * abs(pb_avg)  * spec.weight
-        s21_cost_pv = term1 + term2
+        term1     = spec.pv_contrast_weight * (-contrast) * spec.weight
+        if spec.passband_target_db is not None:
+            pb_dev = max(0.0, spec.passband_target_db - pb_level)
+        else:
+            pb_dev = abs(pb_level)
+        term2        = spec.pv_passband_weight  * (pb_dev ** spec.pv_passband_order) * spec.weight
+        term_flatness = spec.pv_flatness_weight * pb_std * spec.weight
+        s21_cost_pv = term1 + term2 + term_flatness
         # S11 cost (same as standard path)
         s11_pb_raw_pv = s11_sb_raw_pv = s11_cs_raw_pv = 0.0
         s11_pb_all_pv = s11_sb_all_pv = s11_cs_all_pv = 0.0
@@ -534,11 +584,14 @@ def compute_state_cost_breakdown(
         return {
             **_zero_s21_breakdown,
             **_zero_pv_breakdown,
-            "pv_pb_avg":     pb_avg,
-            "pv_sb_avg":     worst_k_avg,
-            "pv_contrast":   contrast,
-            "pv_cost_term1": term1,
-            "pv_cost_term2": term2,
+            "pv_pb_avg":        pb_avg,
+            "pv_pb_level":      pb_level,
+            "pv_pb_std":        pb_std,
+            "pv_sb_avg":        worst_k_avg,
+            "pv_contrast":      contrast,
+            "pv_cost_term1":    term1,
+            "pv_cost_term2":    term2,
+            "pv_cost_flatness": term_flatness,
             "s11_passband_raw":       s11_pb_raw_pv,
             "s11_stopband_raw":       s11_sb_raw_pv,
             "s11_crossband_raw":      s11_cs_raw_pv,
@@ -723,12 +776,40 @@ def compute_cost_breakdown(
 
 
 # ---------------------------------------------------------------------------
+# State-cost aggregation
+# ---------------------------------------------------------------------------
+
+def _aggregate_state_costs(
+    state_costs: List[float],
+    mode: str = "sum",
+    temperature: float = 2.0,
+) -> float:
+    """Aggregate per-state costs into a single scalar.
+
+    mode='sum'      — simple sum (default, original behaviour).
+    mode='soft_max' — log-sum-exp: (1/T)·log(Σ exp(T·cᵢ)).
+                      Dominated by the worst (largest) state as T→∞.
+                      T=1 is a mild blend; T=5 approaches hard-max.
+    """
+    if not state_costs:
+        return 0.0
+    if mode == "soft_max":
+        T = temperature
+        # Numerically stable log-sum-exp: subtract max before exp to avoid overflow.
+        m = max(state_costs)
+        return m + (1.0 / T) * math.log(sum(math.exp(T * (c - m)) for c in state_costs))
+    return sum(state_costs)
+
+
+# ---------------------------------------------------------------------------
 # Total cost over all states
 # ---------------------------------------------------------------------------
 
 def compute_total_cost(
     s2p_paths: List[Optional[Path]],
     specs:     List[FilterStateSpec],
+    aggregation_mode: str = "sum",
+    aggregation_temperature: float = 2.0,
 ) -> float:
     """
     Compute the total cost for a design given the .s2p files for all states.
@@ -746,7 +827,7 @@ def compute_total_cost(
     """
     _FAIL_PENALTY = 1e9   # penalty for a failed simulation
 
-    total = 0.0
+    state_costs: List[float] = []
     spec_by_idx: Dict[int, FilterStateSpec] = {s.state_index: s for s in specs}
 
     for state_idx, s2p_path in enumerate(s2p_paths):
@@ -755,18 +836,18 @@ def compute_total_cost(
             continue  # no target for this state → skip
 
         if s2p_path is None or not Path(s2p_path).exists():
-            total += _FAIL_PENALTY * spec.weight
+            state_costs.append(_FAIL_PENALTY * spec.weight)
             continue
 
         try:
             freqs, s21_db_vals = get_s21_db(s2p_path)
             _, s11_db_vals     = get_s11_db(s2p_path)
-            total += compute_state_cost(freqs, s21_db_vals, spec, s11_db_values=s11_db_vals)
+            state_costs.append(compute_state_cost(freqs, s21_db_vals, spec, s11_db_values=s11_db_vals))
         except Exception as exc:  # noqa: BLE001
             print(f"  [cost] WARNING: failed to parse {s2p_path}: {exc}")
-            total += _FAIL_PENALTY * spec.weight
+            state_costs.append(_FAIL_PENALTY * spec.weight)
 
-    return total
+    return _aggregate_state_costs(state_costs, aggregation_mode, aggregation_temperature)
 
 
 # ---------------------------------------------------------------------------
@@ -815,6 +896,8 @@ def _build_cost_matrix(
 def compute_total_cost_dynamic(
     s2p_paths: List[Optional[Path]],
     specs:     List[FilterStateSpec],
+    aggregation_mode: str = "sum",
+    aggregation_temperature: float = 2.0,
 ) -> Tuple[float, List[int]]:
     """
     Find the bijective assignment of simulated states to specs that minimises
@@ -832,7 +915,7 @@ def compute_total_cost_dynamic(
 
     Returns
     -------
-    total_cost : float — sum of per-state costs under the optimal assignment.
+    total_cost : float — aggregated per-state costs under the optimal assignment.
     assignment : list of length len(specs) — assignment[spec_idx] = sim_idx.
     """
     n = len(specs)
@@ -844,28 +927,30 @@ def compute_total_cost_dynamic(
 
     cost_matrix = _build_cost_matrix(padded, specs)
 
-    # --- solve assignment ---
+    # --- solve assignment (Hungarian minimises sum; soft_max re-aggregates after) ---
     try:
         from scipy.optimize import linear_sum_assignment  # type: ignore
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
         # row_ind are sim indices, col_ind are spec indices
         # Cast to plain int — scipy returns numpy.int64 which is not JSON-serialisable
         assignment = [0] * n
+        assigned_costs: List[float] = []
         for sim_idx, spec_idx in zip(row_ind, col_ind):
             assignment[int(spec_idx)] = int(sim_idx)
-        total_cost = float(cost_matrix[row_ind, col_ind].sum())
+            assigned_costs.append(float(cost_matrix[sim_idx, spec_idx]))
     except ImportError:
         # Brute-force over all N! permutations of sim indices
-        best_cost = float("inf")
+        best_sum = float("inf")
         best_perm = list(range(n))
         for perm in _permutations(range(n)):
             c = sum(cost_matrix[perm[spec_idx], spec_idx] for spec_idx in range(n))
-            if c < best_cost:
-                best_cost = c
+            if c < best_sum:
+                best_sum = c
                 best_perm = list(perm)
         assignment = best_perm   # assignment[spec_idx] = sim_idx
-        total_cost = best_cost
+        assigned_costs = [float(cost_matrix[assignment[i], i]) for i in range(n)]
 
+    total_cost = _aggregate_state_costs(assigned_costs, aggregation_mode, aggregation_temperature)
     return total_cost, assignment
 
 
@@ -930,5 +1015,11 @@ def specs_from_config(filter_specs_cfg: list) -> List[FilterStateSpec]:
             pv_contrast_k                 = int(  entry.get("pv_contrast_k",                     15)),
             pv_contrast_weight            = float(entry.get("pv_contrast_weight",               2.0)),
             pv_passband_weight            = float(entry.get("pv_passband_weight",               3.0)),
+            passband_target_db            = (float(entry["passband_target_db"])
+                                             if entry.get("passband_target_db") is not None
+                                             else None),
+            pv_passband_order             = float(entry.get("pv_passband_order",               2.0)),
+            pv_pb_worst_k                 = int(  entry.get("pv_pb_worst_k",                      0)),
+            pv_flatness_weight            = float(entry.get("pv_flatness_weight",               0.0)),
         ))
     return specs

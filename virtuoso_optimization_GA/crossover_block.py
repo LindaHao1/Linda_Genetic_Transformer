@@ -192,6 +192,8 @@ def crossover_block(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -312,7 +314,7 @@ def crossover_block(
             continue
 
         # Value inheritance
-        switch_states, cap_values, inductor_values, inductor_switch_states = (
+        switch_states, cap_values, inductor_values, inductor_switch_states, inductor_cap_values = (
             _inherit_values_clustered(
                 child_matrix,
                 pixel_source,
@@ -329,6 +331,8 @@ def crossover_block(
                 rng,
                 ind_sw_states_p1=parent1.inductor_switch_states,
                 ind_sw_states_p2=parent2.inductor_switch_states,
+                inductor_cap_min=inductor_cap_min,
+                inductor_cap_max=inductor_cap_max,
             )
         )
 
@@ -363,6 +367,7 @@ def crossover_block(
             inductor_switch_states = inductor_switch_states,
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values,
+            inductor_cap_values    = inductor_cap_values,
         ), xover_params
 
     return None, {"block_h": h, "block_w": w}  # all placement attempts exhausted

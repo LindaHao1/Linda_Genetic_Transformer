@@ -14,16 +14,15 @@
 _base_: ../base/finetune_3_states.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_update_cap_model_count"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_expand_to_large_update_ind_model_exp_to_large_3"
 
 grid:  
   n_states: 3
-  rows: 30       # TODO: adjust to target large-grid size
-  cols: 33      # TODO: adjust to target large-grid size
+  rows: 25       # TODO: adjust to target large-grid size
+  cols: 29      # TODO: adjust to target large-grid size
 
 ga:
-  finetune_design_path: "/disk/mcao53/RFIC_RL/candidate_design/new_cap_model/sim_20260427_132241_config.yaml"
-  n_parallel: 6
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_new_switch_seed2/sims/gen296_ind13/worker_4/pixsimple_r21c27_ps31p0_gs25p0_frl6frr20_w4/config.yaml"
   finetune_expand:
     enabled: true
 

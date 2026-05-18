@@ -1,0 +1,17 @@
+# ===========================================================================
+# World Model Data Collection Config
+# Grid: 21×27, pixel_size=31 µm, grid_size=25 µm
+# Each design is simulated across 10 random switch states.
+# Inherits all grid constraints and virtuoso settings from ps31_gs25_scratch.
+# ===========================================================================
+_base_: ../virtuoso_optimization_GA/configs/21x27/ps31_gs25_scratch.yaml
+
+output_dir: "/disk/mcao53/Sim_engine_results/world_model_data_21x27_ps31_gs25_via"
+
+grid:
+  n_states: 10   # number of switch-state configurations per design
+  init_min_vias: 0
+  init_max_vias: 3
+
+parallel:
+  num_workers: 6

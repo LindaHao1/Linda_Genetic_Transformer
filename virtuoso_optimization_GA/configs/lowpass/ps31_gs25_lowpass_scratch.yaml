@@ -1,0 +1,34 @@
+# ===========================================================================
+# GA Experiment — 21×27 grid, pixel_size=31 um, grid_size=25 um, lowpass scratch
+# Engine: config_ps31_gs25.yaml
+# Topology: metal + switches only (no inductors, vias, cap pairs)
+# ===========================================================================
+_base_: ../base/scratch_lowpass_3states.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_lowpass_results_21x27_ps31_gs25_update_cost3_seed1"
+
+grid:
+  rows: 19
+  cols: 21
+  # rows and cols MUST be set in the experiment config
+  n_states: 3
+
+  # --- Feasibility constraints ---
+  min_switches: 2
+  max_switches: 4
+  max_inductors: 0      # inductors disabled for lowpass topology
+  n_max_vias: 0         # vias disabled for lowpass topology
+
+  # --- Initialisation ranges ---
+  init_min_switches: 2
+  init_max_switches: 4
+  init_min_inductors: 0
+  init_max_inductors: 0
+  init_min_vias: 0
+  init_max_vias: 0
+
+  # Switch cap bank: number of capacitors per switch pixel
+  n_caps_per_switch: 3
+
+seed: 2

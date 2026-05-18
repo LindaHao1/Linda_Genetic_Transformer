@@ -111,3 +111,8 @@ This is a cost for S21 only. If this cost mode is turned on, all other modes wil
 
 
 wider inductor constraints: the inductors need to make sure its 5 by 5 blocks with the center its self only contains 0/1 pixels. (previous 3 by 3). Please ensure this constraint in both initialization of the population and also the mutation.
+
+
+# Low-pass mode
+
+We aim to break the previous band pass filter into to simpler problems, low-pass filter design and high pass filter design. So now let's create this configuration specific to the low pass filter first. The low-pass filter will be have this passband specs from zero. Originally we aim to build 7G, 24G, 40G bandpass. Now the lowpass stopband starts from 8G, 26G and 43G for instance. So first we need to change the scoring function to this. Secondly, The topology of the low pass are more constrained. It only have the metal layer (pixel 1), and switchable switches. So in the initial generation phase, mutation phase we avoid putting any inductors and series caps and vias into any of the designs. We constrain this in the GA configuration, instead of the simulation engine itself. So the sim-engine still has the full sim capacity, but our GA only uses a subset. Please implement these configurations such that i can run ga on it to design a switchable lowpass filter first.  you should create new files in the base folder of configurations, and create more specific yaml files in the lowpass folder.

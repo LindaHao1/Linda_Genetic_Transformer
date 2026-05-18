@@ -37,6 +37,7 @@ from .feasibility import (
     check_inductor_states_distinct,
     check_switch_spacing,
     check_switch_states_distinct,
+    check_switch_states_distinct_banked,
     filter_valid_pairs,
     is_feasible,
 )
@@ -339,19 +340,22 @@ def action_modify_switch(
 
             idx = _switch_row_first_index(new2.matrix, pr, pc)
 
-            # Generate a switch_states column that keeps states distinct.
+            # Generate a switch_states bank column that keeps states distinct.
             # When n_states > 2, additionally reject all-0 and all-1 columns.
+            bank_size = len(state.cap_values[0]) if state.cap_values else 1
             placed = False
+            total_bits_after = sum(len(b) for b in new2.switch_states[0]) + bank_size if new2.switch_states else bank_size
             for _ in range(200):
-                col_vals = [rng.randint(0, 1) for _ in range(n_states)]
-                if n_states > 2 and (all(v == 0 for v in col_vals) or all(v == 1 for v in col_vals)):
+                col_banks = [[rng.randint(0, 1) for _ in range(bank_size)] for _ in range(n_states)]
+                if n_states > 2 and (all(all(v == 0 for v in b) for b in col_banks)
+                                     or all(all(v == 1 for v in b) for b in col_banks)):
                     continue
                 new_ss = [
-                    row[:idx] + [col_vals[si]] + row[idx:]
+                    row[:idx] + [col_banks[si]] + row[idx:]
                     for si, row in enumerate(new2.switch_states)
                 ]
-                if (_states_can_be_distinct(n_switches + 1, n_states)
-                        and not check_switch_states_distinct(new_ss)):
+                if (_states_can_be_distinct(total_bits_after, n_states)
+                        and not check_switch_states_distinct_banked(new_ss)):
                     continue
                 new2.switch_states = new_ss
                 placed = True
@@ -360,9 +364,9 @@ def action_modify_switch(
             if not placed:
                 continue
 
-            # Insert corresponding cap value
-            new_cap_val = rng.uniform(cap_min, cap_max)
-            new2.cap_values.insert(idx, new_cap_val)
+            # Insert corresponding cap bank
+            new_cap_bank = [rng.uniform(cap_min, cap_max) for _ in range(bank_size)]
+            new2.cap_values.insert(idx, new_cap_bank)
 
             new2.cap_pixel_pairs, new2.cap_pair_values = filter_valid_pairs(
                 new2.matrix, new2.cap_pixel_pairs, new2.cap_pair_values,
@@ -375,7 +379,7 @@ def action_modify_switch(
                 "description":      f"Added switch at ({pr},{pc}), switch_states column {idx}",
                 "placed_at":        {"row": pr, "col": pc},
                 "switch_list_index": idx,
-                "cap_value_fF":     new_cap_val * 1e15,
+                "cap_values_fF":    [v * 1e15 for v in new_cap_bank],
                 "n_switches_before": n_switches,
                 "n_switches_after":  n_switches + 1,
             }
@@ -400,9 +404,10 @@ def action_modify_switch(
             # Drop column from switch_states
             new_ss = [row[:idx] + row[idx + 1:] for row in new.switch_states]
             n_sw_new = n_switches - 1
+            total_bits_after = sum(len(b) for b in new_ss[0]) if new_ss and new_ss[0] else 0
             if (new_ss and new_ss[0]
-                    and _states_can_be_distinct(n_sw_new, n_states)
-                    and not check_switch_states_distinct(new_ss)):
+                    and _states_can_be_distinct(total_bits_after, n_states)
+                    and not check_switch_states_distinct_banked(new_ss)):
                 continue
             new.switch_states = new_ss
 
@@ -454,6 +459,8 @@ def action_flip_inductor(
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
     require_axis_aligned: bool = True,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
 ) -> tuple:
     """
     Either add an inductor (type 1 → 2) or remove one (type 2 → 1).
@@ -499,6 +506,9 @@ def action_flip_inductor(
         else:
             val = rng.randint(0, n_inductor_values - 1)
         new.inductor_values.insert(idx, val)
+        # Insert a random inductor cap value at the same position.
+        new_ind_cap = rng.uniform(inductor_cap_min, inductor_cap_max)
+        new.inductor_cap_values.insert(idx, new_ind_cap)
         # Keep inductor_switch_states in sync (new inductor defaults to ON in all states).
         # If the list was empty (all-ON convention), initialize it now so the explicit
         # per-inductor state is tracked going forward.
@@ -551,6 +561,8 @@ def action_flip_inductor(
             return None, None
         if idx < len(new.inductor_values):
             new.inductor_values.pop(idx)
+        if idx < len(new.inductor_cap_values):
+            new.inductor_cap_values.pop(idx)
         # Keep inductor_switch_states in sync.
         # After removing, if every state row is now empty, reset to [] (all-ON convention).
         if new.inductor_switch_states:
@@ -752,20 +764,64 @@ def action_perturb_caps(
         return None, None
 
     new = state.copy()
+    sw_idx = rng.randint(0, len(new.cap_values) - 1)
     cap_changes = []
-    for i in range(len(new.cap_values)):
-        old_val = new.cap_values[i]
+    for j in range(len(new.cap_values[sw_idx])):
+        old_val = new.cap_values[sw_idx][j]
         noise = rng.gauss(0.0, sigma)
-        new.cap_values[i] = max(cap_min, min(cap_max, old_val + noise))
+        new.cap_values[sw_idx][j] = max(cap_min, min(cap_max, old_val + noise))
         cap_changes.append({
-            "index": i,
+            "switch": sw_idx,
+            "cap": j,
             "old_fF": round(old_val * 1e15, 4),
-            "new_fF": round(new.cap_values[i] * 1e15, 4),
-            "delta_fF": round((new.cap_values[i] - old_val) * 1e15, 4),
+            "new_fF": round(new.cap_values[sw_idx][j] * 1e15, 4),
+            "delta_fF": round((new.cap_values[sw_idx][j] - old_val) * 1e15, 4),
         })
     info = {
         "action": "perturb_caps",
-        "description": f"Perturbed {len(cap_changes)} cap(s) with Gaussian noise (sigma={sigma*1e15:.1f} fF)",
+        "description": f"Perturbed switch {sw_idx} bank ({len(cap_changes)} cap(s)) with Gaussian noise (sigma={sigma*1e15:.1f} fF)",
+        "switch_index": sw_idx,
+        "sigma_fF": sigma * 1e15,
+        "cap_changes": cap_changes,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action 5b: perturb inductor series capacitance values
+# ---------------------------------------------------------------------------
+
+def action_perturb_inductor_caps(
+    state: DesignState,
+    sigma: float,
+    inductor_cap_min: float,
+    inductor_cap_max: float,
+    rng: random.Random,
+) -> tuple:
+    """
+    Add independent Gaussian noise (std = ``sigma``) to every inductor cap value,
+    then clip to [inductor_cap_min, inductor_cap_max].
+
+    Returns (mutated copy, info_dict), or (None, None) if no inductor cap values exist.
+    """
+    if not state.inductor_cap_values:
+        return None, None
+
+    new = state.copy()
+    cap_changes = []
+    for i in range(len(new.inductor_cap_values)):
+        old_val = new.inductor_cap_values[i]
+        noise = rng.gauss(0.0, sigma)
+        new.inductor_cap_values[i] = max(inductor_cap_min, min(inductor_cap_max, old_val + noise))
+        cap_changes.append({
+            "index": i,
+            "old_fF": round(old_val * 1e15, 4),
+            "new_fF": round(new.inductor_cap_values[i] * 1e15, 4),
+            "delta_fF": round((new.inductor_cap_values[i] - old_val) * 1e15, 4),
+        })
+    info = {
+        "action": "perturb_inductor_caps",
+        "description": f"Perturbed {len(cap_changes)} inductor cap(s) with Gaussian noise (sigma={sigma*1e15:.1f} fF)",
         "sigma_fF": sigma * 1e15,
         "cap_changes": cap_changes,
     }
@@ -796,27 +852,35 @@ def action_flip_switch_state(
     n_switches = len(state.switch_states[0])
 
     # Always flip bits within a single randomly chosen state row.
+    # Each "position" is (switch_idx, cap_in_bank_idx).
     si = rng.randint(0, n_states - 1)
-    positions_in_state = [(si, sw) for sw in range(n_switches)]
+    positions_in_state = [
+        (sw, j)
+        for sw in range(n_switches)
+        for j in range(len(state.switch_states[si][sw]))
+    ]
+    if not positions_in_state:
+        return None, None
     k = rng.randint(1, min(max_flips, len(positions_in_state)))
     chosen = rng.sample(positions_in_state, k)
 
     new = state.copy()
     flips = []
-    for si, sw in chosen:
-        old_bit = new.switch_states[si][sw]
-        new.switch_states[si][sw] = 1 - old_bit
-        flips.append({"state": si, "switch": sw, "old": old_bit, "new": 1 - old_bit})
+    for sw, j in chosen:
+        old_bit = new.switch_states[si][sw][j]
+        new.switch_states[si][sw][j] = 1 - old_bit
+        flips.append({"state": si, "switch": sw, "cap": j, "old": old_bit, "new": 1 - old_bit})
 
     # Reject if the flip creates duplicate switch state vectors (when enough
     # distinct vectors exist to satisfy the constraint).
-    if (_states_can_be_distinct(n_switches, n_states)
-            and not check_switch_states_distinct(new.switch_states)):
+    total_bits = sum(len(b) for b in new.switch_states[0]) if new.switch_states else 0
+    if (_states_can_be_distinct(total_bits, n_states)
+            and not check_switch_states_distinct_banked(new.switch_states)):
         return None, None
 
     info = {
         "action":      "flip_switch_state",
-        "description": f"Flipped {k} switch-state bit(s): {flips}",
+        "description": f"Flipped {k} switch-state bit(s) in state {si}: {flips}",
         "n_flips":     k,
         "flips":       flips,
     }
@@ -1073,6 +1137,7 @@ _ACTION_NAMES = [
     "perturb_pair_caps",
     "flip_inductor_state",
     "flip_via",
+    "perturb_inductor_caps",
 ]
 
 
@@ -1104,6 +1169,9 @@ def _dispatch_action(
     flip_region_size: int = 8,
     min_switches: int = 1,
     max_switches: int = 99,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
+    inductor_cap_sigma: float = 50e-15,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -1135,6 +1203,8 @@ def _dispatch_action(
             cap_pair_max_dist=cap_pair_max_dist,
             single_inductor_value=single_inductor_value,
             require_axis_aligned=require_axis_aligned,
+            inductor_cap_min=inductor_cap_min,
+            inductor_cap_max=inductor_cap_max,
         )
     elif action_name == "flip_inductor_value":
         return action_flip_inductor_value(state, n_inductor_values, rng,
@@ -1159,6 +1229,10 @@ def _dispatch_action(
         return action_flip_inductor_state(state, rng, max_flips=max_inductor_state_flips)
     elif action_name == "flip_via":
         return action_flip_via(state, max_vias, via_flip_max_count, rng)
+    elif action_name == "perturb_inductor_caps":
+        return action_perturb_inductor_caps(
+            state, inductor_cap_sigma, inductor_cap_min, inductor_cap_max, rng,
+        )
     return None, None
 
 
@@ -1191,6 +1265,9 @@ def random_action(
     flip_region_size: int = 8,
     min_switches: int = 1,
     max_switches: int = 99,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
+    inductor_cap_sigma: float = 50e-15,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -1208,13 +1285,13 @@ def random_action(
 
     Parameters
     ----------
-    action_weights : optional list of 11 floats (unnormalised weights).
+    action_weights : optional list of floats (unnormalised weights).
         Order matches _ACTION_NAMES:
         [flip_01, modify_switch, flip_inductor, flip_inductor_value,
          perturb_caps, flip_switch_state,
          add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state,
-         flip_via]
-        Lists shorter than 11 are zero-padded; longer lists are truncated.
+         flip_via, perturb_inductor_caps]
+        Lists shorter than len(_ACTION_NAMES) are zero-padded; longer lists are truncated.
     max_retries_per_action : number of attempts for the chosen action before
         giving up on it and sampling a different one.
     max_cap_pairs : maximum number of cap pixel pairs allowed (0 disables pair actions).
@@ -1252,6 +1329,9 @@ def random_action(
         flip_region_size=flip_region_size,
         min_switches=min_switches,
         max_switches=max_switches,
+        inductor_cap_min=inductor_cap_min,
+        inductor_cap_max=inductor_cap_max,
+        inductor_cap_sigma=inductor_cap_sigma,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

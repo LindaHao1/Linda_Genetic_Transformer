@@ -87,3 +87,18 @@ In the simplified pixel design, we used an idealistic model for the capacitor. A
 For series cap we will also use the tsmc real cap. If the series cap is horizontal (left and right) mim_p will be connected to left pixel, mim_m will be connected to the right pixel.
 
 If the cap pair is vertical the top one is plus (mim_p) the bottom pixel is munus (mim_m). As usual, bulk is connected to ground
+
+
+Simplified pixel mode update 2:
+This will add a capacitor to the switable inductor (like how switch is connected), the caps will connect to the top pixel, and then the inductor similarly like how the pixel is connected to the cap and then switch. We will use the same snp for inductor on off for the current design. Notice we will need a cap value list similar to switches. The cap value pairs need to be added to the base config and all the GA optimization config. We also need an action and the action weights defined in the GA to distrub the cap values for optimization. We need to set the range of the cap values that the inductor use
+
+Simplified pixel mode update 3:
+We will perform several update to the pixelated_deisgn_simple
+Update on the switch model. Before the switch model assume a single capacitor value. Now we want to extend the number of capacitors connected to the pixel. We can think this as several swith - cap pairs connected in parallel to the top metal. Then the switch states becomes a list of list. [[sw_0_0, sw_0_1, sw_0_2], [sw_1_0,...]]. During simulation, we will based on sw_0_0, sw_0_1, sw_0_2 to connect three cap to their corresponding on/off s par of the switch to the same pixel bank (you can think this as a switch bank). There for it is like the capacitance with that switch can be tuned for that particular pixel. This change mainly involves the spectre simulation, with only slight changes in layout and configuration files.
+
+
+
+
+
+Differential impedance plotting:
+We want to plot differential impedance obtained from the s2p, in addition to the S11 and S21, in the smith chart. Since smith is hard to read, we take three markers at beginning middle and end of the plot frrequencys. Do this change also for the gui so that the display have this option.

@@ -1,0 +1,233 @@
+# ===========================================================================
+# GA Base Config — Scratch (from-random) Initialisation, Lowpass Mode
+#
+# This file is a SHARED BASE — do not run it directly.
+# Create an experiment config that sets:
+#   _base_: ../base/scratch_lowpass_3states.yaml
+#   virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_<variant>.yaml"
+#   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   grid:
+#     rows: <R>   # REQUIRED — grid rows
+#     cols: <C>   # REQUIRED — grid cols
+#   seed: 42
+#
+# Three-state switchable lowpass filter:
+#   State 0: passband 0 –  7 GHz, stopband from  8 GHz
+#   State 1: passband 0 – 24 GHz, stopband from 26 GHz
+#   State 2: passband 0 – 40 GHz, stopband from 43 GHz
+#
+# Topology: metal (type 1) and switches (type 3) only.
+# Inductors, vias, and cap pairs are fully disabled via config.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE
+# ---------------------------------------------------------------------------
+grid:
+  # rows and cols MUST be set in the experiment config
+  n_states: 3
+
+  # --- Feasibility constraints ---
+  min_switches: 2
+  max_switches: 4
+  max_inductors: 0      # inductors disabled for lowpass topology
+  n_max_vias: 0         # vias disabled for lowpass topology
+
+  # --- Initialisation ranges ---
+  init_min_switches: 2
+  init_max_switches: 4
+  init_min_inductors: 0
+  init_max_inductors: 0
+  init_min_vias: 0
+  init_max_vias: 0
+
+  # Switch cap bank: number of capacitors per switch pixel
+  n_caps_per_switch: 3
+
+  # Switch series capacitance range (Farads)
+  cap_min: 100.0e-15
+  cap_max: 1000.0e-15
+
+  # Inductor settings — irrelevant with max_inductors: 0 but kept for schema
+  n_inductor_values: 1
+  single_inductor_value: true
+
+  # --- Cap pixel pairs — disabled ---
+  enable_cap_pairs:  false
+  max_cap_pairs:     0
+  cap_pair_init_min: 0
+  cap_pair_init_max: 0
+  cap_pair_min:      50.0e-15
+  cap_pair_max:      1000.0e-15
+  cap_pair_sigma:    50.0e-15
+  cap_pair_min_dist: 2
+  cap_pair_max_dist: 3
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATIONS  (lowpass: 7 / 24 / 40 GHz)
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [1.0e9, 7.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [8.0e9, 65.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions: []
+    cross_stopband_max_db: -30.0
+    cross_stopband_weight: 0.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: false
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+    enable_pv_contrast:            true
+    pv_contrast_k:                 15
+    pv_contrast_weight:            8.0
+    pv_passband_weight:            16.0
+    passband_target_db:           -5.0   # one-sided: only penalise when pb_level < -3 dB
+    pv_passband_order:             2.0   # quadratic — large shortfalls dominate cost
+    pv_pb_worst_k:                 5    # level penalty on mean of 15 lowest passband points
+    pv_flatness_weight:            2.0   # penalise std of passband S21
+
+  - state_index:     1
+    passband:        [1.0e9, 24.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [26.0e9, 65.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions: []
+    cross_stopband_max_db: -30.0
+    cross_stopband_weight: 0.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: false
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+    enable_pv_contrast:            true
+    pv_contrast_k:                 15
+    pv_contrast_weight:            8.0
+    pv_passband_weight:            16.0
+    passband_target_db:           -5.0
+    pv_passband_order:             2.0
+    pv_pb_worst_k:                 10
+    pv_flatness_weight:            2.0
+
+  - state_index:     2
+    passband:        [1.0e9, 40.0e9]
+    passband_min_db: -0.0
+    stopband_regions:
+      - [43.0e9, 65.0e9]
+    stopband_max_db: -25.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions: []
+    cross_stopband_max_db: -30.0
+    cross_stopband_weight: 0.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    peak_matching_threshold:      0.20
+    peak_matching_max_multiplier: 2.0
+    enable_spurious_peak_penalty: false
+    spurious_peak_max_db:        -10.0
+    spurious_peak_weight:          1.0
+    enable_pv_contrast:            true
+    pv_contrast_k:                 15
+    pv_contrast_weight:            8.0
+    pv_passband_weight:            16.0
+    passband_target_db:           -8.0
+    pv_passband_order:             2.0
+    pv_pb_worst_k:                 15
+    pv_flatness_weight:            2.0
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS
+# ---------------------------------------------------------------------------
+ga:
+
+  pop_size_start:    100
+  pop_size_end:       30
+  pop_size_step_size: 20
+  elite_fraction:   0.20
+  pop_schedule_gens_per_step: 5
+  n_keep_bad: 1
+  n_gen:    300
+  n_immigrants: 2
+
+  p_crossover: 0.7
+  p_mutation:  0.7
+  crossover_method: "hybrid"
+  hybrid_method_weights: [1.0, 1.0, 1.0]
+  n_centroids: 5
+  block_min_size: 10
+  block_max_size: 20
+
+  selection:       "tournament"
+  tournament_size: 5
+
+  n_parallel: 5
+
+  n_regular_flip: 25
+  cap_sigma:      50.0e-15
+  via_flip_max_count: 2
+
+  action_weights:
+    flip_01:             4.0
+    modify_switch:       4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        4.0
+    flip_switch_state:   8.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+
+  use_state_champions: true
+  p_champion_parent:  0.5
+  p_champion_parent2: 0.25
+  dynamic_state_assignment: true
+
+  state_aggregation_mode:        soft_max
+  state_aggregation_temperature: 2.0    # tune: higher → closer to hard-max over states
+
+  exploitation_n: 5
+  exploitation_action_weights:
+    flip_01:             0.0
+    modify_switch:       4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        4.0
+    flip_switch_state:   4.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+
+  feasibility_cost_threshold: 1.0e6
+  population_plot_top_k: 5

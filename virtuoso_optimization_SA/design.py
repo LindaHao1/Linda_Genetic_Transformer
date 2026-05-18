@@ -3,8 +3,8 @@ design.py — DesignState: the complete description of one switchable-filter can
 
 A design is fully described by three things:
   matrix               (rows x cols) of int  — pixel types 0/1/2/3
-  switch_states        (n_states x n_switches) of int — 0=OFF / 1=ON per state
-  cap_values           (n_switches,) of float — series coupling capacitance per switch (F)
+  switch_states        (n_states x n_switches x n_caps_in_bank) of int — 0=OFF / 1=ON per cap
+  cap_values           (n_switches x n_caps_in_bank) of float — capacitance per bank cap (F)
   inductor_switch_states (n_states x n_inductors) of int — 0=OFF (open) / 1=ON per state
 """
 
@@ -25,11 +25,12 @@ class DesignState:
     matrix : 2-D list of int
         Pixel grid.  Values: 0=ground, 1=metal, 2=inductor, 3=switch.
         Row 0 is the bottom of the layout; col 0 / col N-1 are the feed columns.
-    switch_states : list of list of int
-        Outer length = n_states, inner length = n_switches.
-        1 = switch ON, 0 = switch OFF for that state.
-    cap_values : list of float
-        Series capacitance (F) for each switch pixel, in row-first order.
+    switch_states : list of list of list of int
+        Outer length = n_states, middle length = n_switches, inner length = n_caps_in_bank.
+        1 = cap ON (switch closed), 0 = cap OFF (switch open) for that state.
+    cap_values : list of list of float
+        Capacitor bank values (F) per switch pixel, in row-first order.
+        Outer length = n_switches, inner length = n_caps_in_bank.
     inductor_values : list of int
         Index into the global ``inductor_translation_table`` for each inductor
         pixel (type 2), in row-first order.  Length == n_inductors.
@@ -37,14 +38,15 @@ class DesignState:
     """
 
     matrix:                List[List[int]]
-    switch_states:         List[List[int]]   # [n_states][n_switches]
-    cap_values:            List[float]       # [n_switches]
+    switch_states:         List[List[List[int]]]   # [n_states][n_switches][n_caps_in_bank]
+    cap_values:            List[List[float]]       # [n_switches][n_caps_in_bank]
     inductor_values:       List[int] = field(default_factory=list)  # [n_inductors]
     inductor_switch_states: List[List[int]] = field(default_factory=list)
     # [n_states][n_inductors] — 1=ON (connect s1p nport), 0=OFF (open circuit, 1 TΩ to GND).
     # Empty outer list means all inductors are ON in all states (backward-compatible default).
     cap_pixel_pairs: List[List[List[int]]] = field(default_factory=list)  # [[[r1,c1],[r2,c2]], ...]
     cap_pair_values: List[float] = field(default_factory=list)            # [n_cap_pairs]
+    inductor_cap_values: List[float] = field(default_factory=list)        # [n_inductors] series MIM cap per inductor
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -89,11 +91,12 @@ class DesignState:
         return DesignState(
             matrix                 = copy.deepcopy(self.matrix),
             switch_states          = copy.deepcopy(self.switch_states),
-            cap_values             = list(self.cap_values),
+            cap_values             = copy.deepcopy(self.cap_values),
             inductor_values        = list(self.inductor_values),
             inductor_switch_states = copy.deepcopy(self.inductor_switch_states),
             cap_pixel_pairs        = copy.deepcopy(self.cap_pixel_pairs),
             cap_pair_values        = list(self.cap_pair_values),
+            inductor_cap_values    = list(self.inductor_cap_values),
         )
 
     # ------------------------------------------------------------------
@@ -116,6 +119,8 @@ class DesignState:
         cfg["inductor_values"] = self.inductor_values  # always emit, even [] — prevents base config bleed-through via deep_merge
         if self.inductor_switch_states:
             cfg["inductor_switch_states"] = self.inductor_switch_states
+        if self.inductor_cap_values:
+            cfg["inductor_cap_values"] = self.inductor_cap_values
         if self.cap_pixel_pairs:
             cfg["cap_pixel_pairs"] = self.cap_pixel_pairs
             cfg["cap_pair_values"] = self.cap_pair_values
@@ -132,6 +137,7 @@ class DesignState:
             f"  CapValues:            {self.cap_values}\n"
             f"  InductorValues:       {self.inductor_values}\n"
             f"  InductorSwitchStates: {self.inductor_switch_states}\n"
+            f"  InductorCapValues:    {self.inductor_cap_values}\n"
             f"  CapPixelPairs:        {self.cap_pixel_pairs}\n"
             f"  CapPairValues:        {self.cap_pair_values}"
         )

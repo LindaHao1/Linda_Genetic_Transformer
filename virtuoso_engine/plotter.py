@@ -62,7 +62,7 @@ def plot_s2p_results(
                          annotated with a shared index number on the design matrix.
 
     Returns:
-        dict with keys 's21_magnitude', 's11_magnitude', and optionally
+        dict with keys 's21_magnitude', 's11_magnitude', 'inductor_lq', and optionally
         'design_matrix', each pointing to the saved PNG path (or None).
     """
     output_dir = Path(output_dir)
@@ -71,10 +71,12 @@ def plot_s2p_results(
     networks = _load_networks(s2p_files, state_labels)
     if not networks:
         print("  [plotter] No valid .s2p files to plot.")
-        return {"s21_magnitude": None, "s11_magnitude": None, "design_matrix": None}
+        return {"s21_magnitude": None, "s11_magnitude": None, "inductor_lq": None,
+                "design_matrix": None}
 
     s21_path = output_dir / "s21_magnitude.png"
     s11_path = output_dir / "s11_magnitude.png"
+    lq_path  = output_dir / "inductor_lq.png"
 
     _plot_s2p_magnitude(networks, s21_path, row=1, col=0, ylabel="S21 (dB)",
                         title="S21 Magnitude vs Frequency (Filter Transmission)",
@@ -82,12 +84,14 @@ def plot_s2p_results(
     _plot_s2p_magnitude(networks, s11_path, row=0, col=0, ylabel="S11 (dB)",
                         title="S11 Magnitude vs Frequency (Input Match)",
                         pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs)
+    _plot_inductor_lq(networks, lq_path)
 
     print(f"  [plotter] S21 magnitude → {s21_path}")
     print(f"  [plotter] S11 magnitude → {s11_path}")
+    print(f"  [plotter] Inductor L/Q  → {lq_path}")
 
     result: dict = {"s21_magnitude": str(s21_path), "s11_magnitude": str(s11_path),
-                    "design_matrix": None}
+                    "inductor_lq": str(lq_path), "design_matrix": None}
 
     if pixel_matrix is not None:
         dm_path = output_dir / "design_matrix.png"
@@ -134,6 +138,69 @@ def _plot_s2p_magnitude(
     ax.legend(fontsize=11)
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.set_xlim(left=0)
+
+    fig.tight_layout()
+    fig.savefig(str(save_path), dpi=150)
+    plt.close(fig)
+
+
+def _plot_inductor_lq(
+    networks: List[Tuple[Any, str]],
+    save_path: Path,
+    z0: float = 50.0,
+) -> None:
+    """Inductance L and quality factor Q vs frequency, from S2P with port 2 shorted.
+
+    S_in = S11 - S21*S12 / (1 + S22)      [signal-flow with Γ_L = -1 at port 2]
+    Z_in = Z0 * (1 + S_in) / (1 - S_in)
+    L    = Im(Z_in) / (2π·f)              [nH]
+    Q    = Im(Z_in) / Re(Z_in)
+    """
+    fig, (ax_l, ax_q) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+
+    for i, (ntwk, label) in enumerate(networks):
+        color    = colors[i % len(colors)]
+        S11      = ntwk.s[:, 0, 0]
+        S12      = ntwk.s[:, 0, 1]
+        S21      = ntwk.s[:, 1, 0]
+        S22      = ntwk.s[:, 1, 1]
+        freq_hz  = ntwk.f
+        freq_ghz = freq_hz / 1e9
+
+        denom_load = 1.0 + S22
+        safe_load  = np.abs(denom_load) > 1e-12
+        s_in = np.where(
+            safe_load,
+            S11 - S21 * S12 / np.where(safe_load, denom_load, 1.0),
+            np.nan + 0j,
+        )
+
+        denom_z = 1.0 - s_in
+        z_in = np.where(
+            np.abs(denom_z) > 1e-12,
+            z0 * (1.0 + s_in) / np.where(np.abs(denom_z) > 1e-12, denom_z, 1.0),
+            np.nan + 0j,
+        )
+
+        l_nh = np.where(freq_hz > 0, np.imag(z_in) / (2.0 * np.pi * freq_hz) * 1e9, np.nan)
+        q    = np.where(np.real(z_in) > 1e-12, np.imag(z_in) / np.real(z_in), np.nan)
+
+        ax_l.plot(freq_ghz, l_nh, label=label, color=color, linewidth=1.8)
+        ax_q.plot(freq_ghz, q,    label=label, color=color, linewidth=1.8)
+
+    ax_l.set_ylabel("Inductance (nH)", fontsize=12)
+    ax_l.set_title("Inductor L and Q vs Frequency  (port 2 shorted)", fontsize=13)
+    ax_l.legend(fontsize=11)
+    ax_l.grid(True, linestyle="--", alpha=0.6)
+    ax_l.axhline(0, color="k", linewidth=0.6, alpha=0.4)
+
+    ax_q.set_xlabel("Frequency (GHz)", fontsize=12)
+    ax_q.set_ylabel("Quality Factor Q", fontsize=12)
+    ax_q.legend(fontsize=11)
+    ax_q.grid(True, linestyle="--", alpha=0.6)
+    ax_q.axhline(0, color="k", linewidth=0.6, alpha=0.4)
+    ax_q.set_xlim(left=0)
 
     fig.tight_layout()
     fig.savefig(str(save_path), dpi=150)

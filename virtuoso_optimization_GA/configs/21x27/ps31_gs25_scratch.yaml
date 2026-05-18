@@ -2,13 +2,13 @@
 # GA Experiment — 21×27 grid, pixel_size=31 um, grid_size=25 um, scratch
 # Engine: config_ps31_gs25.yaml (single 200 nH inductor)
 # ===========================================================================
-_base_: ../base/scratch.yaml
+_base_: ../base/scratch_3_states.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_scratch"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_new_switch_seed2"
 
 grid:
   rows: 21
   cols: 27
 
-seed: 42
+seed: 2

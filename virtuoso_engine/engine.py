@@ -643,8 +643,11 @@ class VirtuosoPixelEngine:
 
         # Validate inputs before touching Virtuoso
         mat_info   = analyze_matrix(matrix)
-        cap_values = pd.get("cap_values", [])
-        state_list = pd.get("state_list", [])
+        from .spectre_runner import _normalize_cap_values, _normalize_state_list
+        cap_values_raw = pd.get("cap_values", [])
+        state_list_raw = pd.get("state_list", [])
+        cap_values = _normalize_cap_values(cap_values_raw)
+        state_list = _normalize_state_list(state_list_raw)
         feedline   = pd.get("feedline", {})
 
         if len(cap_values) != mat_info["num_sw"]:
@@ -659,6 +662,12 @@ class VirtuosoPixelEngine:
                         f"state_list[{i}] length ({len(sv)}) must equal "
                         f"number of switch pixels ({mat_info['num_sw']})."
                     )
+                for sw_i, bank in enumerate(sv):
+                    if len(bank) != len(cap_values[sw_i]):
+                        raise ValueError(
+                            f"state_list[{i}][{sw_i}] bank length ({len(bank)}) does not match "
+                            f"cap_values[{sw_i}] bank length ({len(cap_values[sw_i])})."
+                        )
 
         # Validate cap pixel pairs
         cap_pixel_pairs = pd.get("cap_pixel_pairs", [])
@@ -853,12 +862,16 @@ class VirtuosoPixelEngine:
         cap_table_path = _resolve_path(fl["cap_pair_table"],   repo_root)
 
         # --- Switch cap dims: one (length, width) per switch pixel (row-major order) ---
-        sw_cap_values = pd.get("cap_values", [])
-        if len(sw_cap_values) != mat_info["num_sw"]:
+        # For layout, use the first cap in each bank (banks are a Spectre-only concept).
+        from .spectre_runner import _normalize_cap_values as _ncv
+        sw_cap_values_raw = pd.get("cap_values", [])
+        sw_cap_values_banks = _ncv(sw_cap_values_raw)
+        if len(sw_cap_values_banks) != mat_info["num_sw"]:
             raise ValueError(
-                f"pixelated.cap_values length ({len(sw_cap_values)}) must equal "
+                f"pixelated.cap_values length ({len(sw_cap_values_banks)}) must equal "
                 f"number of switch pixels ({mat_info['num_sw']})."
             )
+        sw_cap_values = [bank[0] for bank in sw_cap_values_banks]
         sw_dims = _lookup_cap_dims(sw_table_path, sw_cap_values)
 
         # --- Cap pair dims and orientations ---

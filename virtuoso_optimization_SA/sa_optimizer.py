@@ -52,16 +52,20 @@ if TYPE_CHECKING:
 
 def _load_design_from_config(config_path: str | Path) -> DesignState:
     """Parse a pixelated config.yaml and return the embedded DesignState."""
+    from virtuoso_engine.spectre_runner import _normalize_cap_values, _normalize_state_list
     raw = load_config(config_path)
     pix = raw["pixelated"]
+    cap_values   = _normalize_cap_values(pix["cap_values"])
+    switch_states = _normalize_state_list(pix["state_list"])
     return DesignState(
         matrix                 = pix["pixel_state_matrix"],
-        switch_states          = pix["state_list"],
-        cap_values             = pix["cap_values"],
+        switch_states          = switch_states,
+        cap_values             = cap_values,
         inductor_values        = pix.get("inductor_values", []),
         inductor_switch_states = pix.get("inductor_switch_states", []),
         cap_pixel_pairs        = pix.get("cap_pixel_pairs", []),
         cap_pair_values        = pix.get("cap_pair_values", []),
+        inductor_cap_values    = pix.get("inductor_cap_values", []),
     )
 
 
@@ -141,6 +145,10 @@ class SAConfig:
     n_init_vias_min:         int = -1
     n_init_vias_max:         int = -1
 
+    # Capacitor bank size: number of cap+switch pairs per switch pixel.
+    # 1 = legacy single-cap model (backward-compatible default).
+    n_caps_per_switch: int = 1
+
     @classmethod
     def from_dict(cls, d: dict) -> "SAConfig":
         sa   = d["sa"]
@@ -193,6 +201,8 @@ class SAConfig:
             n_initial_inductors_max = int(grid.get("n_initial_inductors_max", -1)),
             n_init_vias_min         = int(grid.get("n_init_vias_min",         -1)),
             n_init_vias_max         = int(grid.get("n_init_vias_max",         -1)),
+
+            n_caps_per_switch = int(grid.get("n_caps_per_switch", 1)),
 
             initial_design_path = str(d["initial_design_path"]) if d.get("initial_design_path") else None,
         )
@@ -392,6 +402,7 @@ class SwitchableFilterSA:
             cap_pair_max_dist   = cfg.cap_pair_max_dist,
             n_init_vias         = init_n_vias,
             max_vias            = cfg.n_max_vias,
+            n_caps_per_switch   = cfg.n_caps_per_switch,
         )
         if design is None:
             raise RuntimeError(

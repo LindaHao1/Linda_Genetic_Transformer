@@ -174,8 +174,10 @@ class DesignModel:
 
     Invariants maintained:
       len(cap_values)      == number of type-3 (SW) pixels (row-first order)
+      cap_values[i]        == List[float] of capacitances in the i-th switch bank
       len(inductor_values) == number of type-2 (IND) pixels (row-first order)
       each state in state_list has length == number of SW pixels
+      state_list[s][i]     == List[int] of on/off bits matching cap_values[i]
       if inductor_switch_states is not None, each inner list has length == number of IND pixels
       len(cap_pair_values) == len(cap_pixel_pairs)
     """
@@ -183,8 +185,8 @@ class DesignModel:
     def __init__(self) -> None:
         self.full_config:           Dict[str, Any]              = {}
         self.matrix:                List[List[int]]             = [[0]]
-        self.state_list:            List[List[int]]             = []
-        self.cap_values:            List[float]                 = []
+        self.state_list:            List[List[List[int]]]       = []
+        self.cap_values:            List[List[float]]           = []
         self.inductor_values:       List[int]                   = []
         self.inductor_switch_states: Optional[List[List[int]]] = None
         self.cap_pixel_pairs:       List[List[List[int]]]       = []
@@ -212,10 +214,22 @@ class DesignModel:
 
     def _pull_from_config(self) -> None:
         px = self.full_config.get("pixelated", {})
-        self.matrix             = [list(r) for r in px.get("pixel_state_matrix", [[0]])]
-        self.state_list         = [list(s) for s in px.get("state_list", [])]
-        self.cap_values         = list(px.get("cap_values", []))
-        self.inductor_values    = list(px.get("inductor_values", []))
+        self.matrix          = [list(r) for r in px.get("pixel_state_matrix", [[0]])]
+        self.inductor_values = list(px.get("inductor_values", []))
+
+        # Normalize cap_values: flat List[float] → List[List[float]]
+        raw_caps = px.get("cap_values", [])
+        if raw_caps and isinstance(raw_caps[0], (int, float)):
+            self.cap_values = [[float(v)] for v in raw_caps]
+        else:
+            self.cap_values = [[float(c) for c in bank] for bank in raw_caps]
+
+        # Normalize state_list: List[List[int]] → List[List[List[int]]]
+        raw_states = px.get("state_list", [])
+        if raw_states and raw_states[0] and isinstance(raw_states[0][0], (int, float)):
+            self.state_list = [[[int(bit)] for bit in sv] for sv in raw_states]
+        else:
+            self.state_list = [[list(bank) for bank in sv] for sv in raw_states]
         iss = px.get("inductor_switch_states", None)
         self.inductor_switch_states = [list(s) for s in iss] if iss else None
         cpp = px.get("cap_pixel_pairs", []) or []
@@ -242,19 +256,29 @@ class DesignModel:
         """Clamp derived lists to match actual pixel counts."""
         n_sw  = len(self.sw_pixels())
         n_ind = len(self.ind_pixels())
-        # cap_values
+        # cap_values — each entry is a List[float] bank
         while len(self.cap_values) < n_sw:
-            self.cap_values.append(DEFAULT_CAP_F)
+            self.cap_values.append([DEFAULT_CAP_F])
         self.cap_values = self.cap_values[:n_sw]
+        for bank in self.cap_values:
+            if not bank:
+                bank.append(DEFAULT_CAP_F)
         # inductor_values
         while len(self.inductor_values) < n_ind:
             self.inductor_values.append(0)
         self.inductor_values = self.inductor_values[:n_ind]
-        # state_list columns
+        # state_list: each state[sw_i] is a List[int] matching cap_values[sw_i]
         for state in self.state_list:
             while len(state) < n_sw:
-                state.append(0)
+                bank_len = len(self.cap_values[len(state)]) if len(state) < n_sw else 1
+                state.append([0] * bank_len)
             del state[n_sw:]
+            for sw_i, bank in enumerate(self.cap_values):
+                bank_len = len(bank)
+                if sw_i < len(state):
+                    while len(state[sw_i]) < bank_len:
+                        state[sw_i].append(0)
+                    del state[sw_i][bank_len:]
         # inductor_switch_states columns
         if self.inductor_switch_states is not None:
             n_states = len(self.state_list)
@@ -350,9 +374,9 @@ class DesignModel:
         if new_type == 3:
             si = self.sw_index_at(row, col)
             if si is not None:
-                self.cap_values.insert(si, DEFAULT_CAP_F)
+                self.cap_values.insert(si, [DEFAULT_CAP_F])
                 for state in self.state_list:
-                    state.insert(si, 0)
+                    state.insert(si, [0])
 
         elif new_type == 2:
             ii = self.ind_index_at(row, col)
@@ -361,6 +385,24 @@ class DesignModel:
                 if self.inductor_switch_states:
                     for s in self.inductor_switch_states:
                         s.insert(ii, 1)
+
+    # ── Cap bank management ──────────────────────────────────────────────────
+
+    def add_cap_to_bank(self, sw_idx: int, cap_value: float = DEFAULT_CAP_F) -> None:
+        """Append a new capacitor to switch sw_idx's bank."""
+        if sw_idx < len(self.cap_values):
+            self.cap_values[sw_idx].append(cap_value)
+            for state in self.state_list:
+                if sw_idx < len(state):
+                    state[sw_idx].append(0)
+
+    def remove_cap_from_bank(self, sw_idx: int, cap_idx: int) -> None:
+        """Remove capacitor cap_idx from switch sw_idx's bank (min 1 cap kept)."""
+        if sw_idx < len(self.cap_values) and len(self.cap_values[sw_idx]) > 1:
+            self.cap_values[sw_idx].pop(cap_idx)
+            for state in self.state_list:
+                if sw_idx < len(state) and cap_idx < len(state[sw_idx]):
+                    state[sw_idx].pop(cap_idx)
 
     # ── Cap pairs ────────────────────────────────────────────────────────────
 
@@ -392,9 +434,8 @@ class DesignModel:
     # ── State list ───────────────────────────────────────────────────────────
 
     def add_state(self) -> None:
-        n_sw  = len(self.sw_pixels())
         n_ind = len(self.ind_pixels())
-        self.state_list.append([0] * n_sw)
+        self.state_list.append([[0] * len(bank) for bank in self.cap_values])
         if self.inductor_switch_states is not None:
             self.inductor_switch_states.append([1] * n_ind)
 
@@ -497,8 +538,8 @@ class DesignModel:
                     [0, 3, 1, 3, 1],
                     [0, 0, 2, 1, 0],
                 ],
-                "state_list":      [[0, 0], [1, 0], [0, 1], [1, 1]],
-                "cap_values":      [1.0e-12, 1.0e-12],
+                "state_list":      [[[0], [0]], [[1], [0]], [[0], [1]], [[1], [1]]],
+                "cap_values":      [[1.0e-12], [1.0e-12]],
                 "inductor_values": [0],
                 "cap_pixel_pairs": [],
                 "cap_pair_values": [],
@@ -777,9 +818,12 @@ class PixelGridWidget(QWidget):
                     bot_text = INDUCTOR_LABELS[iv] if iv < len(INDUCTOR_LABELS) else "?"
                 elif ptype == 3 and sw_idx is not None:
                     top_text = f"SW_{sw_idx}"
-                    cap      = (model.cap_values[sw_idx]
-                                if sw_idx < len(model.cap_values) else DEFAULT_CAP_F)
-                    bot_text = _fmt_cap(cap)
+                    bank     = (model.cap_values[sw_idx]
+                                if sw_idx < len(model.cap_values) else [DEFAULT_CAP_F])
+                    if len(bank) == 1:
+                        bot_text = _fmt_cap(bank[0])
+                    else:
+                        bot_text = f"{len(bank)}×" + _fmt_cap(bank[0])
                 elif ptype == 4:
                     top_text = "VIA"; bot_text = ""
                 else:
@@ -982,18 +1026,22 @@ class PropertyPanel(QGroupBox):
         root.addWidget(gb_ind)
         self._ind_gb = gb_ind
 
-        # ── Switch cap ────────────────────────────────────────────────────
-        gb_sw = QGroupBox("Switch cap")
+        # ── Switch cap bank ───────────────────────────────────────────────
+        gb_sw = QGroupBox("Switch cap bank")
+        gb_sw.setMinimumWidth(220)
         vl3 = QVBoxLayout(gb_sw)
-        self._sw_spin = QDoubleSpinBox()
-        self._sw_spin.setRange(0.001, 1000.0)
-        self._sw_spin.setDecimals(3)
-        self._sw_spin.setSuffix(" pF")
-        self._sw_spin.setSingleStep(0.1)
-        self._sw_spin.valueChanged.connect(self._on_sw_cap)
-        vl3.addWidget(self._sw_spin)
+        vl3.setSpacing(3)
+        self._sw_bank_widget = QWidget()
+        self._sw_bank_layout = QVBoxLayout(self._sw_bank_widget)
+        self._sw_bank_layout.setSpacing(2)
+        self._sw_bank_layout.setContentsMargins(0, 0, 0, 0)
+        vl3.addWidget(self._sw_bank_widget)
+        self._sw_add_btn = QPushButton("+ Add cap")
+        self._sw_add_btn.clicked.connect(self._on_add_cap_to_bank)
+        vl3.addWidget(self._sw_add_btn)
         root.addWidget(gb_sw)
         self._sw_gb = gb_sw
+        self._sw_spins: List[QDoubleSpinBox] = []
 
         # ── Cap pair ──────────────────────────────────────────────────────
         gb_cp = QGroupBox("Cap pair")
@@ -1071,12 +1119,11 @@ class PropertyPanel(QGroupBox):
         else:
             self._ind_gb.hide()
 
-        # Switch cap
+        # Switch cap bank
         if ptype == 3:
             si = model.sw_index_at(r, c)
             self._sw_gb.show()
-            if si is not None and si < len(model.cap_values):
-                self._sw_spin.setValue(model.cap_values[si] * 1e12)
+            self._rebuild_sw_bank_ui(si)
         else:
             self._sw_gb.hide()
 
@@ -1122,13 +1169,72 @@ class PropertyPanel(QGroupBox):
             self.model.inductor_values[ii] = idx
             self.changed.emit()
 
-    def _on_sw_cap(self, pf: float) -> None:
+    def _rebuild_sw_bank_ui(self, si: Optional[int]) -> None:
+        """Clear and rebuild the per-cap spinbox rows for switch si."""
+        # Remove old rows
+        while self._sw_bank_layout.count():
+            item = self._sw_bank_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._sw_spins = []
+
+        if si is None or si >= len(self.model.cap_values):
+            return
+
+        bank = self.model.cap_values[si]
+        can_remove = len(bank) > 1
+        for cap_idx, cap_f in enumerate(bank):
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(0, 0, 0, 0)
+            row_l.setSpacing(4)
+            row_l.addWidget(QLabel(f"Cap {cap_idx}:"))
+            spin = QDoubleSpinBox()
+            spin.setRange(0.001, 1000.0)
+            spin.setDecimals(3)
+            spin.setSuffix(" pF")
+            spin.setSingleStep(0.1)
+            spin.setValue(cap_f * 1e12)
+            spin.valueChanged.connect(
+                lambda pf, j=cap_idx: self._on_sw_cap(j, pf))
+            row_l.addWidget(spin, stretch=1)
+            self._sw_spins.append(spin)
+            rem_btn = QPushButton("×")
+            rem_btn.setFixedWidth(24)
+            rem_btn.setEnabled(can_remove)
+            rem_btn.clicked.connect(
+                lambda checked, j=cap_idx: self._on_rem_cap_from_bank(j))
+            row_l.addWidget(rem_btn)
+            self._sw_bank_layout.addWidget(row_w)
+
+    def _on_sw_cap(self, cap_idx: int, pf: float) -> None:
         if self._loading or self.selected is None:
             return
         r, c = self.selected
         si   = self.model.sw_index_at(r, c)
         if si is not None and si < len(self.model.cap_values):
-            self.model.cap_values[si] = pf * 1e-12
+            if cap_idx < len(self.model.cap_values[si]):
+                self.model.cap_values[si][cap_idx] = pf * 1e-12
+                self.changed.emit()
+
+    def _on_add_cap_to_bank(self) -> None:
+        if self.selected is None:
+            return
+        r, c = self.selected
+        si   = self.model.sw_index_at(r, c)
+        if si is not None:
+            self.model.add_cap_to_bank(si)
+            self._refresh()
+            self.changed.emit()
+
+    def _on_rem_cap_from_bank(self, cap_idx: int) -> None:
+        if self.selected is None:
+            return
+        r, c = self.selected
+        si   = self.model.sw_index_at(r, c)
+        if si is not None:
+            self.model.remove_cap_from_bank(si, cap_idx)
+            self._refresh()
             self.changed.emit()
 
     def _on_add_pair(self) -> None:
@@ -1250,40 +1356,56 @@ class StatesTableWidget(QWidget):
     # ── internal ──────────────────────────────────────────────────────────────
 
     def _do_refresh(self) -> None:
-        model  = self.model
-        sw_px  = model.sw_pixels()
-        ind_px = model.ind_pixels()
-        n_sw   = len(sw_px)
+        model    = self.model
+        sw_px    = model.sw_pixels()
+        ind_px   = model.ind_pixels()
+        n_sw     = len(sw_px)
         n_states = len(model.state_list)
         use_ind  = model.inductor_switch_states is not None
         n_ind    = len(ind_px) if use_ind else 0
+
+        # Build flat column list: (sw_i, cap_j) for each switch bank, then IND cols
+        sw_cols: List[Tuple[int, int]] = []
+        for sw_i in range(n_sw):
+            bank_len = len(model.cap_values[sw_i]) if sw_i < len(model.cap_values) else 1
+            for cap_j in range(bank_len):
+                sw_cols.append((sw_i, cap_j))
+
+        n_sw_cols = len(sw_cols)
+        n_cols    = n_sw_cols + n_ind
 
         self._ind_cb.setChecked(use_ind)
         self._info.setText(
             f"{n_states} state(s)  |  {n_sw} switch(es)  |  {len(ind_px)} inductor(s)")
 
-        n_cols = n_sw + n_ind
         self._table.setRowCount(n_states)
         self._table.setColumnCount(n_cols)
 
-        h_labels = [f"SW_{i}" for i in range(n_sw)]
+        h_labels = [f"SW_{sw_i}_{cap_j}"
+                    if sw_i < len(model.cap_values) and len(model.cap_values[sw_i]) > 1
+                    else f"SW_{sw_i}"
+                    for sw_i, cap_j in sw_cols]
         if use_ind:
             h_labels += [f"IND_{i}" for i in range(n_ind)]
         self._table.setHorizontalHeaderLabels(h_labels)
         self._table.setVerticalHeaderLabels([f"S{i}" for i in range(n_states)])
 
-        for si, state in enumerate(model.state_list):
-            for j in range(n_sw):
-                val = state[j] if j < len(state) else 0
-                self._set_cell(si, j, val, kind="sw")
+        for state_idx, state in enumerate(model.state_list):
+            for col_idx, (sw_i, cap_j) in enumerate(sw_cols):
+                bank = state[sw_i] if sw_i < len(state) else []
+                val  = bank[cap_j] if cap_j < len(bank) else 0
+                self._set_cell(state_idx, col_idx, val, kind="sw",
+                               sw_i=sw_i, cap_j=cap_j)
 
         if use_ind and model.inductor_switch_states:
-            for si, ind_state in enumerate(model.inductor_switch_states):
+            for state_idx, ind_state in enumerate(model.inductor_switch_states):
                 for j in range(n_ind):
                     val = ind_state[j] if j < len(ind_state) else 1
-                    self._set_cell(si, n_sw + j, val, kind="ind")
+                    self._set_cell(state_idx, n_sw_cols + j, val, kind="ind",
+                                   sw_i=0, cap_j=j)
 
-    def _set_cell(self, row: int, col: int, val: int, kind: str) -> None:
+    def _set_cell(self, row: int, col: int, val: int, kind: str,
+                  sw_i: int = 0, cap_j: int = 0) -> None:
         if kind == "sw":
             text  = "ON"  if val else "OFF"
             color = QColor("#c0392b") if val else QColor("#4a4a4a")
@@ -1295,8 +1417,8 @@ class StatesTableWidget(QWidget):
         item.setTextAlignment(Qt.AlignCenter)
         item.setBackground(QBrush(color))
         item.setForeground(QBrush(QColor("#ffffff")))
-        item.setData(Qt.UserRole, (kind, row, col - (0 if kind == "sw"
-                                                      else len(self.model.sw_pixels()))))
+        # UserRole encodes (kind, state_row, sw_i, cap_j)
+        item.setData(Qt.UserRole, (kind, row, sw_i, cap_j))
         self._table.setItem(row, col, item)
 
     def _on_cell_click(self, row: int, col: int) -> None:
@@ -1306,15 +1428,17 @@ class StatesTableWidget(QWidget):
         data = item.data(Qt.UserRole)
         if not data:
             return
-        kind, state_idx, sub_idx = data
+        kind, state_idx, sw_i, cap_j = data
         if kind == "sw":
             state = self.model.state_list
-            if state_idx < len(state) and sub_idx < len(state[state_idx]):
-                state[state_idx][sub_idx] ^= 1
+            if (state_idx < len(state) and sw_i < len(state[state_idx])
+                    and cap_j < len(state[state_idx][sw_i])):
+                state[state_idx][sw_i][cap_j] ^= 1
         elif kind == "ind" and self.model.inductor_switch_states is not None:
             ind_state = self.model.inductor_switch_states
-            if state_idx < len(ind_state) and sub_idx < len(ind_state[state_idx]):
-                ind_state[state_idx][sub_idx] ^= 1
+            # cap_j reused as ind sub-index for IND cells
+            if state_idx < len(ind_state) and cap_j < len(ind_state[state_idx]):
+                ind_state[state_idx][cap_j] ^= 1
         self.refresh()
         self.changed.emit()
 
@@ -1946,6 +2070,7 @@ class SimulationWindow(QDialog):
 _PLOT_FILES = [
     ("s21_magnitude.png",  "S21 — Transmission"),
     ("s11_magnitude.png",  "S11 — Input Match"),
+    ("inductor_lq.png",    "Inductor L & Q"),
     ("design_matrix.png",  "Design Matrix"),
 ]
 

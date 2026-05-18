@@ -218,6 +218,7 @@ def embed_centered_with_density(
         inductor_switch_states = copy.deepcopy(design.inductor_switch_states),
         cap_pixel_pairs        = shifted_pairs,
         cap_pair_values        = list(design.cap_pair_values),
+        inductor_cap_values    = list(design.inductor_cap_values),
     )
 
 
@@ -351,6 +352,7 @@ def expand_design_to_size(
             inductor_switch_states  = copy.deepcopy(current.inductor_switch_states),
             cap_pixel_pairs         = valid_pairs,
             cap_pair_values         = valid_vals,
+            inductor_cap_values     = list(current.inductor_cap_values),
         )
 
     return current

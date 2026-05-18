@@ -180,6 +180,11 @@ class GAConfig:
     cap_pair_max_dist:     int   = 3
     cap_pair_axis_aligned: bool  = True  # if True, only horizontal/vertical pairs are allowed
 
+    # Inductor series MIM cap range (one cap per inductor pixel, same topology as switch caps)
+    inductor_cap_min:   float = 200e-15
+    inductor_cap_max:   float = 1000e-15
+    inductor_cap_sigma: float = 50e-15
+
     # Non-uniform flip_01 probability (for finetuning embedded designs)
     flip_inner_region: Optional[tuple] = None  # ((r1,c1),(r2,c2)) top-left/bottom-right, or None
     flip_inner_prob:   float = 1.0             # relative weight for pixels inside the region
@@ -229,12 +234,21 @@ class GAConfig:
     # n_state_champions=1 reproduces the original single-champion behaviour exactly.
     n_state_champions: int = 1
 
+    # State-cost aggregation mode.
+    # "sum"      — simple sum of per-state costs (default, original behaviour).
+    # "soft_max" — log-sum-exp; worst state dominates. temperature controls hardness.
+    state_aggregation_mode:        str   = "sum"
+    state_aggregation_temperature: float = 2.0
+
     # Population schedule: if set, step down every N generations regardless of n_gen.
     # If None (default), steps are spread evenly across n_gen (old behaviour).
     pop_schedule_gens_per_step: Optional[int] = None
 
     # Inductor constraint: force all inductors to share one value index
     single_inductor_value: bool = False
+
+    # Cap bank size: number of cap+switch pairs per switch pixel (1 = legacy single-cap)
+    n_caps_per_switch: int = 1
 
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
@@ -301,6 +315,10 @@ class GAConfig:
             cap_pair_min_dist     = int(grid.get("cap_pair_min_dist", 2)),
             cap_pair_max_dist     = int(grid.get("cap_pair_max_dist", 3)),
             cap_pair_axis_aligned = bool(grid.get("cap_pair_axis_aligned", True)),
+
+            inductor_cap_min   = float(grid.get("inductor_cap_min",   200e-15)),
+            inductor_cap_max   = float(grid.get("inductor_cap_max",  1000e-15)),
+            inductor_cap_sigma = float(ga.get("inductor_cap_sigma",   50e-15)),
             flip_inner_region     = _parse_flip_inner_region(ga.get("flip_inner_region")),
             flip_inner_prob       = float(ga.get("flip_inner_prob", 1.0)),
             flip_outer_prob       = float(ga.get("flip_outer_prob", 1.0)),
@@ -337,6 +355,10 @@ class GAConfig:
                                            else None),
 
             single_inductor_value = bool(grid.get("single_inductor_value", False)),
+            n_caps_per_switch     = int(grid.get("n_caps_per_switch", 1)),
+
+            state_aggregation_mode        = str(  ga.get("state_aggregation_mode",        "sum")),
+            state_aggregation_temperature = float(ga.get("state_aggregation_temperature",  2.0)),
 
             virtuoso_config = str(d["virtuoso_config"]),
             output_dir      = str(d["output_dir"]),
@@ -649,6 +671,9 @@ class SwitchableFilterGA:
                             flip_region_size         = cfg.flip_region_size,
                             min_switches             = cfg.min_switches,
                             max_switches             = cfg.max_switches,
+                            inductor_cap_min         = cfg.inductor_cap_min,
+                            inductor_cap_max         = cfg.inductor_cap_max,
+                            inductor_cap_sigma       = cfg.inductor_cap_sigma,
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias):
                             exploit_candidates.append(mutated)
@@ -764,6 +789,8 @@ class SwitchableFilterGA:
                             cap_pair_min_dist  = cfg.cap_pair_min_dist,
                             cap_pair_max_dist  = cfg.cap_pair_max_dist,
                             single_inductor_value = cfg.single_inductor_value,
+                            inductor_cap_min   = cfg.inductor_cap_min,
+                            inductor_cap_max   = cfg.inductor_cap_max,
                         )
                         # Resolve actual method (hybrid picks randomly each call)
                         _method = cfg.crossover_method
@@ -836,6 +863,9 @@ class SwitchableFilterGA:
                             flip_region_size         = cfg.flip_region_size,
                             min_switches             = cfg.min_switches,
                             max_switches             = cfg.max_switches,
+                            inductor_cap_min         = cfg.inductor_cap_min,
+                            inductor_cap_max         = cfg.inductor_cap_max,
+                            inductor_cap_sigma       = cfg.inductor_cap_sigma,
                         )
                         if mutated is not None:
                             child = mutated
@@ -871,6 +901,9 @@ class SwitchableFilterGA:
                         cap_pair_min_dist   = cfg.cap_pair_min_dist,
                         cap_pair_max_dist   = cfg.cap_pair_max_dist,
                         single_inductor_value = cfg.single_inductor_value,
+                        inductor_cap_min    = cfg.inductor_cap_min,
+                        inductor_cap_max    = cfg.inductor_cap_max,
+                        n_caps_per_switch   = cfg.n_caps_per_switch,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -1198,6 +1231,9 @@ class SwitchableFilterGA:
                             flip_inner_prob          = _init_flip_inner_prob,
                             flip_outer_prob          = cfg.flip_outer_prob,
                             flip_region_size         = cfg.flip_region_size,
+                            inductor_cap_min         = cfg.inductor_cap_min,
+                            inductor_cap_max         = cfg.inductor_cap_max,
+                            inductor_cap_sigma       = cfg.inductor_cap_sigma,
                         )
                         if candidate is not None:
                             current = candidate
@@ -1238,6 +1274,9 @@ class SwitchableFilterGA:
                 cap_pair_min_dist   = cfg.cap_pair_min_dist,
                 cap_pair_max_dist   = cfg.cap_pair_max_dist,
                 single_inductor_value = cfg.single_inductor_value,
+                inductor_cap_min    = cfg.inductor_cap_min,
+                inductor_cap_max    = cfg.inductor_cap_max,
+                n_caps_per_switch   = cfg.n_caps_per_switch,
             )
             if design is None:
                 raise RuntimeError(
@@ -1305,10 +1344,20 @@ class SwitchableFilterGA:
         """
         if not result.success:
             return 1e9, None
+        agg_mode = self.cfg.state_aggregation_mode
+        agg_temp = self.cfg.state_aggregation_temperature
         if self.cfg.dynamic_state_assignment:
-            cost, assignment = compute_total_cost_dynamic(result.s_param_files, self.specs)
+            cost, assignment = compute_total_cost_dynamic(
+                result.s_param_files, self.specs,
+                aggregation_mode=agg_mode,
+                aggregation_temperature=agg_temp,
+            )
             return cost, assignment
-        return compute_total_cost(result.s_param_files, self.specs), None
+        return compute_total_cost(
+            result.s_param_files, self.specs,
+            aggregation_mode=agg_mode,
+            aggregation_temperature=agg_temp,
+        ), None
 
     def _per_state_costs_from_result(
         self,
@@ -1488,6 +1537,7 @@ class SwitchableFilterGA:
             "cap_values":            design.cap_values,
             "inductor_values":       design.inductor_values,
             "inductor_switch_states": design.inductor_switch_states,
+            "inductor_cap_values":   design.inductor_cap_values,
         }
         path = self.output_dir / "best_design.json"
         path.write_text(json.dumps(data, indent=2))
@@ -1522,6 +1572,7 @@ class SwitchableFilterGA:
             "cap_values":            design.cap_values,
             "inductor_values":       design.inductor_values,
             "inductor_switch_states": design.inductor_switch_states,
+            "inductor_cap_values":   design.inductor_cap_values,
         }
         path = self.output_dir / "state_best" / f"state_{state_idx}_best.json"
         path.write_text(json.dumps(data, indent=2))
@@ -1531,7 +1582,8 @@ class SwitchableFilterGA:
     def _print_cost_breakdown(breakdown: List[dict]) -> None:
         """Print a formatted cost breakdown table to stdout."""
         has_pv  = any(b.get("pv_contrast", 0) != 0 or b.get("pv_cost_term1", 0) != 0
-                      or b.get("pv_cost_term2", 0) != 0 for b in breakdown)
+                      or b.get("pv_cost_term2", 0) != 0 or b.get("pv_cost_flatness", 0) != 0
+                      or b.get("pv_pb_std", 0) != 0 for b in breakdown)
         has_s11 = any(b.get("s11_passband", 0) + b.get("s11_stopband", 0) + b.get("s11_crossband", 0) > 0
                       for b in breakdown)
         has_sp  = any(b.get("s21_spurious", 0) > 0 for b in breakdown)
@@ -1539,7 +1591,8 @@ class SwitchableFilterGA:
         if has_pv:
             header = (
                 f"  {'Spec':>4}  {'Passband(GHz)':>14}  "
-                f"{'PB-avg':>8}  {'SB-avg':>8}  {'Contrast':>8}  {'PV-T1':>8}  {'PV-T2':>8}"
+                f"{'PB-avg':>8}  {'PB-lvl':>8}  {'PB-std':>8}  "
+                f"{'SB-avg':>8}  {'Contrast':>8}  {'PV-T1':>8}  {'PV-T2':>8}  {'PV-flat':>8}"
             )
         else:
             header = (
@@ -1559,9 +1612,11 @@ class SwitchableFilterGA:
             if has_pv:
                 row = (
                     f"  {b['spec_idx']:>4}  {pb_ghz:>14}  "
-                    f"{b.get('pv_pb_avg', 0.0):>8.3f}  {b.get('pv_sb_avg', 0.0):>8.3f}  "
-                    f"{b.get('pv_contrast', 0.0):>8.3f}  "
-                    f"{b.get('pv_cost_term1', 0.0):>8.4f}  {b.get('pv_cost_term2', 0.0):>8.4f}"
+                    f"{b.get('pv_pb_avg',   0.0):>8.3f}  {b.get('pv_pb_level', 0.0):>8.3f}  "
+                    f"{b.get('pv_pb_std',   0.0):>8.3f}  "
+                    f"{b.get('pv_sb_avg',   0.0):>8.3f}  {b.get('pv_contrast', 0.0):>8.3f}  "
+                    f"{b.get('pv_cost_term1', 0.0):>8.4f}  {b.get('pv_cost_term2', 0.0):>8.4f}  "
+                    f"{b.get('pv_cost_flatness', 0.0):>8.4f}"
                 )
             else:
                 row = (
@@ -1579,7 +1634,7 @@ class SwitchableFilterGA:
         total = sum(b["total"] for b in breakdown)
         print(f"  {'─'*len(header.rstrip())}")
         if has_pv:
-            ncols = 5 + (3 if has_s11 else 0)
+            ncols = 8 + (3 if has_s11 else 0)
         else:
             ncols = 3 + (1 if has_sp else 0) + (3 if has_s11 else 0)
         pad = "  " + " "*4 + "  " + " "*14 + "  " + "  ".join([" "*8]*ncols) + "  "
@@ -1645,8 +1700,9 @@ class SwitchableFilterGA:
                 "cost":           costs[i],
                 "matrix":         population[i].matrix,
                 "switch_states":  population[i].switch_states,
-                "cap_values":     population[i].cap_values,
-                "inductor_values": population[i].inductor_values,
+                "cap_values":          population[i].cap_values,
+                "inductor_values":     population[i].inductor_values,
+                "inductor_cap_values": population[i].inductor_cap_values,
             }
             for i in range(len(population))
         ]

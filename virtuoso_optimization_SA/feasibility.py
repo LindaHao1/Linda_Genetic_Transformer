@@ -189,6 +189,16 @@ def check_switch_states_distinct(switch_states: List[List[int]]) -> bool:
     return True
 
 
+def check_switch_states_distinct_banked(switch_states: List[List[List[int]]]) -> bool:
+    """Check distinctness for banked switch_states (List[List[List[int]]]).
+
+    Flattens each state row across all switch banks before comparing, so two
+    states that differ only in bank structure are still considered equal.
+    """
+    flat_rows = [tuple(b for bank in row for b in bank) for row in switch_states]
+    return len(set(flat_rows)) == len(flat_rows)
+
+
 def check_inductor_states_distinct(inductor_switch_states: List[List[int]]) -> bool:
     """Check that no two inductor state vectors are identical.
 
@@ -602,6 +612,9 @@ def generate_random_design(
     cap_pair_max_dist: int = 3,
     n_init_vias: int = 0,
     max_vias: int = 0,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
+    n_caps_per_switch: int = 1,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -648,15 +661,10 @@ def generate_random_design(
             continue
 
         # --- Step 4: place switches ---
-        # Constrain initial switches to the middle columns (mid ± 3) to avoid
-        # wasted switches near the feed edges.
-        mid_col = cols // 2
-        sw_col_min = max(1, mid_col - 3)
-        sw_col_max = min(cols - 2, mid_col + 3)
         eligible_sw = [
             (r, c)
             for r in range(rows)
-            for c in range(sw_col_min, sw_col_max + 1)
+            for c in range(1, cols - 1)
             if matrix[r][c] == 1 and _can_place_switch_at(matrix, r, c)
         ]
         if len(eligible_sw) < n_switches:
@@ -717,18 +725,16 @@ def generate_random_design(
             continue
 
         # --- Step 6: generate switch states, inductor switch states, cap / inductor values ---
-        # Retry until every pair of switch states differs by at least 1 bit.
-        switch_states: Optional[List[List[int]]] = None
+        # Retry until every pair of switch states differs by at least 1 flattened bit.
+        # switch_states format: [n_states][n_switches][n_caps_per_switch]
+        switch_states: Optional[List[List[List[int]]]] = None
         for _ in range(1_000):
             candidate_states = [
-                [rng.randint(0, 1) for _ in range(n_switches)]
+                [[rng.randint(0, 1) for _ in range(n_caps_per_switch)] for _ in range(n_switches)]
                 for _ in range(n_states)
             ]
-            all_distinct = all(
-                any(a != b for a, b in zip(candidate_states[i], candidate_states[j]))
-                for i in range(n_states)
-                for j in range(i + 1, n_states)
-            )
+            flat_rows = [tuple(b for bank in row for b in bank) for row in candidate_states]
+            all_distinct = len(set(flat_rows)) == len(flat_rows)
             if all_distinct:
                 switch_states = candidate_states
                 break
@@ -736,9 +742,13 @@ def generate_random_design(
         if switch_states is None:
             continue  # couldn't find distinct states — retry the whole matrix
 
-        cap_values = [rng.uniform(cap_min, cap_max) for _ in range(n_switches)]
+        cap_values = [
+            [rng.uniform(cap_min, cap_max) for _ in range(n_caps_per_switch)]
+            for _ in range(n_switches)
+        ]
 
         n_ind = sum(v == 2 for row in matrix for v in row)
+        inductor_cap_values = [rng.uniform(inductor_cap_min, inductor_cap_max) for _ in range(n_ind)]
         if single_inductor_value and n_ind > 0:
             shared_val = rng.randint(0, n_inductor_values - 1)
             inductor_values = [shared_val] * n_ind
@@ -818,6 +828,7 @@ def generate_random_design(
             inductor_switch_states = inductor_switch_states,
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values_list,
+            inductor_cap_values    = inductor_cap_values,
         )
 
     return None  # failed to generate within budget

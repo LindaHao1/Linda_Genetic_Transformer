@@ -87,13 +87,16 @@ def _inherit_values_clustered(
     rng: random.Random,
     ind_sw_states_p1: List[List[int]] = (),
     ind_sw_states_p2: List[List[int]] = (),
-) -> Tuple[List[List[int]], List[float], List[int], List[List[int]]]:
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
+) -> Tuple[List[List[List[int]]], List[List[float]], List[int], List[List[int]], List[float]]:
     """
     Walk the child matrix in row-major order and build:
-      - switch_states       [n_states][n_child_switches]
-      - cap_values          [n_child_switches]
+      - switch_states       [n_states][n_child_switches][n_caps_in_bank]
+      - cap_values          [n_child_switches][n_caps_in_bank]
       - inductor_values     [n_child_inductors]
       - inductor_switch_states [n_states][n_child_inductors]
+      - inductor_cap_values [n_child_inductors]
 
     Inheritance rule: pixel_source[(r, c)] == 1 → inherit from parent1,
                       pixel_source[(r, c)] == 2 → inherit from parent2.
@@ -102,9 +105,13 @@ def _inherit_values_clustered(
     rows = len(child_matrix)
     cols = len(child_matrix[0])
 
-    switch_states: List[List[int]] = [[] for _ in range(n_states)]
-    cap_values: List[float] = []
-    inductor_values: List[int] = []
+    _new_sw_bank_size = (len(parent1.cap_values[0]) if parent1.cap_values else
+                         len(parent2.cap_values[0]) if parent2.cap_values else 1)
+
+    switch_states: List[List[List[int]]] = [[] for _ in range(n_states)]
+    cap_values:    List[List[float]]     = []
+    inductor_values: List[int]           = []
+    inductor_cap_values: List[float]     = []
 
     p1_has_ind_sw = len(ind_sw_states_p1) > 0
     p2_has_ind_sw = len(ind_sw_states_p2) > 0
@@ -118,24 +125,26 @@ def _inherit_values_clustered(
                 from_p1 = pixel_source.get((r, c), 1) == 1
                 if from_p1 and (r, c) in sw_map_p1:
                     p_idx = sw_map_p1[(r, c)]
-                    cap_values.append(parent1.cap_values[p_idx])
+                    cap_values.append(list(parent1.cap_values[p_idx]))
+                    bank_sz = len(parent1.cap_values[p_idx])
                     for si in range(n_states):
                         if p_idx < len(parent1.switch_states[si]):
-                            switch_states[si].append(parent1.switch_states[si][p_idx])
+                            switch_states[si].append(list(parent1.switch_states[si][p_idx]))
                         else:
-                            switch_states[si].append(rng.randint(0, 1))
+                            switch_states[si].append([rng.randint(0, 1) for _ in range(bank_sz)])
                 elif (not from_p1) and (r, c) in sw_map_p2:
                     p_idx = sw_map_p2[(r, c)]
-                    cap_values.append(parent2.cap_values[p_idx])
+                    cap_values.append(list(parent2.cap_values[p_idx]))
+                    bank_sz = len(parent2.cap_values[p_idx])
                     for si in range(n_states):
                         if p_idx < len(parent2.switch_states[si]):
-                            switch_states[si].append(parent2.switch_states[si][p_idx])
+                            switch_states[si].append(list(parent2.switch_states[si][p_idx]))
                         else:
-                            switch_states[si].append(rng.randint(0, 1))
+                            switch_states[si].append([rng.randint(0, 1) for _ in range(bank_sz)])
                 else:
-                    cap_values.append(rng.uniform(cap_min, cap_max))
+                    cap_values.append([rng.uniform(cap_min, cap_max) for _ in range(_new_sw_bank_size)])
                     for si in range(n_states):
-                        switch_states[si].append(rng.randint(0, 1))
+                        switch_states[si].append([rng.randint(0, 1) for _ in range(_new_sw_bank_size)])
 
             elif v == 2:  # inductor
                 from_p1 = pixel_source.get((r, c), 1) == 1
@@ -145,6 +154,10 @@ def _inherit_values_clustered(
                            if p_idx < len(parent1.inductor_values)
                            else rng.randint(0, n_inductor_values - 1))
                     inductor_values.append(val)
+                    ind_cap = (parent1.inductor_cap_values[p_idx]
+                               if p_idx < len(parent1.inductor_cap_values)
+                               else rng.uniform(inductor_cap_min, inductor_cap_max))
+                    inductor_cap_values.append(ind_cap)
                     for si in range(n_states):
                         if p1_has_ind_sw and p_idx < len(ind_sw_states_p1[si]):
                             inductor_switch_states[si].append(ind_sw_states_p1[si][p_idx])
@@ -156,6 +169,10 @@ def _inherit_values_clustered(
                            if p_idx < len(parent2.inductor_values)
                            else rng.randint(0, n_inductor_values - 1))
                     inductor_values.append(val)
+                    ind_cap = (parent2.inductor_cap_values[p_idx]
+                               if p_idx < len(parent2.inductor_cap_values)
+                               else rng.uniform(inductor_cap_min, inductor_cap_max))
+                    inductor_cap_values.append(ind_cap)
                     for si in range(n_states):
                         if p2_has_ind_sw and p_idx < len(ind_sw_states_p2[si]):
                             inductor_switch_states[si].append(ind_sw_states_p2[si][p_idx])
@@ -163,13 +180,14 @@ def _inherit_values_clustered(
                             inductor_switch_states[si].append(rng.randint(0, 1))
                 else:
                     inductor_values.append(rng.randint(0, n_inductor_values - 1))
+                    inductor_cap_values.append(rng.uniform(inductor_cap_min, inductor_cap_max))
                     for si in range(n_states):
                         inductor_switch_states[si].append(rng.randint(0, 1))
 
     if not inductor_values:
         inductor_switch_states = []
 
-    return switch_states, cap_values, inductor_values, inductor_switch_states
+    return switch_states, cap_values, inductor_values, inductor_switch_states, inductor_cap_values
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +280,8 @@ def crossover_weighted_clustering(
     cap_pair_min_dist: int = 2,
     cap_pair_max_dist: int = 3,
     single_inductor_value: bool = False,
+    inductor_cap_min: float = 200e-15,
+    inductor_cap_max: float = 1000e-15,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by weighted-clustering crossover of two parent designs.
@@ -348,7 +368,7 @@ def crossover_weighted_clustering(
         return None, xover_params
 
     # --- Inherit continuous/discrete values from parents ---
-    switch_states, cap_values, inductor_values, inductor_switch_states = (
+    switch_states, cap_values, inductor_values, inductor_switch_states, inductor_cap_values = (
         _inherit_values_clustered(
             child_matrix,
             pixel_source,
@@ -365,6 +385,8 @@ def crossover_weighted_clustering(
             rng,
             ind_sw_states_p1=parent1.inductor_switch_states,
             ind_sw_states_p2=parent2.inductor_switch_states,
+            inductor_cap_min=inductor_cap_min,
+            inductor_cap_max=inductor_cap_max,
         )
     )
 
@@ -394,4 +416,5 @@ def crossover_weighted_clustering(
         inductor_switch_states = inductor_switch_states,
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
+        inductor_cap_values    = inductor_cap_values,
     ), xover_params
