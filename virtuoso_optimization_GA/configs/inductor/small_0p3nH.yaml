@@ -1,0 +1,20 @@
+# ===========================================================================
+# GA Experiment — Inductor optimization, small grid (~10×10)
+# Target: L = 0.3 nH flat across 1–30 GHz, maximize Q
+# Engine: config_ps31_gs25.yaml (pixel_size=31 um, grid_size=25 um)
+# ===========================================================================
+_base_: ../base/inductor_scratch.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_inductor_0p3nH_low_q"
+
+grid:
+  rows: 8
+  cols: 10
+
+inductor_objective:
+  target_l_nh:   0.3
+  freq_start_hz: 1.0e9
+  freq_stop_hz:  50.0e9
+
+seed: 42

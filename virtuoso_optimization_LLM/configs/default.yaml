@@ -1,0 +1,112 @@
+# Default config for the generative LM project.
+# `grid:` is also consumed by world_model_test/encode.py:build_encode_config.
+
+grid:
+  rows: 21                    # pixel-grid height H
+  cols: 27                    # pixel-grid width W
+  n_states: 3                 # K — filter states per design (configurable)
+  cap_min: 100.0e-15          # switch series-cap range, Farads (value-bin min)
+  cap_max: 1000.0e-15         # switch series-cap range, Farads (value-bin max)
+  n_inductor_values: 1        # # of selectable inductor models (INDVAL tokens)
+  inductor_cap_min: 200.0e-15 # inductor MIM-cap range, Farads (min)
+  inductor_cap_max: 1000.0e-15 # inductor MIM-cap range, Farads (max)
+  cap_pair_min: 50.0e-15      # cap-pair shunt-cap range, Farads (min)
+  cap_pair_max: 1000.0e-15    # cap-pair shunt-cap range, Farads (max)
+  cap_pair_min_dist: 2        # min head→dest Chebyshev length of a cap pair
+  cap_pair_max_dist: 3        # max head→dest Chebyshev length of a cap pair
+  max_cap_pairs: 8            # max cap pairs per design (generation budget)
+
+tokenizer:
+  n_bins: 64                  # value-discretization bins (VAL_0..VAL_{n-1})
+
+constraints:
+  cap_pair_interior_all_ground: true   # user's rule (stricter than feasibility)
+
+scoring:                               # GA PV-contrast scoring (cost.py reuse)
+  filter_specs_config: /disk/mcao53/RFIC_RL/virtuoso_optimization_GA/configs/base/finetune_3_states.yaml
+  aggregation_mode: soft_max           # sum | soft_max (worst-state dominated)
+  aggregation_temperature: 2.0         # soft_max temperature
+
+spec:                                  # LM conditioning = per-state PV scores
+  score_scalars: [pv_pb_level, pv_contrast, pv_pb_std]
+  normalization:                       # (x - center)/scale ~ O(1) for the MLP
+    pv_pb_level: {center: -10.0, scale: 10.0}
+    pv_contrast: {center:  15.0, scale: 20.0}
+    pv_pb_std:   {center:   4.0, scale:  4.0}
+  target_margins:                      # added on "stretch" targets
+    pv_pb_level: {add: 0.5}            # push passband level up
+    pv_contrast: {add: 3.0}            # push contrast up
+    pv_pb_std:   {mult: 0.8}           # shrink ripple
+  bounds:                              # physical clamps on targets
+    pv_pb_level: {max: 0.0}            # passive filter: passband S21 <= 0 dB
+    pv_pb_std:   {min: 0.0}            # std cannot be negative
+  cold_start_target: [-3.0, 25.0, 2.0] # per-scalar seed (tiled per state) until sims exist
+  stretch_frac: 0.5                    # fraction of targets that get the margin
+
+model:
+  model_dim: 384              # transformer hidden width
+  n_layers: 8                 # transformer blocks
+  n_heads: 6                  # attention heads (model_dim must divide by this)
+  ffn_mult: 4                 # FFN inner = ffn_mult * model_dim
+  dropout: 0.0                # residual/attention dropout
+  max_seq_len: 1024           # max token positions (caps generated length)
+  spec_dropout: 0.15          # CFG: prob of dropping the spec during training
+
+freq:
+  min: 0.0                    # S21 grid start, Hz
+  max: 70.0e9                 # S21 grid end, Hz
+  n: 71                       # S21 frequency bins (must match the surrogate)
+
+surrogate:
+  # 3-channel encoder, 5 members, n_freq=71, val MAE ~1.07 dB (21x27 combined dataset).
+  # NOTE: /disk/mcao53/Sim_engine_results/wm_trained/ensemble_model.pt is the OLD
+  # 2-channel model and is INCOMPATIBLE with the current 3-channel encode.py.
+  checkpoint_path: /disk/mcao53/Sim_engine_results/wm_train_combined_dataset/ensemble_model.pt
+  ensemble_size: 5            # # ensemble members (untrained fallback if no ckpt)
+  device: cpu                 # cpu | cuda
+
+data:
+  # Same raw sims used to train the world model. Each design has 10 states;
+  # build_from_sims randomly selects grid.n_states (=3) distinct states per
+  # design (switch/inductor states + matching .s2p files sliced together).
+  sims_dirs:
+    - /disk/mcao53/Sim_engine_results/world_model_data_21x27_ps31_gs25_via/sims
+    - /disk/mcao53/Sim_engine_results/world_model_data_21x27_ps31_gs25/sims
+  state_select_seed: 0        # RNG seed for the 10 -> 3 state subsampling
+  limit: null                 # optional cap on # examples (null = all)
+  use_synthetic: false        # ignored when sims_dirs is non-empty
+  synthetic_n: 256            # only used if sims_dirs is empty
+  # Cache the parsed dataset on disk; subsequent runs read it directly instead
+  # of re-parsing all per-design YAMLs + .s2p files.  Cache is invalidated when
+  # sims_dirs / freq_points / limit / n_states / seed change; set
+  # cache_refresh: true to force a rebuild.  Comment out cache_path to disable.
+  cache_path: /disk/mcao53/Sim_engine_results/lm_dataset_cache_21x27.pkl
+  cache_refresh: false
+
+sft:
+  steps: 2000                 # Phase-1 SFT optimizer steps
+  batch_size: 16              # examples per SFT step
+  lr: 3.0e-4                  # AdamW learning rate (Phase 1 and Phase 2 SFT)
+  type_weights: {pixel: 1.0, value: 3.0, state: 3.0}  # per-token-type loss weights
+
+iterated:                     # Phase-2 surrogate-guided loop (train_iterated.py)
+  POOL_MULTIPLIER: 50         # candidates generated per target spec
+  STEPS_PER_ITER: 500         # soft-label SFT mini-steps per iteration
+  N_ITERATIONS: 30            # outer iterations
+  K_RECAL: 3                  # resimulate every K_RECAL iterations
+  M_RECAL: 64                 # # designs resimulated per recalibration
+  label_mode: soft_weighted   # soft_weighted | rejection_topk | rejection_topp
+  soft_label_temperature: 0.1 # softmax temp for soft_weighted label weights
+  cfg_scale: 4.0              # classifier-free guidance strength at generation
+  explore_frac: 0.2           # frac of recal budget spent on high-uncertainty designs
+  n_targets: 8                # diverse target specs sampled per iteration
+  temperature: 1.0            # sampling temperature during pool generation
+  use_surrogate_sim: true     # dev: surrogate+noise stand-in for the real EM sim
+
+logging:
+  backend: tensorboard               # none | tensorboard | wandb
+  dir: ./runs                 # log/output directory
+  project: rfic_lm            # W&B project name (when backend: wandb)
+
+viz:
+  enabled: true               # write best-design plots under <logging.dir>/plots

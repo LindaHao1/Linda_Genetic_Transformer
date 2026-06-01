@@ -12,10 +12,11 @@ The surrogate (world) model is a CNN that learns to map a filter design + switch
 
 | File | Purpose |
 |------|---------|
-| `encode.py` | Converts a design record into a 2-channel image tensor |
-| `wm_dataset.py` | PyTorch Dataset — reads the JSONL index and loads S2P files |
+| `encode.py` | Converts a design record into a 3-channel image tensor |
+| `wm_dataset.py` | PyTorch Dataset — loads from processed bulk tensors |
 | `model.py` | CNN surrogate model definition |
 | `train.py` | Training + evaluation script |
+| `process_dataset.py` | Scans a sims directory and builds the processed tensor dataset |
 | `wm_data_collection.yaml` | Config used to generate the dataset |
 | `data_generation.py` | Script that produced the dataset (already run) |
 
@@ -23,7 +24,7 @@ The surrogate (world) model is a CNN that learns to map a filter design + switch
 
 ## Design Encoding
 
-Each (design, state) pair is encoded as a **2-channel image of shape `(2, rows, cols)`**:
+Each (design, state) pair is encoded as a **3-channel image of shape `(3, rows, cols)`**:
 
 **Channel 0 — pixel type map** (static, same for all states of a design):
 
@@ -33,10 +34,21 @@ Each (design, state) pair is encoded as a **2-channel image of shape `(2, rows, 
 | Metal (1) | 0.20 | Routing metal |
 | Inductor (2) | 0.30 – 0.50 | Inductor pixel; value encodes which inductor model |
 | Switch (3) | 0.60 – 0.90 | Switch pixel; value encodes series cap value (100–1000 fF) |
+| Via (4) | 0.95 | Via pixel connecting metal layers |
 
 **Channel 1 — state ON/OFF map** (changes per state):
 
 Each pixel is `1.0` if it is a switch or inductor that is **ON** in this specific state, `0.0` otherwise. This preserves spatial structure — the CNN sees both *where* a component is (ch0) and *whether it is active* (ch1) at the same spatial location.
+
+**Channel 2 — secondary continuous values** (static, same for all states of a design):
+
+| Pixel type | Value | Meaning |
+|------------|-------|---------|
+| Inductor pixel | [0, 1] | Normalized inductor MIM cap value (200–1000 fF range) |
+| Cap-pair endpoint | [0, 1] | Normalized shunt cap-pair value (50–1000 fF range) |
+| All others | 0.0 | No secondary value |
+
+This channel encodes component-level continuous parameters that are not captured by the coarse type encoding in channel 0.
 
 ---
 
@@ -45,8 +57,8 @@ Each pixel is `1.0` if it is a switch or inductor that is **ON** in this specifi
 ### Single member (deterministic)
 
 ```
-Input: (B, 2, H, W)
-  ↓ Stem: Conv2d(2→64) + GroupNorm + GELU
+Input: (B, 3, H, W)
+  ↓ Stem: Conv2d(3→64) + GroupNorm + GELU
   ↓ ResBlock(64→128, stride=2)
   ↓ ResBlock(128→256, stride=2)
   ↓ ResBlock(256→256, stride=1)
@@ -121,10 +133,37 @@ Each checkpoint stores the model weights alongside the `EncodeConfig` and freque
 Use the `rfic2` conda environment:
 
 ```bash
-/disk/mcao53/conda_env/rfic2/bin/python world_model_test/train.py [options]
+/disk/mcao53/conda_env/rfic2/bin/python world_model_test/<script>.py [options]
 ```
 
-### Quick smoke test (1 epoch, ~2 min)
+### Step 1 — Build the processed dataset
+
+Convert the raw sims directory into bulk tensors for fast training:
+
+```bash
+/disk/mcao53/conda_env/rfic2/bin/python world_model_test/process_dataset.py \
+    --sims-dir /disk/mcao53/Sim_engine_results/world_model_data_21x27_ps31_gs25_via/sims \
+               /disk/mcao53/Sim_engine_results/world_model_data_another_batch/sims \
+    --output   /disk/mcao53/Sim_engine_results/wm_processed \
+    --config   world_model_test/wm_data_collection.yaml
+```
+
+`process_dataset.py` scans `design_*/worker_*/*/config.yaml` files and the corresponding `emx_results/*.s2p` files. Designs with missing or incomplete simulation results are skipped automatically.
+
+#### `process_dataset.py` options
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--sims-dir` | *(required)* | One or more root sims directories (space-separated), each containing `design_*` subfolders |
+| `--output` | *(required)* | Output directory for `images.pt`, `s21.pt`, `meta.json` |
+| `--config` | `wm_data_collection.yaml` | YAML config for encoding parameters |
+| `--n-freq` | 71 | Number of frequency points |
+| `--freq-min` | 0 | Frequency range start (Hz) |
+| `--freq-max` | 70e9 | Frequency range end (Hz) |
+
+### Step 2 — Train the ensemble
+
+#### Quick smoke test (1 epoch, ~2 min)
 
 ```bash
 /disk/mcao53/conda_env/rfic2/bin/python world_model_test/train.py \
@@ -132,7 +171,7 @@ Use the `rfic2` conda environment:
     --output-dir /tmp/wm_smoke
 ```
 
-### Full training run (50 epochs, recommended)
+#### Full training run (50 epochs, recommended)
 
 ```bash
 /disk/mcao53/conda_env/rfic2/bin/python world_model_test/train.py \
@@ -143,15 +182,15 @@ Use the `rfic2` conda environment:
 The dataset path and grid config are auto-detected from `wm_data_collection.yaml`. Override with:
 
 ```bash
---jsonl /path/to/dataset.jsonl   # explicit JSONL path
---config /path/to/config.yaml    # use a different config
+--processed-dir /path/to/processed   # explicit processed dataset dir
+--config /path/to/config.yaml        # use a different config
 ```
 
-### All options
+#### `train.py` options
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--jsonl` | auto from config | Path to `dataset.jsonl` |
+| `--processed-dir` | auto from config | Path to processed dataset directory |
 | `--config` | `wm_data_collection.yaml` | YAML config (supports `_base_` inheritance) |
 | `--epochs` | 50 | Number of training epochs per member |
 | `--batch-size` | 64 | Batch size |
@@ -163,7 +202,6 @@ The dataset path and grid config are auto-detected from `wm_data_collection.yaml
 | `--freq-max` | 70e9 | Maximum frequency in Hz |
 | `--output-dir` | `/tmp/wm_run` | Where to save checkpoints and plots |
 | `--device` | auto | `cuda` or `cpu` |
-| `--cache-dir` | none | Cache encoded tensors to disk for faster re-runs |
 | `--num-workers` | 4 | DataLoader worker processes |
 | `--seed` | 42 | Base seed; member i uses `seed + i` |
 
@@ -227,7 +265,7 @@ for state in ckpt['member_states']:
 ensemble = EnsembleModel(members)
 ensemble.eval()
 
-# image: (1, 2, rows, cols) float32 tensor built with encode.encode_sample()
+# image: (1, 3, rows, cols) float32 tensor built with encode.encode_sample()
 mean, epistemic_var = ensemble.predict(image)   # (1, n_freq) each
 mean, conf_score    = ensemble.confidence(image) # conf_score in [0, 1]
 ```
@@ -235,3 +273,28 @@ mean, conf_score    = ensemble.confidence(image) # conf_score in [0, 1]
 `conf_score` is computed as `exp(-mean(epistemic_std) / std_scale)`:
 - Near **1.0** → all members agree → design is well-covered by training data → prediction is reliable.
 - Near **0.0** → members strongly disagree → design is likely OOD → run a real simulation instead.
+
+---
+
+## Sims Directory Structure
+
+The raw simulation output expected by `process_dataset.py`:
+
+```
+sims/
+  design_000000/
+    worker_0/
+      pixsimple_r21c27_ps31p0_gs25p0_frl15frr4_w0/
+        config.yaml                          ← design parameters and switch states
+        emx_results/
+          pixsimple_..._w0_state0.s2p
+          pixsimple_..._w0_state1.s2p
+          ...
+        generated_layout.il
+        generated_sim.il
+        plots/
+  design_000001/
+    ...
+```
+
+`config.yaml` is the authoritative source for all design parameters (`pixelated.pixel_state_matrix`, `pixelated.state_list`, `pixelated.cap_values`, etc.). The JSONL index is no longer required.

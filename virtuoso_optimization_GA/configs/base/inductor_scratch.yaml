@@ -1,0 +1,141 @@
+# ===========================================================================
+# GA Base Config — Inductor Optimization (0/1 pixels only, single state)
+#
+# This file is a SHARED BASE — do not run it directly.
+# Create an experiment config that sets:
+#   _base_: ../base/inductor_scratch.yaml
+#   virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_<variant>.yaml"
+#   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   grid:
+#     rows: <R>   # REQUIRED
+#     cols: <C>   # REQUIRED
+#   inductor_objective:
+#     target_l_nh:   <value>   # target inductance in nH
+#     freq_start_hz: <value>   # lower bound of evaluation band (Hz)
+#     freq_stop_hz:  <value>   # upper bound of evaluation band (Hz)
+#   seed: 42
+#
+# Objective:
+#   Minimize |L(f) - target_l_nh|^2 (worst-k aggregated) + (-mean(Q) / q_ref)
+#   so that the pixel layout achieves a target inductance with high Q across
+#   the specified frequency band.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE  (0/1 pixels only — no switches, inductors, or vias)
+# ---------------------------------------------------------------------------
+grid:
+  # rows and cols MUST be set in the experiment config
+  n_states: 1
+
+  min_switches: 0
+  max_switches: 0
+  max_inductors: 0
+  n_max_vias: 0
+
+  init_min_switches: 0
+  init_max_switches: 0
+  init_min_inductors: 0
+  init_max_inductors: 0
+  init_min_vias: 0
+  init_max_vias: 0
+
+  cap_min: 0.0
+  cap_max: 0.0
+  n_inductor_values: 1
+  single_inductor_value: true
+
+  enable_cap_pairs: false
+  max_cap_pairs: 0
+
+# ---------------------------------------------------------------------------
+# INDUCTOR OBJECTIVE  (replaces filter_specs when enabled: true)
+# ---------------------------------------------------------------------------
+inductor_objective:
+  enabled: true
+
+  # Frequency band for L and Q evaluation — override in experiment config
+  freq_start_hz: 1.0e9
+  freq_stop_hz:  10.0e9
+
+  # Target inductance in nH — override in experiment config
+  target_l_nh: 0.3
+
+  # Cost weights
+  l_weight: 1.0    # weight for |L(f) - target_l_nh|^2 penalty
+  q_weight: 0.2    # weight for Q maximization term
+  q_ref:    10.0   # Q normalization reference (cost unit: 1/q_ref per unit Q)
+
+  # Worst-k aggregation for L penalty (same concept as filter cost)
+  worst_k: 10
+
+  # System impedance
+  z0: 50.0
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS
+# ---------------------------------------------------------------------------
+ga:
+  pop_size_start:    60
+  pop_size_end:      20
+  pop_size_step_size: 20
+  pop_schedule_gens_per_step: 10
+  elite_fraction:   0.20
+  n_keep_bad: 1
+  n_gen:    200
+  n_immigrants: 2
+
+  p_crossover: 0.7
+  p_mutation:  0.8
+  crossover_method: "zig_zag"
+  hybrid_method_weights: [1.0, 1.0, 1.0]
+  n_centroids: 5
+  block_min_size: 5
+  block_max_size: 15
+
+  selection:       "tournament"
+  tournament_size: 5
+
+  n_parallel: 5
+
+  n_regular_flip: 15
+  cap_sigma: 0.0
+  via_flip_max_count: 0
+
+  # Only flip_01 is active — all special-pixel actions zeroed out
+  action_weights:
+    flip_01:             8.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  use_state_champions:      false
+  dynamic_state_assignment: false
+  p_champion_parent:        0.0
+  p_champion_parent2:       0.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  feasibility_cost_threshold: 1.0e6
+  population_plot_top_k: 5

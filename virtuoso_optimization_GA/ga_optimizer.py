@@ -47,6 +47,9 @@ from virtuoso_optimization_SA.cost import (
     compute_cost_breakdown,
     specs_from_config, FilterStateSpec,
 )
+from virtuoso_optimization_SA.inductor_cost import (
+    compute_inductor_cost, inductor_spec_from_config,
+)
 from virtuoso_optimization_SA.design import DesignState
 from virtuoso_optimization_SA.feasibility import generate_random_design, is_feasible
 
@@ -1834,10 +1837,63 @@ class SwitchableFilterGA:
 
 
 # ---------------------------------------------------------------------------
+# Inductor optimization subclass
+# ---------------------------------------------------------------------------
+
+class InductorGA(SwitchableFilterGA):
+    """GA for 0/1-only inductor designs.
+
+    Replaces the S21 filter cost with an L-matching + Q-maximisation objective.
+    Pixel constraint (only 0/1 pixels) is enforced via the config:
+      grid.max_switches=0, grid.max_inductors=0, grid.n_max_vias=0
+      action_weights: only flip_01 is non-zero.
+
+    All other GA machinery (population init, crossover, mutation, elitism,
+    parallel simulation, logging) is inherited from SwitchableFilterGA unchanged.
+    """
+
+    def __init__(self, config_path: str | Path) -> None:
+        self.config_path = Path(config_path)
+        raw = load_config(self.config_path)
+
+        self.cfg = GAConfig.from_dict(raw)
+        self.specs = []  # unused; avoids KeyError on absent filter_specs key
+        self.inductor_spec = inductor_spec_from_config(raw)
+        self.rng = random.Random(self.cfg.seed)
+
+        self.output_dir = Path(self.cfg.output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        (self.output_dir / "population").mkdir(exist_ok=True)
+        (self.output_dir / "state_best").mkdir(exist_ok=True)
+        shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
+        shutil.copy2(self.cfg.virtuoso_config, self.output_dir / "virtuoso_config_snapshot.yaml")
+
+        self._progress: List[dict] = []
+
+    def _cost_from_result(
+        self, result: "RunResult"
+    ) -> Tuple[float, Optional[List[int]]]:
+        if not result.success or not result.s_param_files:
+            return 1e9, None
+        cost = compute_inductor_cost(result.s_param_files[0], self.inductor_spec)
+        return cost, None
+
+    def _per_state_costs_from_result(
+        self,
+        result: "RunResult",
+        assignment: Optional[List[int]],
+    ) -> List[float]:
+        cost, _ = self._cost_from_result(result)
+        return [cost]
+
+
+# ---------------------------------------------------------------------------
 # Convenience function
 # ---------------------------------------------------------------------------
 
 def run_ga(config_path: str | Path) -> Tuple[DesignState, float]:
     """Run the full GA optimisation from a config file path."""
-    optimizer = SwitchableFilterGA(config_path)
-    return optimizer.run()
+    raw = load_config(Path(config_path))
+    if raw.get("inductor_objective", {}).get("enabled", False):
+        return InductorGA(config_path).run()
+    return SwitchableFilterGA(config_path).run()

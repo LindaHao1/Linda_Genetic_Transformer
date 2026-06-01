@@ -1,37 +1,45 @@
 #!/usr/bin/env python3
 """
-process_dataset.py — Convert one or more raw world model datasets into a single
-processed dataset ready for training.
+process_dataset.py — Convert a sims directory into a processed dataset ready for training.
 
-A raw dataset is a directory produced by data_generation.py, containing:
-  dataset.jsonl   (one design record per line, with paths to per-state .s2p files)
-  sims/           (the simulation output tree with .s2p files)
+The sims directory is produced by data_generation.py. It has the structure:
+
+    sims/
+      design_000000/
+        worker_0/
+          <sim_name>/
+            config.yaml          ← design parameters and switch states
+            emx_results/
+              <sim_name>_state0.s2p
+              <sim_name>_state1.s2p
+              ...
 
 This script:
-  1. Reads successful JSONL records from all input directories.
-  2. Encodes every (design, state) pair into a 3-channel image tensor.
-  3. Loads S21 from the corresponding .s2p file and interpolates onto a uniform
+  1. Scans all design folders for config.yaml files.
+  2. Skips designs with missing or incomplete emx_results.
+  3. Encodes every (design, state) pair into a 3-channel image tensor.
+  4. Loads S21 from the corresponding .s2p file and interpolates onto a uniform
      frequency grid.
-  4. Saves the full dataset as two bulk tensors + a metadata JSON file:
+  5. Saves the full dataset as two bulk tensors + a metadata JSON file:
        images.pt  — float32  (N, 3, H, W)
        s21.pt     — float32  (N, n_freq)
-       meta.json  — source dirs, encoding params, frequency grid, sample count
+       meta.json  — source dir, encoding params, frequency grid, sample count
 
 The output directory can be passed directly to ProcessedWMDataset and to train.py.
 
 Usage
 -----
     python world_model_test/process_dataset.py \\
-        --input-dirs /path/to/raw1 /path/to/raw2 \\
-        --output     /path/to/processed \\
-        --config     world_model_test/wm_data_collection.yaml \\
+        --sims-dir /path/to/sims1 /path/to/sims2 \\
+        --output   /path/to/processed \\
+        --config   world_model_test/wm_data_collection.yaml \\
         --n-freq 71 --freq-min 0 --freq-max 70e9
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -77,11 +85,11 @@ def _load_yaml_with_base(path: str | Path) -> dict:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Convert raw WM datasets (JSONL + s2p) to a processed bulk tensor dataset."
+        description="Convert a sims directory (config.yaml + s2p) to a processed bulk tensor dataset."
     )
     p.add_argument(
-        "--input-dirs", nargs="+", required=True, metavar="DIR",
-        help="Raw dataset directories (each must contain dataset.jsonl).",
+        "--sims-dir", nargs="+", required=True, metavar="DIR",
+        help="One or more root sims directories, each containing design_* subfolders.",
     )
     p.add_argument(
         "--output", required=True, metavar="DIR",
@@ -99,27 +107,71 @@ def _parse_args() -> argparse.Namespace:
 
 
 # ---------------------------------------------------------------------------
-# Record loading
+# Record loading from sims directory
 # ---------------------------------------------------------------------------
 
-def _load_records(input_dirs: list[str]) -> list[dict]:
-    """Read successful JSONL records from every input directory."""
+def _state_index(path: Path) -> int:
+    """Extract numeric state index from a filename like *_state3.s2p."""
+    m = re.search(r'_state(\d+)\.s2p$', path.name)
+    return int(m.group(1)) if m else -1
+
+
+def _load_records(sims_dir: str) -> list[dict]:
+    """
+    Scan all design folders under sims_dir for config.yaml files and build
+    dataset records.  Designs with missing or incomplete emx_results are skipped.
+    """
+    sims_path = Path(sims_dir)
     records: list[dict] = []
-    for raw_dir in input_dirs:
-        jsonl = Path(raw_dir) / "dataset.jsonl"
-        if not jsonl.exists():
-            print(f"  Warning: {jsonl} not found — skipping.")
-            continue
-        n_before = len(records)
-        with open(jsonl) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                rec = json.loads(line)
-                if rec.get("success", False):
-                    records.append(rec)
-        print(f"  {jsonl}: {len(records) - n_before} successful records")
+    n_skipped = 0
+
+    design_dirs = sorted(sims_path.glob("design_*"))
+    if not design_dirs:
+        print(f"  Warning: no design_* folders found under {sims_path}")
+        return records
+
+    for design_dir in design_dirs:
+        config_files = sorted(design_dir.glob("worker_*/*/config.yaml"))
+        for config_file in config_files:
+            sim_dir = config_file.parent
+
+            try:
+                with open(config_file) as f:
+                    cfg = yaml.safe_load(f)
+            except Exception as exc:
+                print(f"  Warning: could not read {config_file}: {exc}")
+                n_skipped += 1
+                continue
+
+            pix = cfg.get("pixelated", {})
+            if "pixel_state_matrix" not in pix or "state_list" not in pix:
+                n_skipped += 1
+                continue
+
+            emx_results = sim_dir / "emx_results"
+            if not emx_results.exists():
+                n_skipped += 1
+                continue
+
+            s2p_files = sorted(emx_results.glob("*_state*.s2p"), key=_state_index)
+            n_states = len(pix["state_list"])
+            if len(s2p_files) < n_states:
+                n_skipped += 1
+                continue
+
+            records.append({
+                "matrix":                pix["pixel_state_matrix"],
+                "cap_values":            pix.get("cap_values", []),
+                "inductor_values":       pix.get("inductor_values", []),
+                "switch_states":         pix["state_list"],
+                "inductor_switch_states":pix.get("inductor_switch_states", []),
+                "inductor_cap_values":   pix.get("inductor_cap_values", []),
+                "cap_pixel_pairs":       pix.get("cap_pixel_pairs", []),
+                "cap_pair_values":       pix.get("cap_pair_values", []),
+                "s_param_files":         [str(f) for f in s2p_files[:n_states]],
+            })
+
+    print(f"  Designs loaded: {len(records)},  skipped: {n_skipped}")
     return records
 
 
@@ -137,7 +189,7 @@ def main() -> None:
     print("=" * 60)
     print("World Model Dataset Processor")
     print("=" * 60)
-    print(f"Input dirs  : {args.input_dirs}")
+    print(f"Sims dirs   : {args.sims_dir}")
     print(f"Output dir  : {args.output}")
     print(f"Config      : {args.config}")
     print(f"Grid        : {encode_cfg.rows}×{encode_cfg.cols}")
@@ -145,26 +197,26 @@ def main() -> None:
           f"{args.freq_min/1e9:.0f}–{args.freq_max/1e9:.0f} GHz")
     print()
 
-    # --- Load records from all input directories ---
-    print("Loading records...")
-    records = _load_records(args.input_dirs)
+    print("Loading records from sims directories...")
+    records: list[dict] = []
+    for sims_dir in args.sims_dir:
+        print(f"  Scanning {sims_dir}")
+        records.extend(_load_records(sims_dir))
     if not records:
-        print("Error: no successful records found in any input directory.")
+        print("Error: no valid records found in sims directory.")
         sys.exit(1)
-    print(f"Total records: {len(records)}\n")
+    print(f"Total designs: {len(records)}\n")
 
-    # --- Build flat (record_idx, state_idx) index ---
+    # Build flat (record_idx, state_idx) index
     index: list[tuple[int, int]] = []
     for rec_idx, rec in enumerate(records):
         n_states = len(rec["switch_states"])
-        n_files  = len(rec.get("s_param_files", []))
+        n_files  = len(rec["s_param_files"])
         for s in range(min(n_states, n_files)):
             index.append((rec_idx, s))
     N = len(index)
-    H, W = encode_cfg.rows, encode_cfg.cols
     print(f"Total (design, state) samples: {N}")
 
-    # --- Encode ---
     print("Encoding samples (image + S21)...")
     t0 = time.time()
 
@@ -201,7 +253,6 @@ def main() -> None:
     images = torch.stack(images_list)  # (N, 3, H, W)
     s21    = torch.stack(s21_list)     # (N, n_freq)
 
-    # --- Save ---
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -209,6 +260,8 @@ def main() -> None:
     torch.save(images, out / "images.pt")
     torch.save(s21,    out / "s21.pt")
 
+    import json
+    from datetime import datetime as _dt
     meta = {
         "n_samples":         n_saved,
         "n_errors":          n_errors,
@@ -227,9 +280,9 @@ def main() -> None:
         "inductor_cap_max":  encode_cfg.inductor_cap_max,
         "cap_pair_min":      encode_cfg.cap_pair_min,
         "cap_pair_max":      encode_cfg.cap_pair_max,
-        "source_dirs":       [str(d) for d in args.input_dirs],
+        "sims_dirs":         [str(d) for d in args.sims_dir],
         "n_source_records":  len(records),
-        "created_at":        datetime.now().isoformat(),
+        "created_at":        _dt.now().isoformat(),
     }
     with open(out / "meta.json", "w") as f:
         json.dump(meta, f, indent=2)
