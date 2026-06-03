@@ -113,24 +113,48 @@ def plot_best_simulated(design: Design, s21_K_sim: np.ndarray, specs,
                  p, achieved, target)
 
 
-def _draw_s21_overlay(ax, s21_pred: np.ndarray,
-                      s21_sim: Optional[np.ndarray],
-                      freqs: np.ndarray, specs) -> None:
-    fg = np.asarray(freqs) / 1e9
+_S21_COLORS = ["C0", "C1", "C2", "C3", "C4", "C5"]
+
+
+def _shade_spec(ax, specs) -> None:
     spec_by_idx = {s.state_index: s for s in specs}
-    colors = ["C0", "C1", "C2", "C3", "C4", "C5"]
-    for k in range(s21_pred.shape[0]):
-        c = colors[k % len(colors)]
-        ax.plot(fg, s21_pred[k], color=c, linestyle="-",
-                label=f"state {k} pred")
-        if s21_sim is not None and k < s21_sim.shape[0]:
-            ax.plot(fg, s21_sim[k], color=c, linestyle="--",
-                    label=f"state {k} sim")
     sp = spec_by_idx.get(0, specs[0])
     ax.axvspan(sp.passband[0] / 1e9, sp.passband[1] / 1e9,
                color="green", alpha=0.10)
     for lo, hi in list(sp.stopband_regions) + list(sp.cross_stopband_regions):
         ax.axvspan(lo / 1e9, hi / 1e9, color="red", alpha=0.06)
+
+
+def _draw_s21_panel(ax, s21_K: np.ndarray, freqs: np.ndarray, specs,
+                    title: str, linestyle: str = "-",
+                    label_suffix: str = "") -> None:
+    """Per-state S21 lines on one axes, with passband/stopband shading."""
+    fg = np.asarray(freqs) / 1e9
+    for k in range(s21_K.shape[0]):
+        c = _S21_COLORS[k % len(_S21_COLORS)]
+        ax.plot(fg, s21_K[k], color=c, linestyle=linestyle,
+                label=f"state {k}{label_suffix}")
+    _shade_spec(ax, specs)
+    ax.set_xlabel("Frequency (GHz)")
+    ax.set_ylabel("S21 (dB)")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+    ax.legend(fontsize=8, loc="lower center", ncol=s21_K.shape[0])
+
+
+def _draw_s21_overlay(ax, s21_pred: np.ndarray,
+                      s21_sim: Optional[np.ndarray],
+                      freqs: np.ndarray, specs) -> None:
+    """Both curves on the same axes — kept for back-compat (e.g. Phase 2 viz)."""
+    fg = np.asarray(freqs) / 1e9
+    for k in range(s21_pred.shape[0]):
+        c = _S21_COLORS[k % len(_S21_COLORS)]
+        ax.plot(fg, s21_pred[k], color=c, linestyle="-",
+                label=f"state {k} pred")
+        if s21_sim is not None and k < s21_sim.shape[0]:
+            ax.plot(fg, s21_sim[k], color=c, linestyle="--",
+                    label=f"state {k} sim")
+    _shade_spec(ax, specs)
     ax.set_xlabel("Frequency (GHz)")
     ax.set_ylabel("S21 (dB)")
     ax.grid(True, alpha=0.3)
@@ -155,17 +179,41 @@ def plot_test_generation(
     save_path: str,
     scalars: Sequence[str] = SCORE_SCALARS,
 ) -> Optional[str]:
-    """End-to-end test-generation plot: grid + predicted vs simulated S21 +
-    per-state requested/predicted/simulated PV-score readouts."""
+    """End-to-end test-generation plot.
+
+    Layout:
+      - 3 panels [grid | world-model S21 | real-sim S21] when simulated
+        S21 is available;
+      - 2 panels [grid | world-model S21] otherwise.
+
+    Footer text gives per-state requested / predicted / simulated PV scores.
+    """
     try:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        fig, (a0, a1) = plt.subplots(1, 2, figsize=(16, 6))
-        _draw_grid(a0, design)
-        _draw_s21_overlay(a1, np.asarray(s21_pred), s21_sim,
-                          np.asarray(freqs), specs)
-        a1.set_title("LM-generated design — S21 (solid: world model, dashed: sim)")
-        lines = []
         K = s21_pred.shape[0]
+        s21_pred = np.asarray(s21_pred)
+        freqs = np.asarray(freqs)
+
+        if s21_sim is not None:
+            fig, (a0, a_wm, a_sim) = plt.subplots(1, 3, figsize=(20, 6))
+            _draw_grid(a0, design)
+            _draw_s21_panel(a_wm, s21_pred, freqs, specs,
+                            "World model — predicted S21", linestyle="-")
+            _draw_s21_panel(a_sim, np.asarray(s21_sim), freqs, specs,
+                            "Real simulator — measured S21", linestyle="-")
+            # match y-limits so the eye can compare amplitudes
+            ymin = min(a_wm.get_ylim()[0], a_sim.get_ylim()[0])
+            ymax = max(a_wm.get_ylim()[1], a_sim.get_ylim()[1])
+            a_wm.set_ylim(ymin, ymax)
+            a_sim.set_ylim(ymin, ymax)
+        else:
+            fig, (a0, a_wm) = plt.subplots(1, 2, figsize=(16, 6))
+            _draw_grid(a0, design)
+            _draw_s21_panel(a_wm, s21_pred, freqs, specs,
+                            "World model — predicted S21", linestyle="-")
+
+        # Per-state requested / predicted / simulated score readout
+        lines = []
         for k in range(K):
             req = _fmt_score_row(scalars, scores_requested[k])
             pred = _fmt_score_row(scalars, scores_pred[k])
@@ -182,5 +230,28 @@ def plot_test_generation(
         return save_path
     except Exception as exc:
         print(f"  [viz] plot_test_generation skipped ({exc})")
+        plt.close("all")
+        return None
+
+
+def plot_wm_prediction(
+    s21_pred: np.ndarray,
+    specs,
+    freqs: np.ndarray,
+    save_path: str,
+    title: str = "World model — predicted S21 (per state)",
+) -> Optional[str]:
+    """Standalone world-model prediction plot (no grid, no simulator)."""
+    try:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        fig, ax = plt.subplots(figsize=(9, 5))
+        _draw_s21_panel(ax, np.asarray(s21_pred), np.asarray(freqs), specs,
+                        title, linestyle="-")
+        fig.tight_layout()
+        fig.savefig(save_path, dpi=120)
+        plt.close(fig)
+        return save_path
+    except Exception as exc:
+        print(f"  [viz] plot_wm_prediction skipped ({exc})")
         plt.close("all")
         return None

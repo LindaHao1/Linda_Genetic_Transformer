@@ -116,6 +116,28 @@ def _state_index(path: Path) -> int:
     return int(m.group(1)) if m else -1
 
 
+def debank_state_list(state_list: list) -> list:
+    """Normalize either design-yaml schema to the canonical flat K x n_sw form.
+
+    The newest engine writes bank-wrapped state_list (K x n_sw x bank); the older
+    dataset-collection schema is already flat (K x n_sw).  Bank size is 1, so we
+    take the single bit per bank.  Passthrough if already flat.
+    """
+    if state_list and state_list[0] and isinstance(state_list[0][0], list):
+        return [[int(bank[0]) for bank in sv] for sv in state_list]
+    return state_list
+
+
+def debank_cap_values(cap_values: list) -> list:
+    """Normalize either schema to flat n_sw cap values.
+
+    Newest engine: n_sw x bank; older schema: flat n_sw.  Passthrough if flat.
+    """
+    if cap_values and isinstance(cap_values[0], list):
+        return [float(b[0]) for b in cap_values]
+    return cap_values
+
+
 def _load_records(sims_dir: str) -> list[dict]:
     """
     Scan all design folders under sims_dir for config.yaml files and build
@@ -161,9 +183,9 @@ def _load_records(sims_dir: str) -> list[dict]:
 
             records.append({
                 "matrix":                pix["pixel_state_matrix"],
-                "cap_values":            pix.get("cap_values", []),
+                "cap_values":            debank_cap_values(pix.get("cap_values", [])),
                 "inductor_values":       pix.get("inductor_values", []),
-                "switch_states":         pix["state_list"],
+                "switch_states":         debank_state_list(pix["state_list"]),
                 "inductor_switch_states":pix.get("inductor_switch_states", []),
                 "inductor_cap_values":   pix.get("inductor_cap_values", []),
                 "cap_pixel_pairs":       pix.get("cap_pixel_pairs", []),

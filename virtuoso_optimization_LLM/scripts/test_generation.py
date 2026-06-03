@@ -1,30 +1,33 @@
 """
 End-to-end LM generation test.
 
-Given user-supplied target PV scores (K*n_scalars dB floats), this script:
+Given user-supplied target PV scores (K*n_scalars raw dB floats), this script:
 
   1. Builds tokenizer/model/surrogate from `--config`.
-  2. Loads the LM checkpoint and generates one design conditioned on the
-     normalized target spec.
-  3. Writes the design to (a) `design.json` (record dict, world-model format)
-     and (b) `design.yaml` (simulation-engine override; `_base_:` inherits
-     from a base virtuoso config).
-  4. Runs the world model on the design (K-state predicted S21).
-  5. Optionally runs the real EM simulator and reads back the per-state S21.
-  6. Saves `test_generation.png` (grid + predicted vs simulated S21 + per-
-     state requested/predicted/simulated PV scores) and `scores.json`.
+  2. Normalizes the raw score vector via the same `ScoreNorm` the LM was
+     trained with (`(x - center) / scale`, per scalar -- see
+     `spec.normalization` in the config), encodes it through the model's
+     `spec_mlp`, and uses that as a causal prefix.
+  3. Generates one design with constrained decoding.
+  4. Writes the design to (a) `design.json` (record dict, world-model format),
+     (b) `design.yaml` (simulation-engine override; `_base_:` inherits from
+     the engine config used to produce the training data), and (c)
+     `prompt.txt` (raw + normalized scores + the full generated token stream,
+     human-readable).
+  5. Runs the world model on the design (K-state predicted S21).
+  6. Optionally runs the real EM simulator and reads back the per-state S21.
+  7. Saves `test_generation.png` (grid + predicted (solid) vs simulated
+     (dashed) S21 + per-state requested/predicted/simulated PV scores) and
+     `scores.json`.
 
-Usage:
+Usage (note: leading-negative `--scores` needs `=` so argparse doesn't read it
+as a flag):
   python scripts/test_generation.py \
       --config configs/default.yaml \
       --checkpoint runs/sft.pt \
-      --scores "-5,20,2,-7,18,3,-6,22,2" \
+      --scores=-5,20,2,-7,18,3,-6,22,2 \
       --output runs/test_generation/run_001 \
       [--no-simulate]
-
-Note: `runs/sft.pt` was trained on the old vocab; load may fail with a vocab
-mismatch.  Re-run `scripts/train_sft.py` to mint a checkpoint compatible with
-the new tokenizer.
 """
 
 from __future__ import annotations
@@ -50,7 +53,7 @@ from src.factory import (build_model, build_score_norm,  # noqa: E402
                          load_config)
 from src.scoring import SCORE_SCALARS, design_score_matrix  # noqa: E402
 from src.training import decode_to_design  # noqa: E402
-from src.visualize import plot_test_generation  # noqa: E402
+from src.visualize import plot_test_generation, plot_wm_prediction  # noqa: E402
 
 _WM_DIR = "/disk/mcao53/RFIC_RL/world_model_test"
 if _WM_DIR not in sys.path:
@@ -106,7 +109,11 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config(args.config)
-    out_dir = Path(args.output)
+    # Resolve to absolute -- the virtuoso engine spawns its subprocess with a
+    # different cwd (virtuoso_dir, from the engine's base config) and will
+    # mis-resolve relative parent_output_dir paths against its own cwd, which
+    # silently breaks Virtuoso startup (the -log path lands in the wrong place).
+    out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve the engine config the LM design YAML should inherit from.
@@ -188,7 +195,49 @@ def main() -> None:
         design, engine_cfg_path, str(yaml_path),
         output_parent_dir=str(sim_output_dir),
     )
-    print(f"[test_gen] wrote {design_json}, {yaml_path}")
+
+    # ---- raw prompt + generated token stream (human-readable) ---------
+    prompt_lines = ["=== INPUT PROMPT ===",
+                    f"score scalars: {list(scalars)}",
+                    f"K (states):    {K}",
+                    "",
+                    "raw scores (dB, per state x scalar):"]
+    for k in range(K):
+        prompt_lines.append("  state {0}: ".format(k) + ", ".join(
+            f"{n}={scores_raw[k, j]:+.3f}" for j, n in enumerate(scalars)))
+    prompt_lines.append("")
+    prompt_lines.append("normalized scores ((x - center)/scale per scalar):")
+    for k in range(K):
+        prompt_lines.append("  state {0}: ".format(k) + ", ".join(
+            f"{n}={spec_norm[k, j]:+.3f}" for j, n in enumerate(scalars)))
+    prompt_lines.append("")
+    prompt_lines.append(
+        "Conditioning: the (K, n_scalars) normalized matrix is encoded by "
+        "the model's spec_mlp into K continuous prefix embeddings (NOT "
+        "tokens), prepended in front of the generated stream below.")
+    prompt_lines.append("")
+    prompt_lines.append("=== GENERATED TOKEN STREAM (idx:NAME) ===")
+    line: list = []
+    for i, tid in enumerate(seqs[0]):
+        nm = tok.id2tok[tid]
+        line.append(f"{i}:{nm}")
+        if nm.startswith("SEP_") or nm in ("BOS", "EOS"):
+            prompt_lines.append("  " + "  ".join(line))
+            line = []
+    if line:
+        prompt_lines.append("  " + "  ".join(line))
+
+    prompt_path = out_dir / "prompt.txt"
+    prompt_path.write_text("\n".join(prompt_lines) + "\n")
+
+    # ---- print a YAML preview to stdout for the user --------------------
+    yaml_text = yaml_path.read_text()
+    print(f"[test_gen] wrote {design_json}, {yaml_path}, {prompt_path}")
+    print(f"[test_gen] design.yaml (first 40 lines of {yaml_path}):")
+    for ln in yaml_text.splitlines()[:40]:
+        print(f"    {ln}")
+    if yaml_text.count("\n") > 40:
+        print(f"    ... ({yaml_text.count(chr(10)) - 40} more lines)")
 
     # ---- world-model prediction ----------------------------------------
     s21_pred, s21_var = surrogate.predict_multistate(design)            # (K, n_freq)
@@ -232,7 +281,7 @@ def main() -> None:
     with (out_dir / "scores.json").open("w") as f:
         json.dump(scores_blob, f, indent=2)
 
-    # ---- plot ----------------------------------------------------------
+    # ---- plots ---------------------------------------------------------
     plot_path = out_dir / "test_generation.png"
     plot_test_generation(
         design=design,
@@ -246,7 +295,16 @@ def main() -> None:
         save_path=str(plot_path),
         scalars=scalars,
     )
-    print(f"[test_gen] wrote {plot_path}")
+    # Standalone world-model prediction plot (no grid, no sim) -- always
+    # written, even when the real simulator path is skipped/failed.
+    wm_only_path = out_dir / "wm_prediction.png"
+    plot_wm_prediction(
+        s21_pred=s21_pred,
+        specs=specs,
+        freqs=fpts,
+        save_path=str(wm_only_path),
+    )
+    print(f"[test_gen] wrote {plot_path}, {wm_only_path}")
 
     # readable summary
     print("\n[test_gen] PV-score summary (per state):")

@@ -18,7 +18,7 @@ from src.scoring import (
     DIRECTION, SCORE_SCALARS, PerStateBest, ScoreNorm, design_score_matrix,
 )
 from src.tokenizer import Tokenizer
-from src.types import Design, TrainingExample
+from src.types import Design, SParams, TrainingExample
 
 # default token-type loss weights (prompt: pixel 1, value 3, state 3)
 DEFAULT_TYPE_WEIGHTS = {
@@ -54,16 +54,66 @@ def spec_score_vector(ex: TrainingExample, specs, freqs: np.ndarray,
     return out
 
 
+def _slice_example_for_k(ex: TrainingExample, K: int,
+                          rng: Optional[np.random.Generator]
+                          ) -> TrainingExample:
+    """If `ex` has more than `K` states (e.g. the world-model dataset retains
+    K_avail=10 states per design), pick `K` distinct state indices and slice
+    switch_states / inductor_switch_states / s21_db together so they stay
+    aligned.  When `rng is None`, take the first `K` states (deterministic;
+    for eval / inspection).
+
+    Designs with `ex.design.n_states <= K` are returned unchanged.
+    """
+    cur_K = ex.design.n_states
+    if cur_K <= K:
+        return ex
+    if rng is None:
+        sel = list(range(K))
+    else:
+        sel = sorted(rng.choice(cur_K, size=K, replace=False).tolist())
+    new_design = Design(
+        pixel_grid=ex.design.pixel_grid,
+        switch_caps=ex.design.switch_caps,
+        inductor_values=ex.design.inductor_values,
+        inductor_cap_values=ex.design.inductor_cap_values,
+        cap_pixel_pairs=ex.design.cap_pixel_pairs,
+        cap_pair_values=ex.design.cap_pair_values,
+        switch_states=[ex.design.switch_states[i] for i in sel],
+        inductor_switch_states=([ex.design.inductor_switch_states[i]
+                                 for i in sel]
+                                if ex.design.inductor_switch_states else []),
+    )
+    new_sparams = SParams(
+        freq_hz=ex.sparams.freq_hz,
+        s21_db=np.asarray(ex.sparams.s21_db)[sel],
+    )
+    return TrainingExample(
+        design=new_design,
+        sparams=new_sparams,
+        source=ex.source,
+        iteration_added=ex.iteration_added,
+    )
+
+
 def collate(examples: Sequence[TrainingExample], tok: Tokenizer,
             specs, freqs: np.ndarray, score_norm: ScoreNorm, K: int,
             device: torch.device,
             scalars: Sequence[str] = SCORE_SCALARS,
-            spec_vectors: Optional[np.ndarray] = None
+            spec_vectors: Optional[np.ndarray] = None,
+            state_rng: Optional[np.random.Generator] = None,
             ) -> Dict[str, torch.Tensor]:
     """`spec_vectors` (B,K,n_sc, already normalized) overrides the hindsight
     spec — used in Phase 2 to condition on the TARGET score vector. When None,
     each example is conditioned on its OWN achieved scores (Phase-1 hindsight).
+
+    `state_rng` (e.g. `np.random.default_rng(seed)`) drives per-example,
+    per-minibatch resampling of which `K` states are surfaced to the model
+    (when the example carries more than `K` states).  Pass `None` for
+    deterministic behaviour (uses the first `K` states).  Recommended for
+    Phase-1 SFT to expose more of the 10-state combinatorics each epoch.
     """
+    examples = [_slice_example_for_k(ex, K, state_rng) for ex in examples]
     seqs = [tok.encode(ex.design.to_record()) for ex in examples]
     Tmax = max(len(s) for s in seqs)
     pad = tok.t("PAD")

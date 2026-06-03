@@ -25,6 +25,7 @@ Cap-pair spatial validity (user's rule):
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Dict, List, Set, Tuple
 
@@ -34,10 +35,46 @@ from src.tokenizer import (
     P_GROUND, P_INDUCTOR, P_METAL, P_SWITCH, P_VIA, Tokenizer,
 )
 
+# Reuse the GA/SA design-rule authority (single source of truth) for special-
+# pixel spacing + global feasibility, so generation matches GA exactly.
+_REPO_ROOT = "/disk/mcao53/RFIC_RL"
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from virtuoso_optimization_SA.feasibility import (  # noqa: E402
+    _can_place_inductor_at, _can_place_switch_at, _can_place_via_at,
+    check_feed_columns, check_inductor_count, check_special_pixel_spacing,
+    check_switch_count_range, check_via_count, check_via_spacing, is_feasible)
+
 
 @dataclass
 class ConstraintConfig:
     cap_pair_interior_all_ground: bool = True
+    # Design-rule counts (mirror GA `grid:` block).  Spacing (footprint
+    # Chebyshev separation) is enforced via the SA helpers, not a param.
+    max_switches: int = 6        # rule e (upper): max type-3 pixels
+    min_switches: int = 2        # rule e (lower): post-decode check only
+    max_inductors: int = 8       # rule d: max type-2 pixels
+    max_vias: int = 5            # max type-4 pixels (0 disables vias)
+    four_connected: bool = False # connectivity mode (4- vs 8-way) when checked
+    # When True, the post-decode filter drops left<->right-disconnected designs.
+    # When False, connectivity is NOT required at the filter -- disconnected
+    # designs stay in the pool so the LM can LEARN that connectivity is needed
+    # from surrogate/simulation feedback (all other rules still enforced).
+    require_connectivity: bool = True
+
+    @classmethod
+    def from_cfg(cls, cfg: dict) -> "ConstraintConfig":
+        c = cfg.get("constraints", {})
+        return cls(
+            cap_pair_interior_all_ground=bool(
+                c.get("cap_pair_interior_all_ground", True)),
+            max_switches=int(c.get("max_switches", 6)),
+            min_switches=int(c.get("min_switches", 2)),
+            max_inductors=int(c.get("max_inductors", 8)),
+            max_vias=int(c.get("max_vias", 5)),
+            four_connected=bool(c.get("four_connected", False)),
+            require_connectivity=bool(c.get("require_connectivity", True)),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +281,27 @@ def _allowed_next(names: List[str], tok: Tokenizer,
         # Interior cell: regular pixel set.
         allowed_free: Set[str] = set(pixel_basic)
 
+        # Special-pixel spacing + counts (rules b/c/d/e/via), enforced against
+        # the partial grid built so far.  Reuses the SA design-rule helpers so
+        # generation never proposes a switch/inductor/via that would violate the
+        # footprint Chebyshev separation or exceed the count budget.
+        matrix = st["matrix"]                              # type: ignore
+        n_sw = sum(v == P_SWITCH for row in matrix for v in row)
+        n_ind = sum(v == P_INDUCTOR for row in matrix for v in row)
+        n_via = sum(v == P_VIA for row in matrix for v in row)
+        if "SWITCH" in allowed_free and (
+                n_sw >= ccfg.max_switches
+                or not _can_place_switch_at(matrix, r, c)):
+            allowed_free.discard("SWITCH")
+        if "INDUCTOR" in allowed_free and (
+                n_ind >= ccfg.max_inductors
+                or not _can_place_inductor_at(matrix, r, c)):
+            allowed_free.discard("INDUCTOR")
+        if "VIA" in allowed_free and (
+                n_via >= ccfg.max_vias
+                or (ccfg.max_vias > 0 and not _can_place_via_at(matrix, r, c))):
+            allowed_free.discard("VIA")
+
         # cap pairs only legal in the interior, and must avoid feed columns
         if n_pairs < cfg.max_cap_pairs:
             consumed_cells = set(st["consumed_cells"])  # type: ignore
@@ -321,3 +379,33 @@ def get_invalid_token_mask(
     for nm in allowed_names:
         mask[tokenizer.tok2id[nm]] = False
     return mask
+
+
+def design_is_feasible(design, config: ConstraintConfig | None = None) -> bool:
+    """GA/SA design-rule check on a decoded design.
+
+    Incremental masking enforces the LOCAL rules (spacing, counts, feed-column
+    PORT, cap-pair placement) during generation; this is the post-decode net
+    for the GLOBAL rule masking cannot guarantee token-by-token -- left↔right
+    connectivity.
+
+    Connectivity is OPTIONAL via ``config.require_connectivity``:
+      True  -> full GA/SA feasibility (rules a-f + vias).
+      False -> every rule EXCEPT connectivity; disconnected designs are kept so
+               the LM can learn connectivity from surrogate/simulation feedback.
+    """
+    ccfg = config or ConstraintConfig()
+    matrix = [list(row) for row in design.pixel_grid]
+    if ccfg.require_connectivity:
+        return is_feasible(
+            matrix, 0, ccfg.max_inductors,
+            min_switches=ccfg.min_switches, max_switches=ccfg.max_switches,
+            four_connected=ccfg.four_connected, max_vias=ccfg.max_vias)
+    via_ok = (ccfg.max_vias == 0) or (
+        check_via_spacing(matrix) and check_via_count(matrix, ccfg.max_vias))
+    return (
+        check_feed_columns(matrix)
+        and check_special_pixel_spacing(matrix)
+        and check_inductor_count(matrix, ccfg.max_inductors)
+        and check_switch_count_range(matrix, ccfg.min_switches, ccfg.max_switches)
+        and via_ok)

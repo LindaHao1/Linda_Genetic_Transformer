@@ -19,8 +19,20 @@ grid:
 tokenizer:
   n_bins: 64                  # value-discretization bins (VAL_0..VAL_{n-1})
 
-constraints:
+constraints:                           # GA/SA design rules, enforced in generation
   cap_pair_interior_all_ground: true   # user's rule (stricter than feasibility)
+  # Special-pixel footprint spacing (switch 3x3, inductor 5x5) is always
+  # enforced via the SA helpers.  Counts mirror the GA `grid:` block and the
+  # seed data (switches 4-6, inductors 4-8, vias 0-3):
+  max_switches: 6                      # rule e upper bound (masked in generation)
+  min_switches: 2                      # rule e lower bound (post-decode filter)
+  max_inductors: 8                     # rule d (masked in generation)
+  max_vias: 5                          # max type-4 vias (0 disables vias)
+  four_connected: false                # connectivity mode (4- vs 8-way) when checked
+  # Connectivity is global -> can't be masked token-by-token, only checked after
+  # decode.  true: drop left<->right-disconnected designs.  false: keep them so
+  # the LM LEARNS connectivity from surrogate/sim feedback (other rules still on).
+  require_connectivity: true
 
 scoring:                               # GA PV-contrast scoring (cost.py reuse)
   filter_specs_config: /disk/mcao53/RFIC_RL/virtuoso_optimization_GA/configs/base/finetune_3_states.yaml
@@ -80,8 +92,13 @@ data:
   # of re-parsing all per-design YAMLs + .s2p files.  Cache is invalidated when
   # sims_dirs / freq_points / limit / n_states / seed change; set
   # cache_refresh: true to force a rebuild.  Comment out cache_path to disable.
-  cache_path: /disk/mcao53/Sim_engine_results/lm_dataset_cache_21x27.pkl
+  # Stored in the project's ./runs/ (relative to where the script is run).
+  cache_path: ./runs/dataset_cache.pkl
   cache_refresh: false
+  # Phase-2 recalibration runs the real parallel Virtuoso engine in the
+  # background; this is the engine config it inherits (same one that produced
+  # the seed sims above -> no parameter drift).
+  engine_config_path: /disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml
 
 sft:
   steps: 2000                 # Phase-1 SFT optimizer steps
@@ -90,18 +107,20 @@ sft:
   type_weights: {pixel: 1.0, value: 3.0, state: 3.0}  # per-token-type loss weights
 
 iterated:                     # Phase-2 surrogate-guided loop (train_iterated.py)
-  POOL_MULTIPLIER: 50         # candidates generated per target spec
-  STEPS_PER_ITER: 500         # soft-label SFT mini-steps per iteration
+  POOL_MULTIPLIER: 2         # candidates generated per target spec
+  STEPS_PER_ITER: 5         # soft-label SFT mini-steps per iteration
   N_ITERATIONS: 30            # outer iterations
-  K_RECAL: 3                  # resimulate every K_RECAL iterations
-  M_RECAL: 64                 # # designs resimulated per recalibration
+  K_RECAL: 3                  # submit a simulation wave every K_RECAL iterations
+  n_parallel: 6               # background engine workers; also the # designs
+                              # submitted per wave (m_recal = live worker count)
   label_mode: soft_weighted   # soft_weighted | rejection_topk | rejection_topp
   soft_label_temperature: 0.1 # softmax temp for soft_weighted label weights
   cfg_scale: 4.0              # classifier-free guidance strength at generation
   explore_frac: 0.2           # frac of recal budget spent on high-uncertainty designs
   n_targets: 8                # diverse target specs sampled per iteration
   temperature: 1.0            # sampling temperature during pool generation
-  use_surrogate_sim: true     # dev: surrogate+noise stand-in for the real EM sim
+  ground_steps_per_recal: 20  # hindsight LM-SFT steps per collected real batch
+  ground_replay: true         # replay cumulative real data during LM grounding
 
 logging:
   backend: tensorboard               # none | tensorboard | wandb

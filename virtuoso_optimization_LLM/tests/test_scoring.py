@@ -3,9 +3,10 @@
 import numpy as np
 
 from src.scoring import (
-    PerStateBest, ScoreNorm, design_cost, design_score, design_score_matrix,
-    load_specs,
+    PerStateBest, ScoreNorm, TrainScoreTracker, design_cost, design_score,
+    design_score_matrix, load_specs,
 )
+from src.types import Design, SParams, TrainingExample
 
 _FINETUNE = ("/disk/mcao53/RFIC_RL/virtuoso_optimization_GA/"
              "configs/base/finetune_3_states.yaml")
@@ -71,6 +72,60 @@ def test_per_state_best_ratchet_independent():
     np.testing.assert_allclose(best[:, 0], [-1.0, -5.0, -2.0])   # level: max
     np.testing.assert_allclose(best[:, 1], [20.0, 25.0, 35.0])   # contrast: max
     np.testing.assert_allclose(best[:, 2], [2.0, 1.0, 0.5])      # std: min
+
+
+def _dummy_example(s21: np.ndarray, freqs: np.ndarray) -> TrainingExample:
+    return TrainingExample(
+        design=Design(pixel_grid=[[0]]),
+        sparams=SParams(freq_hz=freqs, s21_db=s21),
+    )
+
+
+def test_train_score_tracker_tracks_per_state_and_overall():
+    freqs = np.linspace(0, 70e9, 71)
+    specs = _specs()
+    good = _synthetic_s21(freqs, specs)              # high-quality reference
+    bad = np.full_like(good, -40.0)                  # uniform-bad
+
+    trk = TrainScoreTracker(K=3, specs=specs, freqs=freqs)
+    trk.update_from_s21(bad, step=0)
+    trk.update_from_s21(good, step=5)
+    trk.update_from_s21(bad, step=10)
+
+    # best_overall must come from the good example, at step 5
+    assert trk.best_overall_step == 5
+    assert trk.best_overall == design_score(freqs, good, specs)
+    assert trk.n_examples == 3
+
+    # per-state best ratchet: good beats bad on contrast and matches level
+    psb = trk.per_state_best.best_matrix()
+    assert psb.shape == (3, 3)
+    # contrast (col 1) should reflect the 'good' design's high contrast on
+    # every state -- the bad design contributes 0 contrast
+    assert (psb[:, 1] > 30.0).all()
+
+    snap = trk.snapshot()
+    assert snap["n_examples"] == 3
+    assert snap["best_overall_step"] == 5
+    assert snap["per_state_best"] is not None
+
+
+def test_train_score_tracker_format_short_no_examples():
+    freqs = np.linspace(0, 70e9, 71)
+    trk = TrainScoreTracker(K=3, specs=_specs(), freqs=freqs)
+    assert "no examples" in trk.format_short()
+
+
+def test_train_score_tracker_batch_update():
+    freqs = np.linspace(0, 70e9, 71)
+    specs = _specs()
+    good = _synthetic_s21(freqs, specs)
+    bad = np.full_like(good, -40.0)
+    trk = TrainScoreTracker(K=3, specs=specs, freqs=freqs)
+    trk.update_batch_from_examples(
+        [_dummy_example(bad, freqs), _dummy_example(good, freqs)], step=7)
+    assert trk.best_overall_step == 7
+    assert trk.n_examples == 2
 
 
 def test_score_norm_roundtrip():

@@ -83,13 +83,52 @@ class _Block(nn.Module):
         self.h = h
         self.drop = nn.Dropout(p)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def _sa(self, x, past_kv, is_causal):
+        """Self-attention core, optionally concatenating a past K/V cache.
+        Returns (attn_out, present_kv) where present_kv is the (k, v) including
+        this step's tokens -- ready to be reused as the next step's cache."""
         B, T, D = x.shape
         q, k, v = self.qkv(self.ln1(x)).chunk(3, dim=-1)
         q = q.view(B, T, self.h, D // self.h).transpose(1, 2)
         k = k.view(B, T, self.h, D // self.h).transpose(1, 2)
         v = v.view(B, T, self.h, D // self.h).transpose(1, 2)
-        a = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        if past_kv is not None:
+            pk, pv = past_kv
+            k = torch.cat([pk, k], dim=2)
+            v = torch.cat([pv, v], dim=2)
+        present = (k, v)
+        a = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        a = a.transpose(1, 2).reshape(B, T, D)
+        return a, present
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Training / full-sequence path: causal attention, no cache."""
+        a, _ = self._sa(x, None, is_causal=True)
+        x = x + self.drop(self.proj(a))
+        x = x + self.drop(self.mlp(self.ln2(x)))
+        return x
+
+    def step(self, x: torch.Tensor, k_buf: torch.Tensor, v_buf: torch.Tensor,
+             l_prev: int, l_new: int) -> torch.Tensor:
+        """Incremental decode path with a PRE-ALLOCATED KV cache.
+
+        Writes this chunk's K/V into `k_buf`/`v_buf` at [l_prev:l_new] (in
+        place, no realloc) and attends the query over the live cache [:l_new].
+        `l_prev == 0` is the prime chunk (prefix + BOS) and needs intra-chunk
+        causal masking; later calls pass a single token (T=1) attending the
+        whole cache, so no masking is needed.  Avoids the O(T^2) `torch.cat`
+        that growing-cache decoding incurs."""
+        B, T, D = x.shape
+        q, k, v = self.qkv(self.ln1(x)).chunk(3, dim=-1)
+        nh, hd = self.h, D // self.h
+        q = q.view(B, T, nh, hd).transpose(1, 2)
+        k = k.view(B, T, nh, hd).transpose(1, 2)
+        v = v.view(B, T, nh, hd).transpose(1, 2)
+        k_buf[:, :, l_prev:l_new] = k
+        v_buf[:, :, l_prev:l_new] = v
+        a = F.scaled_dot_product_attention(
+            q, k_buf[:, :, :l_new], v_buf[:, :, :l_new],
+            is_causal=(l_prev == 0))
         a = a.transpose(1, 2).reshape(B, T, D)
         x = x + self.drop(self.proj(a))
         x = x + self.drop(self.mlp(self.ln2(x)))
@@ -173,6 +212,79 @@ class FilterLM(nn.Module):
                 x[b, p] = x[b, p] + self.row_emb.weight[cur_r] + self.col_emb.weight[cur_c]
         return x
 
+    # ---- incremental embedding (KV-cache decode) ------------------------
+
+    def _pixel_name_set(self) -> set:
+        return ({"GROUND", "METAL", "INDUCTOR", "SWITCH", "VIA", "PORT"}
+                | self.tok._cap_pair_names)
+
+    @staticmethod
+    def _advance_decode_state(st: dict, name: str, pixel_names: set,
+                              cols: int) -> "tuple[int, bool, int, int]":
+        """Update per-sequence decode state for one token and return
+        (segment_id, add_row_col, row, col).  Mirrors `segment_ids_for` +
+        the cursor logic in `_token_embeddings` exactly, one token at a time."""
+        if name in ("BOS", "EOS", "PAD"):
+            if name == "BOS":
+                st["phase"] = "spec"
+            return SEG_STRUCT, False, 0, 0
+        if name == "SEP_spec":
+            st["phase"] = "grid";   return SEG_STRUCT, False, 0, 0
+        if name == "SEP_grid":
+            st["phase"] = "states"; return SEG_STRUCT, False, 0, 0
+        if name == "SEP_states":
+            st["phase"] = "done";   return SEG_STRUCT, False, 0, 0
+        if st["phase"] == "grid":
+            if name in pixel_names:                       # cursor advances on a pixel
+                st["cur_r"], st["cur_c"] = divmod(st["cursor"], cols)
+                st["cursor"] += 1
+            return SEG_GRID, True, st["cur_r"], st["cur_c"]
+        if st["phase"] == "states":
+            return SEG_STATES, False, 0, 0
+        return SEG_STRUCT, False, 0, 0
+
+    def _embed_step(self, token_ids: torch.Tensor, position: int,
+                    states: List[dict], pixel_names: set) -> torch.Tensor:
+        """Embed a single new token per sequence -> (B,1,d).  Equivalent to the
+        slice of `_token_embeddings` for one column, given each sequence's
+        running decode state."""
+        dev = token_ids.device
+        B = token_ids.shape[0]
+        cols = self.tok.config.cols
+        pos = min(position, self.mcfg.max_seq_len - 1)
+        x = self.token_emb(token_ids) + self.pos_emb(
+            torch.tensor(pos, device=dev))               # (B,d)
+        seg = torch.empty(B, dtype=torch.long, device=dev)
+        add_rc = torch.zeros(B, dtype=torch.bool, device=dev)
+        rr = torch.zeros(B, dtype=torch.long, device=dev)
+        cc = torch.zeros(B, dtype=torch.long, device=dev)
+        for b in range(B):
+            name = self.tok.id2tok[int(token_ids[b])]
+            seg_id, grid, r, c = self._advance_decode_state(
+                states[b], name, pixel_names, cols)
+            seg[b] = seg_id; add_rc[b] = grid; rr[b] = r; cc[b] = c
+        x = x + self.seg_emb(seg)
+        rc = self.row_emb(rr) + self.col_emb(cc)
+        x = x + torch.where(add_rc[:, None], rc, torch.zeros_like(rc))
+        return x.unsqueeze(1)                            # (B,1,d)
+
+    def _alloc_kv(self, B: int, cap: int, device, dtype):
+        """Per-layer pre-allocated (k_buf, v_buf), each (B, n_heads, cap, hd)."""
+        nh = self.mcfg.n_heads
+        hd = self.mcfg.model_dim // nh
+        return [(torch.empty(B, nh, cap, hd, device=device, dtype=dtype),
+                 torch.empty(B, nh, cap, hd, device=device, dtype=dtype))
+                for _ in range(self.mcfg.n_layers)]
+
+    def _run_cached(self, x: torch.Tensor, kv_bufs, l_prev: int):
+        """Run all blocks over `x` (B,T,d), writing into the pre-allocated KV
+        buffers at [l_prev : l_prev+T].  Returns (logits (B,T,V), l_new)."""
+        l_new = l_prev + x.shape[1]
+        for (k_buf, v_buf), blk in zip(kv_bufs, self.blocks):
+            x = blk.step(x, k_buf, v_buf, l_prev, l_new)
+        x = self.ln_f(x)
+        return self.head(x), l_new
+
     def forward(self, tokens: torch.Tensor, spec: torch.Tensor,
                 spec_drop: Optional[torch.Tensor] = None) -> torch.Tensor:
         """tokens (B,T); spec (B,K,spec_score_dim) -> logits (B,T,V)."""
@@ -206,32 +318,49 @@ class FilterLM(nn.Module):
         constraint_config: Optional[ConstraintConfig] = None,
     ) -> List[List[int]]:
         self.eval()
+        dev = self.device
         B = spec.shape[0]
-        bos, eos = self.tok.t("BOS"), self.tok.t("EOS")
+        bos, eos, pad = self.tok.t("BOS"), self.tok.t("EOS"), self.tok.t("PAD")
+        use_cfg = cfg_scale != 1.0
+        pixel_names = self._pixel_name_set()
+
         seqs = [[bos] for _ in range(B)]
         done = [False] * B
+        states = [{"phase": "pre", "cursor": 0, "cur_r": 0, "cur_c": 0}
+                  for _ in range(B)]
 
-        for _ in range(max_len - 1):
-            if all(done):
-                break
-            T = max(len(s) for s in seqs)
-            pad = self.tok.t("PAD")
-            batch = torch.tensor([s + [pad] * (T - len(s)) for s in seqs],
-                                 device=self.device)
-            cond = self.forward(batch, spec,
-                                spec_drop=torch.zeros(B, dtype=torch.bool,
-                                                      device=self.device))
-            if cfg_scale != 1.0:
-                uncond = self.forward(batch, spec,
-                                      spec_drop=torch.ones(B, dtype=torch.bool,
-                                                           device=self.device))
+        # pre-allocate the KV cache: capacity = spec prefix (K) + token budget
+        K = spec.shape[1]
+        cap = K + max_len
+        dtype = self.token_emb.weight.dtype
+        cond_kv = self._alloc_kv(B, cap, dev, dtype)
+        unc_kv = self._alloc_kv(B, cap, dev, dtype) if use_cfg else None
+
+        # ---- prime step: process [spec prefix ; BOS], fill the KV cache ----
+        bos_ids = torch.full((B,), bos, dtype=torch.long, device=dev)
+        bos_emb = self._embed_step(bos_ids, 0, states, pixel_names)   # (B,1,d)
+
+        def _prime(kv, drop_val: float):
+            drop = torch.full((B,), bool(drop_val), dtype=torch.bool, device=dev)
+            prefix = self._spec_prefix(spec, drop)                    # (B,K,d)
+            x = torch.cat([prefix, bos_emb], dim=1)                   # (B,K+1,d)
+            logits, l_new = self._run_cached(x, kv, 0)
+            return logits[:, -1], l_new                               # BOS-slot logits
+
+        # cond cache (spec on); uncond cache (spec off) only when CFG is active
+        cond_logits, cache_len = _prime(cond_kv, False)
+        if use_cfg:
+            unc_logits, _ = _prime(unc_kv, True)
+        else:
+            unc_logits = None
+
+        def _sample(logits_c, logits_u):
             for b in range(B):
                 if done[b]:
                     continue
-                last = len(seqs[b]) - 1
-                lg = cond[b, last]
-                if cfg_scale != 1.0:
-                    lg = uncond[b, last] + cfg_scale * (lg - uncond[b, last])
+                lg = logits_c[b]
+                if use_cfg:
+                    lg = logits_u[b] + cfg_scale * (lg - logits_u[b])
                 if apply_constraints:
                     m = get_invalid_token_mask(seqs[b], self.tok,
                                                constraint_config)
@@ -244,4 +373,23 @@ class FilterLM(nn.Module):
                 seqs[b].append(nxt)
                 if nxt == eos:
                     done[b] = True
+
+        _sample(cond_logits, unc_logits)
+
+        # ---- incremental decode: one new token per step over the cache ----
+        for step in range(1, max_len - 1):
+            if all(done):
+                break
+            # last token of each sequence (PAD for finished ones keeps shapes)
+            last_ids = torch.tensor(
+                [seqs[b][-1] if not done[b] else pad for b in range(B)],
+                dtype=torch.long, device=dev)
+            x_new = self._embed_step(last_ids, step, states, pixel_names)
+            l_prev = cache_len            # cond & uncond share the same length
+            cond_logits, cache_len = self._run_cached(x_new, cond_kv, l_prev)
+            cond_logits = cond_logits[:, -1]
+            if use_cfg:
+                unc_logits, _ = self._run_cached(x_new, unc_kv, l_prev)
+                unc_logits = unc_logits[:, -1]
+            _sample(cond_logits, unc_logits)
         return seqs

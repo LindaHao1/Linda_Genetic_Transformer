@@ -28,7 +28,9 @@ from src.dataset import (LMDataset, build_from_sims,  # noqa: E402
 from src.factory import (build_model, build_score_norm, build_specs,  # noqa: E402
                          build_surrogate, build_tokenizer, freq_points,
                          load_config)
-from src.training import collate, sft_step, token_type_weights  # noqa: E402
+from src.scoring import TrainScoreTracker  # noqa: E402
+from src.training import (_slice_example_for_k, collate,  # noqa: E402
+                          sft_step, token_type_weights)
 from src.types import SParams, TrainingExample  # noqa: E402
 
 
@@ -36,17 +38,18 @@ def build_dataset(cfg, tok, surrogate, fpts) -> LMDataset:
     d = cfg["data"]
     if d.get("sims_dirs"):
         cache_path = d.get("cache_path")
+        # min_states: skip designs with fewer than K states (K resampling
+        # in collate needs at least K available states).
+        min_states = cfg["grid"]["n_states"]
         if cache_path:
             return build_from_sims_cached(
                 d["sims_dirs"], fpts, cache_path=cache_path,
                 limit=d.get("limit"),
-                n_states=cfg["grid"]["n_states"],
-                seed=d.get("state_select_seed", 0),
+                min_states=min_states,
                 refresh=bool(d.get("cache_refresh", False)))
         return build_from_sims(
             d["sims_dirs"], fpts, limit=d.get("limit"),
-            n_states=cfg["grid"]["n_states"],          # subsample 10 -> K states
-            seed=d.get("state_select_seed", 0))
+            min_states=min_states)
     if not d.get("use_synthetic", True):
         raise SystemExit("No data: set data.sims_dirs or data.use_synthetic")
     rng = np.random.default_rng(0)
@@ -85,21 +88,42 @@ def main() -> None:
     steps = args.steps or cfg["sft"]["steps"]
     bs = cfg["sft"]["batch_size"]
     rng = np.random.default_rng(1)
+    # Per-minibatch state resampling: each batch draws fresh K state indices
+    # from each example's K_avail states.  Seeded for reproducibility.
+    state_rng = np.random.default_rng(
+        int(cfg.get("data", {}).get("state_select_seed", 0)))
+
+    # Per-state best + best-overall trackers (updated every batch from the
+    # actually-sliced states the model sees this step).
+    tracker = TrainScoreTracker(
+        K, specs, fpts,
+        scalars=cfg["spec"]["score_scalars"],
+        agg=cfg["scoring"].get("aggregation_mode", "soft_max"),
+        agg_temp=float(cfg["scoring"].get("aggregation_temperature", 2.0)))
 
     for step in range(steps):
         idx = rng.integers(0, len(ds), size=min(bs, len(ds)))
-        batch = collate([ds[int(i)] for i in idx], tok, specs, fpts,
-                        score_norm, K, device)
+        raw = [ds[int(i)] for i in idx]
+        # Slice EXPLICITLY here so the tracker sees the same K-state subset
+        # the model is conditioned on this step.  state_rng=None below tells
+        # collate to skip its own (already-done) slicing.
+        sliced = [_slice_example_for_k(ex, K, state_rng) for ex in raw]
+        tracker.update_batch_from_examples(sliced, step)
+        batch = collate(sliced, tok, specs, fpts,
+                        score_norm, K, device, state_rng=None)
         stats = sft_step(model, batch, type_w, opt)
         if step % max(1, steps // 20) == 0 or step == steps - 1:
             extra = " ".join(f"{k}={v:.3f}" for k, v in stats.items()
                              if k.startswith("loss_"))
             print(f"step {step:5d} | loss {stats['loss']:.4f} | {extra}")
+            print(f"           {tracker.format_short()}")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     torch.save({"model": model.state_dict(),
-                "tokenizer_config": tok.config.__dict__}, args.out)
+                "tokenizer_config": tok.config.__dict__,
+                "tracker": tracker.snapshot()}, args.out)
     print(f"saved -> {args.out}")
+    print(f"final  {tracker.format_short()}")
 
 
 if __name__ == "__main__":

@@ -59,23 +59,25 @@ def build_from_sims(
     sims_dirs: Sequence[str],
     freq_points: np.ndarray,
     limit: Optional[int] = None,
-    n_states: Optional[int] = None,
+    min_states: Optional[int] = None,
     seed: int = 0,
 ) -> "LMDataset":
     """Parse design folders into simulated TrainingExamples.
 
     Reuses world_model_test parsing/S21 loaders (single source of truth).
 
-    If `n_states` is set and a design has MORE states than that (e.g. the
-    world-model dataset has 10 states but the LM uses K=3), `n_states` distinct
-    state indices are chosen at random per design and switch/inductor states +
-    the matching .s2p files are sliced together so everything stays aligned.
-    Designs with fewer than `n_states` states are skipped.
+    All `K_avail` states per design are retained (switch/inductor states + the
+    matching .s2p files), so that downstream `collate` can resample which `K`
+    states the LM sees on each minibatch.  Designs with fewer than `min_states`
+    states are skipped (default: keep all).
+
+    `seed` is retained for backward compat (cache header); no longer used at
+    build time now that no random subsample is taken here.
     """
+    del seed  # no random subsample at build time anymore
     from process_dataset import _load_records          # noqa: E402
     from wm_dataset import _load_s21                    # noqa: E402
 
-    rng = np.random.default_rng(seed)
     examples: List[TrainingExample] = []
     n_skipped = 0
     for sd in sims_dirs:
@@ -85,20 +87,15 @@ def build_from_sims(
             n_ind = sum(v == P_INDUCTOR for row in matrix for v in row)
             K_avail = len(rec["switch_states"])
 
+            if min_states is not None and K_avail < min_states:
+                n_skipped += 1
+                continue
+
             sw_full = _reduce_states(rec["switch_states"], n_sw)
             isw_full = rec.get("inductor_switch_states", [])
             if not isw_full:                             # [] => all inductors ON
                 isw_full = [[1] * n_ind for _ in range(K_avail)]
             s2p_files = rec["s_param_files"][:K_avail]   # file i == state i
-
-            if n_states is None:
-                sel = list(range(K_avail))
-            elif K_avail < n_states:
-                n_skipped += 1
-                continue
-            else:                                        # random distinct states
-                sel = sorted(rng.choice(K_avail, size=n_states,
-                                        replace=False).tolist())
 
             design = Design(
                 pixel_grid=matrix,
@@ -107,11 +104,11 @@ def build_from_sims(
                 inductor_cap_values=list(rec.get("inductor_cap_values", [])),
                 cap_pixel_pairs=rec.get("cap_pixel_pairs", []),
                 cap_pair_values=list(rec.get("cap_pair_values", [])),
-                switch_states=[sw_full[i] for i in sel],
-                inductor_switch_states=[isw_full[i] for i in sel],
+                switch_states=sw_full,                   # ALL K_avail states
+                inductor_switch_states=isw_full,         # ALL K_avail states
             )
             s21 = np.stack([_load_s21(s2p_files[i], freq_points)
-                            for i in sel], axis=0)
+                            for i in range(K_avail)], axis=0)
             examples.append(TrainingExample(
                 design=design,
                 sparams=SParams(freq_hz=freq_points, s21_db=s21),
@@ -122,8 +119,9 @@ def build_from_sims(
                 log.info("Loaded %d simulated examples (limit hit)",
                          len(examples))
                 return LMDataset(examples)
-    log.info("Loaded %d simulated examples (%d skipped: < %s states)",
-             len(examples), n_skipped, n_states)
+    log.info("Loaded %d simulated examples (%d skipped: < %s states); "
+             "all K_avail states retained for per-collate resampling",
+             len(examples), n_skipped, min_states)
     return LMDataset(examples)
 
 
@@ -132,27 +130,31 @@ def build_from_sims_cached(
     freq_points: np.ndarray,
     cache_path: str,
     limit: Optional[int] = None,
-    n_states: Optional[int] = None,
-    seed: int = 0,
+    min_states: Optional[int] = None,
     refresh: bool = False,
 ) -> "LMDataset":
     """Same as `build_from_sims` but pickles the parsed dataset to `cache_path`.
 
+    Cache layout (format_version=2): each cached example retains ALL `K_avail`
+    states.  Per-minibatch `K`-state resampling happens in `src/training.py:
+    collate` (`state_rng` arg), giving true epoch-to-epoch state diversity.
+
     On subsequent runs (or other scripts that read the same sims), the cache is
     loaded directly -- skipping the per-design YAML + s2p parse.  The cache is
-    invalidated automatically if the cache header doesn't match the request
-    (sims_dirs, freq_points, limit, n_states, seed); set `refresh=True` to
+    invalidated automatically if the header doesn't match (sims_dirs,
+    freq_points, limit, min_states, format_version); set `refresh=True` to
     rebuild on demand.
 
     The cache is a pickle of `{"header": ..., "examples": [...]}`.
     """
+    import hashlib
     header = {
         "sims_dirs": [str(p) for p in sims_dirs],
-        "freq_points_hash": int(np.asarray(freq_points).tobytes().__hash__()),
+        "freq_points_hash": hashlib.sha1(
+            np.asarray(freq_points, dtype=np.float64).tobytes()).hexdigest(),
         "limit": limit,
-        "n_states": n_states,
-        "seed": seed,
-        "format_version": 1,
+        "min_states": min_states,
+        "format_version": 2,
     }
     if not refresh and os.path.isfile(cache_path):
         t0 = time.time()
@@ -165,7 +167,7 @@ def build_from_sims_cached(
         log.info("Cache header mismatch at %s -- rebuilding", cache_path)
 
     ds = build_from_sims(sims_dirs, freq_points, limit=limit,
-                         n_states=n_states, seed=seed)
+                         min_states=min_states)
     os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
     t0 = time.time()
     with open(cache_path, "wb") as f:

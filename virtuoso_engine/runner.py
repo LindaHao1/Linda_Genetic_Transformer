@@ -216,12 +216,20 @@ class PersistentVirtuosoRunner:
         # Unique job directory per instance — pid alone is not enough when
         # multiple runners live in the same process (parallel workers).
         self._job_dir = Path(f"/tmp/virt_job_{os.getpid()}_{id(self)}")
+        # Resolve to an ABSOLUTE path against the launch cwd: Virtuoso runs with
+        # cwd=virtuoso_dir, so a relative log path would be created in the wrong
+        # place (and Virtuoso would fail with "CIW Initialization failure").
         self._session_log = (
-            Path(session_log) if session_log
+            Path(session_log).resolve() if session_log
             else self._job_dir / "session.log"
         )
+        # Virtuoso's own stdout/stderr (license/exec errors land here BEFORE the
+        # SKILL -log file is opened) -- captured so startup crashes are
+        # diagnosable instead of silently discarded.
+        self._console_log = self._session_log.with_name("virtuoso_console.log")
 
         self._proc: Optional[subprocess.Popen] = None
+        self._console_fh = None
         self._restart_count = 0
 
     # ------------------------------------------------------------------
@@ -250,12 +258,18 @@ class PersistentVirtuosoRunner:
             "-replay", str(server_il),
         ]
 
+        # Capture Virtuoso's console output (env/license/exec errors that occur
+        # before the SKILL -log file exists) so a startup crash is diagnosable.
+        self._session_log.parent.mkdir(parents=True, exist_ok=True)
+        if self._console_fh is not None:          # stale handle from a restart
+            self._console_fh.close()
+        self._console_fh = open(self._console_log, "w", encoding="utf-8")
         self._proc = subprocess.Popen(
             cmd,
             cwd=str(self.virtuoso_dir),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=self._console_fh,
+            stderr=subprocess.STDOUT,
             env=env,
         )
 
@@ -270,8 +284,14 @@ class PersistentVirtuosoRunner:
         time.sleep(self.STARTUP_WAIT_SEC)
 
         if not self._is_alive():
+            rc = self._proc.poll()
+            console = _read_log(self._console_log).strip()
+            session = _read_log(self._session_log).strip()
+            tail = (console or session or "(no output captured)").splitlines()[-25:]
             raise RuntimeError(
-                f"Virtuoso failed to start — check {self._session_log}"
+                f"Virtuoso exited during startup (rc={rc}, DISPLAY={self.display}). "
+                f"Console log: {self._console_log}\n"
+                + "\n".join(tail)
             )
         print(f"[{self._label}] Virtuoso ready.")
 
@@ -286,6 +306,9 @@ class PersistentVirtuosoRunner:
             self._proc.wait(timeout=15)
         except subprocess.TimeoutExpired:
             self._proc.kill()
+        if self._console_fh is not None:
+            self._console_fh.close()
+            self._console_fh = None
         print(f"[{self._label}] Virtuoso session closed.")
 
     def __enter__(self) -> "PersistentVirtuosoRunner":

@@ -37,7 +37,7 @@ def _pairwise_grid_diversity(designs) -> float:
 def run_eval(model, surrogate, tok, targets: np.ndarray, specs,
              freqs: np.ndarray, n_per_target: int = 8, cfg_scale: float = 4.0,
              temperature: float = 1.0, agg: str = "soft_max",
-             temp: float = 2.0) -> Dict[str, float]:
+             temp: float = 2.0, constraint_config=None) -> Dict[str, float]:
     """targets: (n_targets, K, score_dim) normalized conditioning vectors.
 
     Quality is the GA score (− soft_max cost) of each generated design,
@@ -54,7 +54,7 @@ def run_eval(model, surrogate, tok, targets: np.ndarray, specs,
         seqs = model.generate_batch(
             spec, max_len=model.mcfg.max_seq_len,
             temperature=temperature, cfg_scale=cfg_scale,
-            apply_constraints=True)
+            apply_constraints=True, constraint_config=constraint_config)
         designs = [decode_to_design(tok, s) for s in seqs]
         n_total += len(designs)
         valid = [d for d in designs if d is not None]

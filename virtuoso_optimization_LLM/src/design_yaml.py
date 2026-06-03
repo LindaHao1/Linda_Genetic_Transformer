@@ -24,15 +24,19 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
+import numpy as np
 import yaml
 
-from src.types import Design
+from src.types import Design, SParams
 
 _VE_DIR = "/disk/mcao53/RFIC_RL"
 if _VE_DIR not in sys.path:
     sys.path.insert(0, _VE_DIR)
+_WM_DIR = "/disk/mcao53/RFIC_RL/world_model_test"
+if _WM_DIR not in sys.path:
+    sys.path.insert(0, _WM_DIR)
 
 from virtuoso_engine.config_loader import load_config  # noqa: E402
 
@@ -117,3 +121,58 @@ def write_simulation_yaml(
     with open(out_yaml_path, "w") as f:
         yaml.safe_dump(out, f, sort_keys=False)
     return out_yaml_path
+
+
+def load_design_and_s21_from_run_dir(
+    run_dir: Union[str, Path],
+    freq_points: np.ndarray,
+) -> "tuple[Design, SParams]":
+    """Read the engine's *realized* design + S21 back from a completed run dir.
+
+    The engine snaps cap values to a manufacturable grid, so the design actually
+    simulated differs from the one submitted -- this reads the realized config
+    (which the engine writes to `run_dir/config.yaml`) so training pairs are
+    physically consistent.
+
+    Accepts EITHER design-yaml schema: the older flat dataset-collection form
+    (`state_list` K x n_sw, `cap_values` n_sw) or the newer bank-wrapped form
+    the latest engine writes (`state_list` K x n_sw x bank, `cap_values`
+    n_sw x bank).  Both are normalized to the canonical flat `Design`.
+
+    Returns (Design, SParams) with `s21_db` of shape (K, n_freq), float32.
+    Raises on missing/unreadable config or insufficient .s2p files.
+    """
+    from process_dataset import (debank_cap_values, debank_state_list,  # noqa: E402
+                                 _state_index)
+    from wm_dataset import _load_s21                                     # noqa: E402
+
+    run_dir = Path(run_dir)
+    cfg_path = run_dir / "config.yaml"
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    pix = cfg.get("pixelated", {})
+    if "pixel_state_matrix" not in pix or "state_list" not in pix:
+        raise ValueError(f"{cfg_path}: missing pixelated.pixel_state_matrix/state_list")
+
+    rec = {
+        "matrix":                 pix["pixel_state_matrix"],
+        "cap_values":             debank_cap_values(pix.get("cap_values", [])),
+        "inductor_values":        pix.get("inductor_values", []),
+        "switch_states":          debank_state_list(pix["state_list"]),
+        "inductor_switch_states": pix.get("inductor_switch_states", []),
+        "inductor_cap_values":    pix.get("inductor_cap_values", []),
+        "cap_pixel_pairs":        pix.get("cap_pixel_pairs", []),
+        "cap_pair_values":        pix.get("cap_pair_values", []),
+    }
+    design = Design.from_record(rec)
+
+    n_states = len(rec["switch_states"])
+    s2p_files = sorted((run_dir / "emx_results").glob("*_state*.s2p"),
+                       key=_state_index)
+    if len(s2p_files) < n_states:
+        raise ValueError(
+            f"{run_dir}: found {len(s2p_files)} .s2p files, need {n_states}")
+    freq_points = np.asarray(freq_points)
+    s21 = np.stack([_load_s21(str(s2p_files[i]), freq_points)
+                    for i in range(n_states)], axis=0)
+    return design, SParams(freq_hz=freq_points, s21_db=s21)
