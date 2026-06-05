@@ -194,6 +194,8 @@ def crossover_block(
     single_inductor_value: bool = False,
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
+    grid_size: Optional[float] = None,
+    connect_margin: float = 2.0,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -208,6 +210,8 @@ def crossover_block(
     """
     rows = parent1.rows
     cols = parent1.cols
+
+    sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
 
     block_min_size = max(1, block_min_size)
     block_max_size = min(block_max_size, min(rows, cols))
@@ -282,6 +286,10 @@ def crossover_block(
 
         # Build child matrix: deep copy of base, then overwrite the block region
         child_matrix: List[List[int]] = [row[:] for row in base_parent.matrix]
+        # Mirror on the sizing matrix (base copy + donor block overwrite)
+        child_pixel_sizes: List[List[float]] = (
+            [row[:] for row in base_parent.pixel_sizes] if sizing_on else []
+        )
         pixel_source: Dict[Tuple[int, int], int] = {}
 
         for r in range(rows):
@@ -295,6 +303,8 @@ def crossover_block(
                 r_src = donor_row + dr
                 c_src = donor_col + dc
                 child_matrix[r_dst][c_dst] = donor_parent.matrix[r_src][c_src]
+                if sizing_on:
+                    child_pixel_sizes[r_dst][c_dst] = donor_parent.pixel_sizes[r_src][c_src]
                 pixel_source[(r_dst, c_dst)] = donor_src_val
 
         # Repair pipeline
@@ -310,6 +320,8 @@ def crossover_block(
         if not is_feasible(
             child_matrix, 0, max_inductors,
             min_switches=min_switches, max_switches=max_switches, max_vias=max_vias,
+            pixel_sizes=(child_pixel_sizes if sizing_on else None),
+            grid_size=grid_size, connect_margin=connect_margin,
         ):
             continue
 
@@ -368,6 +380,7 @@ def crossover_block(
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values,
             inductor_cap_values    = inductor_cap_values,
+            pixel_sizes            = child_pixel_sizes if sizing_on else [],
         ), xover_params
 
     return None, {"block_h": h, "block_w": w}  # all placement attempts exhausted

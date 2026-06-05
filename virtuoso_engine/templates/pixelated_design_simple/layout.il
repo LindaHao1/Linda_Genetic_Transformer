@@ -37,7 +37,7 @@
 procedure( build_pixelated_simple()
 let( (cv libName cellName
       pixel_size grid_size gnd_layer pixel_layer
-      num_rows num_cols pixel_types port_names
+      num_rows num_cols pixel_types pixel_sizes port_names this_size
       feedline_row_left feedline_row_right feedline_width feedline_padding gnd_y_extension
       fl_left_y_center  fl_left_y_bottom  fl_left_y_top
       fl_right_y_center fl_right_y_bottom fl_right_y_top
@@ -59,6 +59,7 @@ pixel_layer      = "${PIXEL_LAYER}"
 num_rows         = ${NUM_ROWS}
 num_cols         = ${NUM_COLS}
 pixel_types        = ${PIXEL_TYPES_SKILL}
+pixel_sizes        = ${PIXEL_SIZES_SKILL}   ; per-pixel metal patch size (um), row-first; uniform = pixel_size everywhere
 port_names         = ${PORT_NAMES_SKILL}
 feedline_row_left  = ${FEEDLINE_ROW_LEFT}   ; row of left  feed col (derived from matrix col 0)
 feedline_row_right = ${FEEDLINE_ROW_RIGHT}  ; row of right feed col (derived from matrix col N-1)
@@ -163,17 +164,20 @@ for( col_i 0 (num_cols - 1)
                 flat_idx_inner = row_i * num_cols + col_i
                 ptype = nth(flat_idx_inner pixel_types)
                 pname = nth(flat_idx_inner port_names)
+                this_size = nth(flat_idx_inner pixel_sizes)
             )
 
             center_x = col_i * grid_size + grid_size / 2.0
             center_y = (num_rows - 1 - row_i) * grid_size + grid_size / 2.0
 
-            ; --- Top metal patch (types 1, 2, 3): pixel_size centred in cell ---
+            ; --- Top metal patch (types 1, 2, 3): per-pixel size centred in cell ---
+            ; this_size was read from the per-pixel sizing list above (uniform mode
+            ; fills it with pixel_size everywhere, matching the legacy geometry).
             when( ptype > 0
-                patch_left   = center_x - pixel_size / 2.0
-                patch_bottom = center_y - pixel_size / 2.0
-                patch_right  = center_x + pixel_size / 2.0
-                patch_top    = center_y + pixel_size / 2.0
+                patch_left   = center_x - this_size / 2.0
+                patch_bottom = center_y - this_size / 2.0
+                patch_right  = center_x + this_size / 2.0
+                patch_top    = center_y + this_size / 2.0
                 dbCreateRect(cv pixel_layer
                     list(list(patch_left patch_bottom) list(patch_right patch_top)))
             )

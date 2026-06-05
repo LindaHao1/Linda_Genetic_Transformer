@@ -282,6 +282,8 @@ def crossover_weighted_clustering(
     single_inductor_value: bool = False,
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
+    grid_size: Optional[float] = None,
+    connect_margin: float = 2.0,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by weighted-clustering crossover of two parent designs.
@@ -300,6 +302,8 @@ def crossover_weighted_clustering(
     """
     rows = parent1.rows
     cols = parent1.cols
+
+    sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
 
     # --- Randomly draw number of centroids for this call ---
     n_centroids_max = max(2, n_centroids_max)
@@ -340,14 +344,22 @@ def crossover_weighted_clustering(
                     best_idx = i
             pixel_source[(r, c)] = centroid_parent[best_idx]
 
-    # --- Build child matrix ---
+    # --- Build child matrix (+ sizing matrix mirrored on the same source map) ---
     child_matrix: List[List[int]] = []
+    child_pixel_sizes: List[List[float]] = [] if sizing_on else []
     for r in range(rows):
         row = []
+        size_row = []
         for c in range(cols):
             src = pixel_source[(r, c)]
             row.append(parent1.matrix[r][c] if src == 1 else parent2.matrix[r][c])
+            if sizing_on:
+                size_row.append(
+                    parent1.pixel_sizes[r][c] if src == 1 else parent2.pixel_sizes[r][c]
+                )
         child_matrix.append(row)
+        if sizing_on:
+            child_pixel_sizes.append(size_row)
 
     # --- Fix feed columns (I/O port repair) ---
     _fix_feed_cols(child_matrix, rng)
@@ -363,7 +375,9 @@ def crossover_weighted_clustering(
     # --- Final feasibility gate ---
     if not is_feasible(
         child_matrix, 0, max_inductors,
-        min_switches=min_switches, max_switches=max_switches, max_vias=max_vias
+        min_switches=min_switches, max_switches=max_switches, max_vias=max_vias,
+        pixel_sizes=(child_pixel_sizes if sizing_on else None),
+        grid_size=grid_size, connect_margin=connect_margin,
     ):
         return None, xover_params
 
@@ -417,4 +431,5 @@ def crossover_weighted_clustering(
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
         inductor_cap_values    = inductor_cap_values,
+        pixel_sizes            = child_pixel_sizes if sizing_on else [],
     ), xover_params

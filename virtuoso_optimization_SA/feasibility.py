@@ -122,6 +122,122 @@ def check_connectivity_4way(matrix: List[List[int]]) -> bool:
     return check_connectivity(matrix, four_connected=True)
 
 
+# ---------------------------------------------------------------------------
+# Size-aware (overlap-based) connectivity
+# ---------------------------------------------------------------------------
+
+def _patches_overlap(
+    size_a: float,
+    size_b: float,
+    grid_size: float,
+    margin: float,
+) -> bool:
+    """
+    Return True if two adjacent (grid-neighbour) metal patches overlap by at
+    least ``margin`` micrometres.
+
+    Both pixel centres are ``grid_size`` apart on every axis along which they
+    differ (orthogonal: one axis; diagonal: both axes, each ``grid_size``).
+    The per-axis metal overlap is therefore::
+
+        overlap = size_a/2 + size_b/2 - grid_size
+
+    For an orthogonal neighbour the patches form a continuous strip when
+    ``overlap >= margin``.  For a diagonal neighbour the corner patches overlap
+    in *both* axes by exactly the same amount, so the identical threshold
+    applies.  Two patches are considered electrically connected when this
+    overlap meets the margin.
+    """
+    overlap = size_a / 2.0 + size_b / 2.0 - grid_size
+    return overlap >= margin
+
+
+def check_connectivity_sized(
+    matrix: List[List[int]],
+    pixel_sizes: List[List[float]],
+    grid_size: float,
+    margin: float,
+    four_connected: bool = False,
+) -> bool:
+    """
+    Size-aware variant of :func:`check_connectivity`.
+
+    BFS from the left feed pixel to the right feed pixel, traversing only
+    non-zero cells, but an edge between two interior non-zero pixels exists
+    **only when their metal patches overlap by >= margin** (see
+    :func:`_patches_overlap`).
+
+    Feed-column pixels (col 0 / col N-1) are feedline traces rather than square
+    patches, so their connection to the first/last active column is treated as
+    always valid (size-independent) — a sized design can never be trivially cut
+    at the feedline.  Diagonal steps remain suppressed at the feed columns,
+    matching the uniform behaviour.
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    left_row  = next((r for r in range(rows) if matrix[r][0]        != 0), None)
+    right_row = next((r for r in range(rows) if matrix[r][cols - 1] != 0), None)
+    if left_row is None or right_row is None:
+        return False
+    if left_row == right_row and cols == 1:
+        return True
+
+    def _edge_ok(r: int, c: int, nr: int, nc: int) -> bool:
+        # A feed column endpoint is a feedline trace, not a sized patch: the
+        # link between it and the adjacent active column is always valid.
+        if c == 0 or c == cols - 1 or nc == 0 or nc == cols - 1:
+            return True
+        return _patches_overlap(
+            pixel_sizes[r][c], pixel_sizes[nr][nc], grid_size, margin
+        )
+
+    visited = [[False] * cols for _ in range(rows)]
+    q: deque = deque()
+    q.append((left_row, 0))
+    visited[left_row][0] = True
+
+    while q:
+        r, c = q.popleft()
+        if r == right_row and c == cols - 1:
+            return True
+        if four_connected:
+            neighbours = _neighbours_4(r, c, rows, cols)
+        else:
+            neighbours = _neighbours_8(r, c, rows, cols)
+            neighbours = [
+                (nr, nc) for nr, nc in neighbours
+                if not (
+                    (nr != r) and (nc != c)
+                    and (c == 0 or c == cols - 1 or nc == 0 or nc == cols - 1)
+                )
+            ]
+        for nr, nc in neighbours:
+            if not visited[nr][nc] and matrix[nr][nc] != 0 and _edge_ok(r, c, nr, nc):
+                visited[nr][nc] = True
+                q.append((nr, nc))
+
+    return False
+
+
+def _connectivity_ok(
+    matrix: List[List[int]],
+    *,
+    pixel_sizes: Optional[List[List[float]]] = None,
+    grid_size: Optional[float] = None,
+    connect_margin: float = 2.0,
+    four_connected: bool = False,
+) -> bool:
+    """Dispatch to size-aware connectivity when sizing data is supplied, else the
+    legacy grid-adjacency check."""
+    if pixel_sizes and grid_size is not None:
+        return check_connectivity_sized(
+            matrix, pixel_sizes, grid_size, connect_margin,
+            four_connected=four_connected,
+        )
+    return check_connectivity(matrix, four_connected=four_connected)
+
+
 def check_special_pixel_spacing(matrix: List[List[int]]) -> bool:
     """
     Rules b/c: footprints of inductor (5×5) and switch (3×3) pixels must not overlap.
@@ -230,6 +346,9 @@ def is_feasible(
     max_switches: Optional[int] = None,
     four_connected: bool = False,
     max_vias: int = 0,
+    pixel_sizes: Optional[List[List[float]]] = None,
+    grid_size: Optional[float] = None,
+    connect_margin: float = 2.0,
 ) -> bool:
     """Full feasibility check (all rules a–f, plus optional via rules).
 
@@ -242,6 +361,10 @@ def is_feasible(
     connectivity instead of the default 8-way.
 
     When ``max_vias > 0`` via spacing and count rules are enforced.
+
+    When ``pixel_sizes`` (and ``grid_size``) are supplied the connectivity rule
+    uses overlap-based connectivity (patches must overlap by >= ``connect_margin``
+    micrometres).  Omitting them keeps the legacy grid-adjacency behaviour.
     """
     if min_switches is not None or max_switches is not None:
         lo = min_switches if min_switches is not None else n_switches_required
@@ -254,7 +377,13 @@ def is_feasible(
 
     return (
         check_feed_columns(matrix)
-        and check_connectivity(matrix, four_connected=four_connected)
+        and _connectivity_ok(
+            matrix,
+            pixel_sizes=pixel_sizes,
+            grid_size=grid_size,
+            connect_margin=connect_margin,
+            four_connected=four_connected,
+        )
         and check_special_pixel_spacing(matrix)   # covers both switch and inductor spacing
         and check_inductor_count(matrix, max_inductors)
         and sw_ok
@@ -615,6 +744,11 @@ def generate_random_design(
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
     n_caps_per_switch: int = 1,
+    enable_pixel_sizing: bool = False,
+    pixel_size_min: float = 25.0,
+    pixel_size_max: float = 37.0,
+    grid_size: float = 25.0,
+    connect_margin: float = 2.0,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -656,8 +790,25 @@ def generate_random_design(
             for c in range(1, cols - 1):
                 matrix[r][c] = rng.choices([0, 1], weights=[p0, p1])[0]
 
+        # --- Step 2b: per-pixel sizes (optional) ---
+        # Assign a random size to every cell up front; only non-zero interior
+        # cells are ever read.  Empty list keeps the legacy uniform behaviour.
+        if enable_pixel_sizing:
+            pixel_sizes = [
+                [rng.uniform(pixel_size_min, pixel_size_max) for _ in range(cols)]
+                for _ in range(rows)
+            ]
+        else:
+            pixel_sizes = []
+
         # --- Step 3: connectivity check ---
-        if not check_connectivity(matrix, four_connected=require_4_connected):
+        if not _connectivity_ok(
+            matrix,
+            pixel_sizes=pixel_sizes,
+            grid_size=grid_size,
+            connect_margin=connect_margin,
+            four_connected=require_4_connected,
+        ):
             continue
 
         # --- Step 4: place switches ---
@@ -721,7 +872,10 @@ def generate_random_design(
         # --- Final feasibility check ---
         if not is_feasible(matrix, n_switches, max_inductors,
                            four_connected=require_4_connected,
-                           max_vias=max_vias):
+                           max_vias=max_vias,
+                           pixel_sizes=pixel_sizes,
+                           grid_size=grid_size,
+                           connect_margin=connect_margin):
             continue
 
         # --- Step 6: generate switch states, inductor switch states, cap / inductor values ---
@@ -829,6 +983,7 @@ def generate_random_design(
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values_list,
             inductor_cap_values    = inductor_cap_values,
+            pixel_sizes            = pixel_sizes,
         )
 
     return None  # failed to generate within budget

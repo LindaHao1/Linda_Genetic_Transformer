@@ -32,6 +32,7 @@ from .feasibility import (
     _can_place_via_at,
     check_cap_pair_valid,
     check_connectivity,
+    check_connectivity_sized,
     check_inductor_count,
     check_inductor_spacing,
     check_inductor_states_distinct,
@@ -63,6 +64,8 @@ def action_flip_01(
     flip_outer_prob: float = 1.0,
     require_axis_aligned: bool = True,
     flip_region_size: int = 8,
+    grid_size: float = 25.0,
+    connect_margin: float = 2.0,
 ) -> tuple:
     """
     Randomly flip up to ``n_flip`` type-0 or type-1 interior pixels
@@ -149,8 +152,14 @@ def action_flip_01(
         new.matrix[r][c] = 1 - old_val   # 0 → 1, 1 → 0
         flipped_cells.append({"row": r, "col": c, "from": old_val, "to": new.matrix[r][c]})
 
-    # Validate
-    if not check_connectivity(new.matrix):
+    # Validate — overlap-aware connectivity when per-pixel sizing is enabled.
+    if new.pixel_sizes:
+        conn_ok = check_connectivity_sized(
+            new.matrix, new.pixel_sizes, grid_size, connect_margin
+        )
+    else:
+        conn_ok = check_connectivity(new.matrix)
+    if not conn_ok:
         return None, None
     # Spacing constraints still satisfied (we only touched 0/1 cells)
     # Prune any cap pairs whose endpoints or corridor were disturbed
@@ -1122,6 +1131,79 @@ def action_perturb_pair_caps(
 
 
 # ---------------------------------------------------------------------------
+# Action 12: perturb per-pixel sizes
+# ---------------------------------------------------------------------------
+
+def action_perturb_pixel_sizes(
+    state: DesignState,
+    n_pixels: int,
+    sigma: float,
+    size_min: float,
+    size_max: float,
+    grid_size: float,
+    connect_margin: float,
+    rng: random.Random,
+) -> tuple:
+    """
+    Add Gaussian noise (std = ``sigma`` um) to the size of up to ``n_pixels``
+    randomly-selected non-ground interior pixels, then clip to
+    [size_min, size_max].
+
+    No-op (returns (None, None)) when per-pixel sizing is disabled
+    (``state.pixel_sizes`` empty).  After perturbation the design must remain
+    connected under the overlap rule — if shrinking a pixel breaks the metal
+    path the mutation is rejected.
+
+    Returns (mutated copy, info_dict), or (None, None) if infeasible / disabled.
+    """
+    if not state.pixel_sizes:
+        return None, None
+
+    rows, cols = state.rows, state.cols
+    # Only cells that actually carry a metal patch (non-zero) and are interior
+    # (feed columns are feedline traces, not sized patches).
+    candidates = [
+        (r, c)
+        for r in range(rows)
+        for c in range(1, cols - 1)
+        if state.matrix[r][c] != 0
+    ]
+    if not candidates:
+        return None, None
+
+    k = rng.randint(1, min(n_pixels, len(candidates)))
+    chosen = rng.sample(candidates, k)
+
+    new = state.copy()
+    size_changes = []
+    for r, c in chosen:
+        old_val = new.pixel_sizes[r][c]
+        noise = rng.gauss(0.0, sigma)
+        new.pixel_sizes[r][c] = max(size_min, min(size_max, old_val + noise))
+        size_changes.append({
+            "row": r,
+            "col": c,
+            "old_um": round(old_val, 4),
+            "new_um": round(new.pixel_sizes[r][c], 4),
+        })
+
+    # A size reduction may sever the metal path — reject if so.
+    if not check_connectivity_sized(new.matrix, new.pixel_sizes, grid_size, connect_margin):
+        return None, None
+
+    info = {
+        "action": "perturb_pixel_sizes",
+        "description": (
+            f"Perturbed {len(size_changes)} pixel size(s) with Gaussian noise "
+            f"(sigma={sigma:.2f} um)"
+        ),
+        "sigma_um": sigma,
+        "size_changes": size_changes,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher: pick a random action and apply it
 # ---------------------------------------------------------------------------
 
@@ -1138,6 +1220,7 @@ _ACTION_NAMES = [
     "flip_inductor_state",
     "flip_via",
     "perturb_inductor_caps",
+    "perturb_pixel_sizes",
 ]
 
 
@@ -1172,6 +1255,12 @@ def _dispatch_action(
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
     inductor_cap_sigma: float = 50e-15,
+    pixel_size_min: float = 25.0,
+    pixel_size_max: float = 37.0,
+    pixel_size_sigma: float = 2.0,
+    grid_size: float = 25.0,
+    connect_margin: float = 2.0,
+    n_pixel_size_perturb: int = 8,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -1184,6 +1273,8 @@ def _dispatch_action(
             flip_outer_prob=flip_outer_prob,
             require_axis_aligned=require_axis_aligned,
             flip_region_size=flip_region_size,
+            grid_size=grid_size,
+            connect_margin=connect_margin,
         )
     elif action_name == "modify_switch":
         return action_modify_switch(
@@ -1233,6 +1324,11 @@ def _dispatch_action(
         return action_perturb_inductor_caps(
             state, inductor_cap_sigma, inductor_cap_min, inductor_cap_max, rng,
         )
+    elif action_name == "perturb_pixel_sizes":
+        return action_perturb_pixel_sizes(
+            state, n_pixel_size_perturb, pixel_size_sigma,
+            pixel_size_min, pixel_size_max, grid_size, connect_margin, rng,
+        )
     return None, None
 
 
@@ -1268,6 +1364,12 @@ def random_action(
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
     inductor_cap_sigma: float = 50e-15,
+    pixel_size_min: float = 25.0,
+    pixel_size_max: float = 37.0,
+    pixel_size_sigma: float = 2.0,
+    grid_size: float = 25.0,
+    connect_margin: float = 2.0,
+    n_pixel_size_perturb: int = 8,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -1332,6 +1434,12 @@ def random_action(
         inductor_cap_min=inductor_cap_min,
         inductor_cap_max=inductor_cap_max,
         inductor_cap_sigma=inductor_cap_sigma,
+        pixel_size_min=pixel_size_min,
+        pixel_size_max=pixel_size_max,
+        pixel_size_sigma=pixel_size_sigma,
+        grid_size=grid_size,
+        connect_margin=connect_margin,
+        n_pixel_size_perturb=n_pixel_size_perturb,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

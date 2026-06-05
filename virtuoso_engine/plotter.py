@@ -352,6 +352,101 @@ def _plot_design_matrix(
     plt.close(fig)
 
 
+def plot_pixel_sizes(
+    matrix: List[List[int]],
+    pixel_sizes: List[List[float]],
+    grid_size: float,
+    output_dir: Path,
+    margin: float = 2.0,
+    filename: str = "pixel_sizes.png",
+) -> Path:
+    """
+    Visualise the per-pixel metal-patch sizes to scale.
+
+    Each non-ground pixel is drawn as its actual ``size × size`` square centred
+    on the ``grid_size`` lattice, so overlaps between neighbouring patches are
+    immediately visible.  Patch fill colour encodes the size (via a colormap and
+    colorbar); the patch outline is tinted by pixel type using ``_PIXEL_STYLE``.
+    Special pixels (inductor/switch/via) are marked with their type label.
+
+    This is an *additive* plot — the existing design-matrix visualisation is
+    untouched.  Returns the path to the saved figure.
+    """
+    import matplotlib.cm as cm
+    from matplotlib.colors import Normalize
+    from matplotlib.patches import Rectangle
+
+    n_rows = len(matrix)
+    n_cols = len(matrix[0]) if n_rows else 0
+
+    # Collect sizes of drawn (non-ground) patches for the colour scale.
+    drawn = [
+        float(pixel_sizes[r][c])
+        for r in range(n_rows) for c in range(n_cols)
+        if int(matrix[r][c]) != 0
+    ]
+    vmin = min(drawn) if drawn else grid_size
+    vmax = max(drawn) if drawn else grid_size
+    if vmax - vmin < 1e-9:
+        vmin, vmax = vmin - 1.0, vmax + 1.0
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    cmap = cm.get_cmap("viridis")
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+
+    # Layout coordinate convention matches the SKILL template:
+    #   center_x = col * grid_size + grid_size/2
+    #   center_y = (n_rows - 1 - row) * grid_size + grid_size/2  (row 0 at top)
+    for r in range(n_rows):
+        for c in range(n_cols):
+            ptype = int(matrix[r][c])
+            if ptype == 0:
+                continue
+            size = float(pixel_sizes[r][c])
+            cx = c * grid_size + grid_size / 2.0
+            cy = (n_rows - 1 - r) * grid_size + grid_size / 2.0
+            edge = _PIXEL_STYLE.get(ptype, ("?", "#ffffff"))[1]
+            rect = Rectangle(
+                (cx - size / 2.0, cy - size / 2.0), size, size,
+                facecolor=cmap(norm(size)), edgecolor=edge,
+                linewidth=1.4, alpha=0.55, zorder=2,
+            )
+            ax.add_patch(rect)
+            # Mark special pixels with their type label.
+            if ptype >= 2:
+                ax.text(cx, cy, _PIXEL_STYLE[ptype][0], ha="center", va="center",
+                        fontsize=6, fontweight="bold", color="black", zorder=4)
+
+    # Faint grid-cell lattice for reference.
+    for c in range(n_cols + 1):
+        ax.axvline(c * grid_size, color="0.85", linewidth=0.5, zorder=1)
+    for r in range(n_rows + 1):
+        ax.axhline(r * grid_size, color="0.85", linewidth=0.5, zorder=1)
+
+    ax.set_xlim(-grid_size * 0.5, n_cols * grid_size + grid_size * 0.5)
+    ax.set_ylim(-grid_size * 0.5, n_rows * grid_size + grid_size * 0.5)
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (um)", fontsize=9)
+    ax.set_ylabel("y (um)", fontsize=9)
+    ax.set_title(
+        f"Per-pixel patch sizes (grid={grid_size:g} um, connect margin={margin:g} um)",
+        fontsize=11,
+    )
+
+    sm = cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label("pixel size (um)", fontsize=9)
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    save_path = output_dir / filename
+    fig.tight_layout()
+    fig.savefig(str(save_path), dpi=150)
+    plt.close(fig)
+    return save_path
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

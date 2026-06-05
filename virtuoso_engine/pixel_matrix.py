@@ -218,6 +218,35 @@ def build_skill_pixel_types_list(matrix: List[List[int]]) -> str:
     return "list(" + " ".join(flat) + ")"
 
 
+def build_skill_pixel_sizes_list(
+    matrix: List[List[int]],
+    pixel_sizes: Optional[List[List[float]]],
+    default_size: float,
+) -> str:
+    """
+    Convert the per-pixel sizing matrix to a flat SKILL float list (row-first).
+
+    When ``pixel_sizes`` is None/empty (uniform mode) every cell uses
+    ``default_size`` — producing exactly the same effective geometry as the
+    legacy scalar ``pixel_size`` path.  Ground (type 0) cells are emitted with
+    ``default_size`` too; the layout template only draws patches for non-zero
+    pixels, so their value is never read.
+
+    Example: default_size=31.0, no per-pixel sizes, [[0,1],[1,0]]
+             → "list(31.0 31.0 31.0 31.0)"
+    """
+    num_rows = len(matrix)
+    num_cols = len(matrix[0]) if num_rows else 0
+    flat: List[str] = []
+    for r in range(num_rows):
+        for c in range(num_cols):
+            if pixel_sizes:
+                flat.append(f"{float(pixel_sizes[r][c]):.4f}")
+            else:
+                flat.append(f"{float(default_size):.4f}")
+    return "list(" + " ".join(flat) + ")"
+
+
 def build_skill_port_names_list(matrix_info: Dict[str, Any]) -> str:
     """
     Build a SKILL list of central port names aligned with all_pixels,

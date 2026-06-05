@@ -78,12 +78,13 @@ import yaml
 from virtuoso_engine.config_loader import load_config
 
 from .runner import PersistentVirtuosoRunner, VirtuosoResult
-from .plotter import plot_s11_results, plot_s2p_results
+from .plotter import plot_s11_results, plot_s2p_results, plot_pixel_sizes
 from .pixel_matrix import (
     analyze_matrix,
     build_cap_pair_port_entries,
     build_emx_port_flags,
     build_skill_pixel_types_list,
+    build_skill_pixel_sizes_list,
     build_skill_port_names_list,
     get_feed_rows,
     total_ports as matrix_total_ports,
@@ -689,6 +690,17 @@ class VirtuosoPixelEngine:
                         f"for a {mat_info['num_rows']}×{mat_info['num_cols']} matrix."
                     )
 
+        # Optional per-pixel sizing matrix (same shape as the type matrix).
+        pixel_sizes = pd.get("pixel_sizes")
+        if pixel_sizes:
+            if len(pixel_sizes) != mat_info["num_rows"] or any(
+                len(row) != mat_info["num_cols"] for row in pixel_sizes
+            ):
+                raise ValueError(
+                    f"pixel_sizes shape must match pixel_state_matrix "
+                    f"({mat_info['num_rows']}×{mat_info['num_cols']})."
+                )
+
         # Feed rows are read directly from col 0 and col N-1 of the matrix.
         feed_row_left, feed_row_right = get_feed_rows(matrix)
 
@@ -709,6 +721,7 @@ class VirtuosoPixelEngine:
             NUM_ROWS            = mat_info["num_rows"],
             NUM_COLS            = mat_info["num_cols"],
             PIXEL_TYPES_SKILL   = build_skill_pixel_types_list(matrix),
+            PIXEL_SIZES_SKILL   = build_skill_pixel_sizes_list(matrix, pixel_sizes, la["pixel_size"]),
             PORT_NAMES_SKILL    = build_skill_port_names_list(mat_info),
             FEEDLINE_ROW_LEFT   = feed_row_left,
             FEEDLINE_ROW_RIGHT  = feed_row_right,
@@ -1200,17 +1213,37 @@ def _make_plots(
     if mode == "pixelated_design_simple":
         matrix = None
         cap_pixel_pairs = None
+        pixel_sizes = None
         if cfg is not None:
             pd = cfg.get("pixelated", {})
             matrix = pd.get("pixel_state_matrix")
             cap_pixel_pairs = pd.get("cap_pixel_pairs") or None
-        return plot_s2p_results(
+            pixel_sizes = pd.get("pixel_sizes") or None
+        result = plot_s2p_results(
             s2p_files=s_param_files,
             state_labels=labels,
             output_dir=plot_dir,
             pixel_matrix=matrix,
             cap_pixel_pairs=cap_pixel_pairs,
         )
+        # Additive: when per-pixel sizing is active, also render the to-scale
+        # patch-size visualisation.  Does not affect the existing plots.
+        if pixel_sizes and matrix is not None:
+            la = (cfg or {}).get("layout", {})
+            grid_size = la.get("grid_size", la.get("pixel_size", 25.0))
+            try:
+                size_path = plot_pixel_sizes(
+                    matrix=matrix,
+                    pixel_sizes=pixel_sizes,
+                    grid_size=grid_size,
+                    output_dir=plot_dir,
+                    margin=la.get("connect_margin", 2.0),
+                )
+                if isinstance(result, dict):
+                    result["pixel_sizes"] = size_path
+            except Exception as exc:  # plotting must never crash a sim run
+                print(f"[PixelEngine] pixel_sizes plot failed: {exc}")
+        return result
     return plot_s11_results(
         s1p_files=s_param_files,
         voltage_labels=labels,

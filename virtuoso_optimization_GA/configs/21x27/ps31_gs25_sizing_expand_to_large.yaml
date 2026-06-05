@@ -1,0 +1,104 @@
+# ===========================================================================
+# GA Experiment — EXPAND-TO-LARGE fine-tune of a per-pixel-SIZING design.
+#
+# Seeds the population from a known-good 21×27 ps31/gs25 *sizing* design
+# (gen183_ind15) and physically expands it to a larger grid by embedding the
+# seed at the centre (rows/cols of padding inserted), then fine-tunes the
+# expanded population — the same "expand to large" idea as
+# ps31_gs25_expand_to_large.yaml, but with flexible per-pixel sizing enabled.
+#
+# The seed's tuned per-pixel sizes are preserved at the centre by the embed
+# path; the padding / feed-extension cells are sized to remain connected under
+# the overlap rule.  Use p_embed (not p_random_insertion) for sizing designs —
+# embed preserves the seed's sizes exactly.
+#
+# You don't need to run anything to validate this — it parses and seeds through
+# the standard finetune_expand path.
+# ===========================================================================
+_base_: ../base/finetune_3_states.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_ps31_gs25_sizing_expand_to_large_seed2"
+
+grid:
+  n_states: 3
+  rows: 25       # TODO: target large-grid rows (seed is 21 → +4 padding rows)
+  cols: 31       # TODO: target large-grid cols (seed is 27 → +4 padding cols)
+
+  # --- Via-ground pixels: keep 1-2 (seed has 1) ---
+  n_max_vias: 2
+  init_min_vias: 1
+  init_max_vias: 2
+
+  # --- Flexible per-pixel sizing (matches the seed's regime) ---
+  enable_pixel_sizing: true
+  pixel_size_min: 25.0
+  pixel_size_max: 37.0
+  pixel_size_sigma: 2.0
+  connect_margin: 2.0
+  n_pixel_size_perturb: 8
+
+ga:
+  # REQUIRED — the design being fine-tuned.
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_sizing_seed2/sims/gen183_ind15/worker_4/pixsimple_r21c27_ps31p0_gs25p0_frl0frr1_w4/config.yaml"
+
+  finetune_expand:
+    enabled: true
+
+    # Fraction of pop_size_start generated completely at random (no seed).
+    # These random individuals are sizing-aware (enable_pixel_sizing above).
+    p_completely_random: 0.4
+
+    # Mutations applied to each seeded individual at init (uniform draw 1..N).
+    init_max_mutations: 5
+
+    # Embed-only: preserves the seed's tuned per-pixel sizes at the centre.
+    # (random_insertion does not track per-pixel sizes op-by-op, so keep it 0.)
+    p_embed:             1.0
+    p_random_insertion:  0.0
+
+    # Dense background around the embedded seed so the larger grid starts with
+    # plenty of metal to fine-tune (matches ps31_gs25_expand_to_large.yaml).
+    embed_density_min: 0.6
+    embed_density_max: 1.0
+
+    # Draw individual 0 from the embed distribution (not a bare zero-pad).
+    zero_pad_first: false
+
+    n_immigrants_expanded: 4   # expanded immigrants injected each generation
+
+  # Action weights: inherit the finetune base set, but enable flip_via (base
+  # sets it to 0) and add the new per-pixel size mutation.  Lists are replaced
+  # wholesale by the loader, so the full set is restated.
+  action_weights:
+    flip_01:             12.0
+    modify_switch:       5.0
+    flip_inductor:       5.0
+    flip_inductor_value: 0.0
+    perturb_caps:        4.0
+    flip_switch_state:   5.0
+    add_cap_pair:        8.0
+    remove_cap_pair:     8.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 5.0
+    flip_via:            4.0
+    perturb_pixel_sizes: 6.0
+
+  exploitation_action_weights:
+    modify_switch:       4.0
+    perturb_caps:        4.0
+    flip_switch_state:   4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 4.0
+    flip_via:            4.0
+    perturb_pixel_sizes: 4.0
+
+  # flip_inner_region biases flip_01 toward the embedded-seed region.  Update
+  # to the seed's location in the larger grid: with 25×31 target and a 21×27
+  # seed the embed offset is (pad_bottom=2, pad_left=2), so the seed occupies
+  # rows 2..22, cols 2..28.
+  flip_inner_region: [[2, 2], [22, 28]]
+  flip_inner_prob:   0.6
+  flip_outer_prob:   1.0
+
+seed: 2

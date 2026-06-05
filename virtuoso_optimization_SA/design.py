@@ -47,6 +47,11 @@ class DesignState:
     cap_pixel_pairs: List[List[List[int]]] = field(default_factory=list)  # [[[r1,c1],[r2,c2]], ...]
     cap_pair_values: List[float] = field(default_factory=list)            # [n_cap_pairs]
     inductor_cap_values: List[float] = field(default_factory=list)        # [n_inductors] series MIM cap per inductor
+    pixel_sizes: List[List[float]] = field(default_factory=list)          # [rows][cols] per-pixel metal patch size (um)
+    # Empty list  → uniform mode: engine uses scalar layout.pixel_size, connectivity uses
+    #               pure grid adjacency (backward-compatible default).
+    # Populated   → per-pixel sizes (same shape as ``matrix``).  The value at ground (type 0)
+    #               and feed-column cells is ignored (kept for shape consistency).
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -97,6 +102,7 @@ class DesignState:
             cap_pixel_pairs        = copy.deepcopy(self.cap_pixel_pairs),
             cap_pair_values        = list(self.cap_pair_values),
             inductor_cap_values    = list(self.inductor_cap_values),
+            pixel_sizes            = copy.deepcopy(self.pixel_sizes),
         )
 
     # ------------------------------------------------------------------
@@ -124,6 +130,8 @@ class DesignState:
         if self.cap_pixel_pairs:
             cfg["cap_pixel_pairs"] = self.cap_pixel_pairs
             cfg["cap_pair_values"] = self.cap_pair_values
+        if self.pixel_sizes:
+            cfg["pixel_sizes"] = self.pixel_sizes  # only emit when sizing enabled — keeps uniform path untouched
         return cfg
 
     def __repr__(self) -> str:
@@ -139,5 +147,6 @@ class DesignState:
             f"  InductorSwitchStates: {self.inductor_switch_states}\n"
             f"  InductorCapValues:    {self.inductor_cap_values}\n"
             f"  CapPixelPairs:        {self.cap_pixel_pairs}\n"
-            f"  CapPairValues:        {self.cap_pair_values}"
+            f"  CapPairValues:        {self.cap_pair_values}\n"
+            f"  PixelSizes(set):      {bool(self.pixel_sizes)}"
         )

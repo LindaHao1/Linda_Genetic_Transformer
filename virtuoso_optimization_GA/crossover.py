@@ -647,6 +647,8 @@ def crossover_zig_zag(
     single_inductor_value: bool = False,
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
+    grid_size: Optional[float] = None,
+    connect_margin: float = 2.0,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -660,6 +662,9 @@ def crossover_zig_zag(
     """
     rows = parent1.rows
     cols = parent1.cols
+
+    # Per-pixel sizing is active only when both parents carry a sizing matrix.
+    sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
 
     # --- Build position maps BEFORE any changes ---
     sw_map_p1  = _build_pos_map(parent1.matrix, 3)
@@ -684,6 +689,16 @@ def crossover_zig_zag(
                 list(parent1.matrix[r][:cut]) + list(parent2.matrix[r][cut:])
             )
 
+        # Mirror the same jagged cut on the sizing matrix so each child cell
+        # keeps the size of the parent it came from.
+        child_pixel_sizes: List[List[float]] = []
+        if sizing_on:
+            for r in range(rows):
+                cut = cut_cols[r]
+                child_pixel_sizes.append(
+                    list(parent1.pixel_sizes[r][:cut]) + list(parent2.pixel_sizes[r][cut:])
+                )
+
         xover_params = {"orientation": "vertical", "base_cut": base_cut}
 
     else:
@@ -694,11 +709,17 @@ def crossover_zig_zag(
         cut_rows = _zig_zag_markov_path(cols, base_cut, 1, rows - 2, rng)
 
         child_matrix = [[0] * cols for _ in range(rows)]
+        child_pixel_sizes = [[0.0] * cols for _ in range(rows)] if sizing_on else []
         for r in range(rows):
             for c in range(cols):
+                from_p1 = r < cut_rows[c]
                 child_matrix[r][c] = (
-                    parent1.matrix[r][c] if r < cut_rows[c] else parent2.matrix[r][c]
+                    parent1.matrix[r][c] if from_p1 else parent2.matrix[r][c]
                 )
+                if sizing_on:
+                    child_pixel_sizes[r][c] = (
+                        parent1.pixel_sizes[r][c] if from_p1 else parent2.pixel_sizes[r][c]
+                    )
 
         xover_params = {"orientation": "horizontal", "base_cut": base_cut}
 
@@ -711,7 +732,9 @@ def crossover_zig_zag(
         return None, xover_params
 
     # --- Final feasibility gate ---
-    if not is_feasible(child_matrix, 0, max_inductors, min_switches=min_switches, max_switches=max_switches, max_vias=max_vias):
+    if not is_feasible(child_matrix, 0, max_inductors, min_switches=min_switches, max_switches=max_switches, max_vias=max_vias,
+                       pixel_sizes=(child_pixel_sizes if sizing_on else None),
+                       grid_size=grid_size, connect_margin=connect_margin):
         return None, xover_params
 
     # --- Inherit continuous/discrete values from parents ---
@@ -776,4 +799,5 @@ def crossover_zig_zag(
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
         inductor_cap_values    = inductor_cap_values,
+        pixel_sizes            = child_pixel_sizes if sizing_on else [],
     ), xover_params

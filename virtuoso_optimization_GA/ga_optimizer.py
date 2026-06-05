@@ -253,6 +253,14 @@ class GAConfig:
     # Cap bank size: number of cap+switch pairs per switch pixel (1 = legacy single-cap)
     n_caps_per_switch: int = 1
 
+    # --- Flexible per-pixel sizing (default OFF → uniform pixel_size, legacy behaviour) ---
+    enable_pixel_sizing:  bool  = False
+    pixel_size_min:       float = 25.0   # um — min per-pixel metal patch size
+    pixel_size_max:       float = 37.0   # um — max per-pixel metal patch size
+    pixel_size_sigma:     float = 2.0    # um — Gaussian step for perturb_pixel_sizes
+    connect_margin:       float = 2.0    # um — min patch overlap to count as connected
+    n_pixel_size_perturb: int   = 8      # max pixels perturbed per perturb_pixel_sizes action
+
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
         ga   = d["ga"]
@@ -359,6 +367,13 @@ class GAConfig:
 
             single_inductor_value = bool(grid.get("single_inductor_value", False)),
             n_caps_per_switch     = int(grid.get("n_caps_per_switch", 1)),
+
+            enable_pixel_sizing   = bool( grid.get("enable_pixel_sizing", False)),
+            pixel_size_min        = float(grid.get("pixel_size_min", 25.0)),
+            pixel_size_max        = float(grid.get("pixel_size_max", 37.0)),
+            pixel_size_sigma      = float(grid.get("pixel_size_sigma", 2.0)),
+            connect_margin        = float(grid.get("connect_margin", 2.0)),
+            n_pixel_size_perturb  = int(  grid.get("n_pixel_size_perturb", 8)),
 
             state_aggregation_mode        = str(  ga.get("state_aggregation_mode",        "sum")),
             state_aggregation_temperature = float(ga.get("state_aggregation_temperature",  2.0)),
@@ -503,6 +518,13 @@ class SwitchableFilterGA:
         self.cfg   = GAConfig.from_dict(raw)
         self.specs = specs_from_config(raw["filter_specs"])
         self.rng   = random.Random(self.cfg.seed)
+
+        # grid_size is needed for overlap-based connectivity when per-pixel
+        # sizing is enabled.  Read it from the Virtuoso engine config (falls
+        # back to pixel_size, mirroring the engine's own default).
+        _vcfg   = load_config(Path(self.cfg.virtuoso_config))
+        _layout = _vcfg.get("layout", {})
+        self.grid_size = float(_layout.get("grid_size", _layout.get("pixel_size", 25.0)))
 
         self.output_dir = Path(self.cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -677,8 +699,15 @@ class SwitchableFilterGA:
                             inductor_cap_min         = cfg.inductor_cap_min,
                             inductor_cap_max         = cfg.inductor_cap_max,
                             inductor_cap_sigma       = cfg.inductor_cap_sigma,
+                            pixel_size_min           = cfg.pixel_size_min,
+                            pixel_size_max           = cfg.pixel_size_max,
+                            pixel_size_sigma         = cfg.pixel_size_sigma,
+                            grid_size                = self.grid_size,
+                            connect_margin           = cfg.connect_margin,
+                            n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
                         )
-                        if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias):
+                        if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias,
+                                                               pixel_sizes=(mutated.pixel_sizes or None), grid_size=self.grid_size, connect_margin=cfg.connect_margin):
                             exploit_candidates.append(mutated)
                             exploit_mut_logs.append(exploit_mut_info)
 
@@ -794,6 +823,8 @@ class SwitchableFilterGA:
                             single_inductor_value = cfg.single_inductor_value,
                             inductor_cap_min   = cfg.inductor_cap_min,
                             inductor_cap_max   = cfg.inductor_cap_max,
+                            grid_size          = self.grid_size,
+                            connect_margin     = cfg.connect_margin,
                         )
                         # Resolve actual method (hybrid picks randomly each call)
                         _method = cfg.crossover_method
@@ -869,12 +900,19 @@ class SwitchableFilterGA:
                             inductor_cap_min         = cfg.inductor_cap_min,
                             inductor_cap_max         = cfg.inductor_cap_max,
                             inductor_cap_sigma       = cfg.inductor_cap_sigma,
+                            pixel_size_min           = cfg.pixel_size_min,
+                            pixel_size_max           = cfg.pixel_size_max,
+                            pixel_size_sigma         = cfg.pixel_size_sigma,
+                            grid_size                = self.grid_size,
+                            connect_margin           = cfg.connect_margin,
+                            n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
                         )
                         if mutated is not None:
                             child = mutated
                             mutation_entry["mutation"] = mut_info
 
-                    if not is_feasible(child.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias):
+                    if not is_feasible(child.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias,
+                                       pixel_sizes=(child.pixel_sizes or None), grid_size=self.grid_size, connect_margin=cfg.connect_margin):
                         continue
 
                     offspring.append(child)
@@ -907,6 +945,11 @@ class SwitchableFilterGA:
                         inductor_cap_min    = cfg.inductor_cap_min,
                         inductor_cap_max    = cfg.inductor_cap_max,
                         n_caps_per_switch   = cfg.n_caps_per_switch,
+                        enable_pixel_sizing = cfg.enable_pixel_sizing,
+                        pixel_size_min      = cfg.pixel_size_min,
+                        pixel_size_max      = cfg.pixel_size_max,
+                        grid_size           = self.grid_size,
+                        connect_margin      = cfg.connect_margin,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -1190,7 +1233,11 @@ class SwitchableFilterGA:
                 if i == 0:
                     if cfg.finetune_expand_zero_pad_first:
                         population.append(
-                            embed_centered_with_density(seed_design, cfg.rows, cfg.cols, 0.0, self.rng)
+                            embed_centered_with_density(
+                                seed_design, cfg.rows, cfg.cols, 0.0, self.rng,
+                                pixel_size_min=cfg.pixel_size_min,
+                                pixel_size_max=cfg.pixel_size_max,
+                            )
                         )
                     else:
                         population.append(
@@ -1237,6 +1284,12 @@ class SwitchableFilterGA:
                             inductor_cap_min         = cfg.inductor_cap_min,
                             inductor_cap_max         = cfg.inductor_cap_max,
                             inductor_cap_sigma       = cfg.inductor_cap_sigma,
+                            pixel_size_min           = cfg.pixel_size_min,
+                            pixel_size_max           = cfg.pixel_size_max,
+                            pixel_size_sigma         = cfg.pixel_size_sigma,
+                            grid_size                = self.grid_size,
+                            connect_margin           = cfg.connect_margin,
+                            n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
                         )
                         if candidate is not None:
                             current = candidate
@@ -1280,6 +1333,11 @@ class SwitchableFilterGA:
                 inductor_cap_min    = cfg.inductor_cap_min,
                 inductor_cap_max    = cfg.inductor_cap_max,
                 n_caps_per_switch   = cfg.n_caps_per_switch,
+                enable_pixel_sizing = cfg.enable_pixel_sizing,
+                pixel_size_min      = cfg.pixel_size_min,
+                pixel_size_max      = cfg.pixel_size_max,
+                grid_size           = self.grid_size,
+                connect_margin      = cfg.connect_margin,
             )
             if design is None:
                 raise RuntimeError(

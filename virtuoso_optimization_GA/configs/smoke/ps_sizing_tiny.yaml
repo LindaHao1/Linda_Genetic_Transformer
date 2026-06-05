@@ -1,0 +1,56 @@
+# ===========================================================================
+# Tiny smoke config — flexible per-pixel sizing.
+#
+# Purpose: exercise the GA's pure-Python machinery (population init, sized
+# connectivity, perturb_pixel_sizes mutation, crossover that carries the
+# sizing matrix, serialization to the engine override) on a small grid WITHOUT
+# running Virtuoso/EMX.  Used by the logic smoke test, not for real sims.
+# ===========================================================================
+_base_: ../base/scratch_3_states.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/tmp/ga_sizing_smoke"
+
+grid:
+  rows: 9
+  cols: 13
+
+  # Small but roomy enough for 2–3 switches (3 distinct states need >=2 switches)
+  # plus an optional inductor footprint.
+  min_switches: 2
+  max_switches: 3
+  max_inductors: 1
+  init_min_switches: 2
+  init_max_switches: 3
+  init_min_inductors: 0
+  init_max_inductors: 1
+
+  enable_cap_pairs: false
+
+  # --- Flexible per-pixel sizing ---
+  enable_pixel_sizing: true
+  pixel_size_min: 25.0
+  pixel_size_max: 37.0
+  pixel_size_sigma: 2.0
+  connect_margin: 2.0
+  n_pixel_size_perturb: 4
+
+seed: 0
+
+ga:
+  pop_size_start: 8
+  pop_size_end: 4
+  pop_size_step_size: 2
+  n_gen: 2
+  n_immigrants: 1
+  n_parallel: 1
+  action_weights:
+    flip_01:             4.0
+    modify_switch:       2.0
+    perturb_caps:        4.0
+    flip_switch_state:   8.0
+    perturb_pixel_sizes: 6.0
+  exploitation_action_weights:
+    modify_switch:       4.0
+    perturb_caps:        4.0
+    perturb_pixel_sizes: 4.0

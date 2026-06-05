@@ -1,0 +1,70 @@
+# ===========================================================================
+# GA Experiment — 21×27 grid, pixel_size=31 um, grid_size=25 um, scratch
+#   + FLEXIBLE PER-PIXEL SIZING (each non-ground pixel has its own size).
+# Engine: config_ps31_gs25.yaml (single 200 nH inductor)
+#
+# Sibling of ps31_gs25_scratch.yaml — identical apart from the pixel-sizing
+# block below.  The baseline (uniform) config is left untouched.
+# ===========================================================================
+_base_: ../base/scratch_3_states.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_ps31_gs25.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_filter_results_21x27_ps31_gs25_sizing_seed2"
+
+grid:
+  rows: 21
+  cols: 27
+
+  # --- Via-ground pixels (type 4) ---
+  # The base config seeds 0 vias (init_min/max_vias = 0), so designs never had
+  # any.  Seed 1-2 vias in every fresh design (initial population AND the
+  # per-generation random immigrants both draw from this range) and cap the
+  # total at 2 so designs stay within the desired 1-2 range.  flip_via (weight
+  # below) lets the GA move/keep them during evolution.
+  n_max_vias: 2
+  init_min_vias: 1
+  init_max_vias: 2
+
+  # --- Flexible per-pixel sizing ---
+  # grid_size=25 um (from the engine config).  overlap = (sa+sb)/2 - grid_size.
+  # A pixel at 25 um overlaps a 25 um neighbour by 0 um (< margin → disconnected);
+  # the default 31 um uniform overlap is 6 um (well connected).
+  enable_pixel_sizing: true
+  pixel_size_min: 25.0
+  pixel_size_max: 37.0
+  pixel_size_sigma: 2.0
+  connect_margin: 2.0
+  n_pixel_size_perturb: 8
+
+seed: 2
+
+# Enable the new size-perturbation mutation alongside the existing actions.
+# (Weights not listed here are inherited from the base config; perturb_pixel_sizes
+#  is absent there and defaults to 0, so we add it explicitly.)
+ga:
+  action_weights:
+    flip_01:             4.0
+    modify_switch:       2.0
+    flip_inductor:       1.0
+    flip_inductor_value: 2.0
+    perturb_caps:        4.0
+    flip_switch_state:   8.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 8.0
+    flip_via:            8.0
+    perturb_pixel_sizes: 6.0
+  exploitation_action_weights:
+    flip_01:             0.0
+    modify_switch:       4.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        4.0
+    flip_switch_state:   4.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 4.0
+    flip_via:            8.0
+    perturb_pixel_sizes: 4.0

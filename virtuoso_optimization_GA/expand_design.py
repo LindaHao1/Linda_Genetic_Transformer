@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import copy
 import random as _random_module
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from virtuoso_engine.pixel_matrix import get_feed_rows
 from virtuoso_optimization_SA.design import DesignState
@@ -39,6 +39,24 @@ from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+def _resolve_size_range(
+    design: DesignState,
+    pixel_size_min: Optional[float],
+    pixel_size_max: Optional[float],
+) -> Tuple[float, float]:
+    """Resolve the [min, max] per-pixel size range used to fill newly-created
+    cells when expanding a sizing design.
+
+    Falls back to the seed's own observed size range, then to the project
+    default (25, 37) um, when explicit bounds are not supplied.
+    """
+    if pixel_size_min is not None and pixel_size_max is not None:
+        return float(pixel_size_min), float(pixel_size_max)
+    flat = [v for row in design.pixel_sizes for v in row]
+    if flat:
+        return float(min(flat)), float(max(flat))
+    return 25.0, 37.0
 
 def _choose_insertion_mode(
     rng: _random_module.Random,
@@ -152,6 +170,8 @@ def embed_centered_with_density(
     target_cols: int,
     density: float,
     rng: _random_module.Random,
+    pixel_size_min: Optional[float] = None,
+    pixel_size_max: Optional[float] = None,
 ) -> DesignState:
     """
     Embed the original design at the center of a (target_rows x target_cols) grid.
@@ -166,6 +186,12 @@ def embed_centered_with_density(
 
     Cap-pair coordinates are shifted by (pad_bottom, pad_left); distances are
     unchanged so all pairs remain valid without filtering.
+
+    Per-pixel sizing: when the seed carries a sizing matrix, a target-size sizing
+    matrix is produced — the seed's tuned sizes are embedded at the centre, the
+    background is random-filled in [pixel_size_min, pixel_size_max] (defaults
+    derived from the seed), and the feed-extension cells use pixel_size_max so the
+    extension trace is guaranteed to satisfy overlap-based connectivity.
     """
     src = design.matrix
     src_rows = len(src)
@@ -210,6 +236,26 @@ def embed_centered_with_density(
         for pair in design.cap_pixel_pairs
     ]
 
+    # --- Per-pixel sizing matrix (only when the seed is a sizing design) ---
+    new_pixel_sizes: List[List[float]] = []
+    if design.pixel_sizes:
+        smin, smax = _resolve_size_range(design, pixel_size_min, pixel_size_max)
+        new_pixel_sizes = [
+            [rng.uniform(smin, smax) for _ in range(target_cols)]
+            for _ in range(target_rows)
+        ]
+        # Embed the seed's tuned sizes at the centre.
+        for r in range(src_rows):
+            for c in range(src_cols):
+                new_pixel_sizes[r + pad_bottom][c + pad_left] = design.pixel_sizes[r][c]
+        # Feed-extension cells use the max size so the trace stays connected
+        # under the overlap rule (interior cells only; feed-column edges are
+        # always valid by convention).
+        for c in range(1, pad_left):
+            new_pixel_sizes[new_left_feed_row][c] = smax
+        for c in range(pad_left + src_cols, target_cols - 1):
+            new_pixel_sizes[new_right_feed_row][c] = smax
+
     return DesignState(
         matrix                 = new_matrix,
         switch_states          = copy.deepcopy(design.switch_states),
@@ -219,6 +265,7 @@ def embed_centered_with_density(
         cap_pixel_pairs        = shifted_pairs,
         cap_pair_values        = list(design.cap_pair_values),
         inductor_cap_values    = list(design.inductor_cap_values),
+        pixel_sizes            = new_pixel_sizes,
     )
 
 
@@ -289,6 +336,10 @@ def expand_design_to_size(
     if delta_rows == 0 and delta_cols == 0:
         return design.copy()
 
+    # Per-pixel size range (only meaningful when the seed is a sizing design).
+    smin = getattr(cfg, "pixel_size_min", None)
+    smax = getattr(cfg, "pixel_size_max", None)
+
     p_embed = getattr(cfg, "finetune_expand_p_embed", 0.3)
     p_ins   = getattr(cfg, "finetune_expand_p_random_insertion", 0.7)
     total_top = p_embed + p_ins
@@ -296,7 +347,10 @@ def expand_design_to_size(
         d_min = getattr(cfg, "finetune_expand_embed_density_min", 0.0)
         d_max = getattr(cfg, "finetune_expand_embed_density_max", 1.0)
         density = d_min + rng.random() * (d_max - d_min)
-        return embed_centered_with_density(design, target_rows, target_cols, density, rng)
+        return embed_centered_with_density(
+            design, target_rows, target_cols, density, rng,
+            pixel_size_min=smin, pixel_size_max=smax,
+        )
 
     p_dup  = cfg.finetune_expand_p_duplicate
     p_rand = cfg.finetune_expand_p_random_fill
@@ -354,5 +408,18 @@ def expand_design_to_size(
             cap_pair_values         = valid_vals,
             inductor_cap_values     = list(current.inductor_cap_values),
         )
+
+    # Insertion does not track per-pixel sizes through each op; if the seed was a
+    # sizing design, attach a fresh random-in-range sizing matrix of the final
+    # shape so per-pixel sizing stays active (the subsequent perturb_pixel_sizes
+    # mutations and feasibility checks then refine it).  The embed path (above)
+    # preserves the seed's tuned sizes exactly and is the recommended mode for
+    # sizing designs — prefer p_embed for those.
+    if design.pixel_sizes:
+        rmin, rmax = _resolve_size_range(design, smin, smax)
+        current.pixel_sizes = [
+            [rng.uniform(rmin, rmax) for _ in range(current.cols)]
+            for _ in range(current.rows)
+        ]
 
     return current
