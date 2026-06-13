@@ -1,0 +1,100 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, cap-pair FINE-TUNE
+#
+# Reads an already-implemented design (metal + vias) and runs the regular GA,
+# but ONLY adds / removes / re-values series MIM cap pairs placed ON TOP of the
+# existing metal.  Nothing else is touched:
+#
+#   * The metal (type-1) and via (type-4) layout is FROZEN.  It comes entirely
+#     from finetune_design_path and never changes, because:
+#       - every individual is seeded from that one design
+#         (finetune_expand.p_completely_random = 0.0),
+#       - the only non-zero mutation weights are the cap-pair actions,
+#       - random-metal immigrants are disabled (n_immigrants = 0),
+#       - crossover of two identical matrices returns that same matrix.
+#   * Cap pairs are placed between adjacent type-1 metal pixels
+#     (action_add_cap_pair), i.e. "series caps on top of the metal".
+#
+# REQUIRED before running:
+#   ga.finetune_design_path  → path to your implemented design's pixelated YAML
+#                              (a file with a `pixelated:` block: pixel_state_matrix,
+#                               state_list, cap_values, ...; e.g. a GA best_design.yaml).
+#   grid.rows / grid.cols    → MUST equal the seed design's grid (same size, no expansion).
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_tune_cap_pair"
+
+grid:
+  rows: 21   # MUST match the seed design's rows
+  cols: 27   # MUST match the seed design's cols
+
+  # Freeze everything except cap pairs.
+  max_switches: 0
+  max_inductors: 0
+  n_max_vias: 2          # >= number of vias in the seed design (vias kept, not changed)
+
+  # --- Series cap pairs ON TOP of the metal ---
+  enable_cap_pairs:  true
+  max_cap_pairs:     12          # upper bound on simultaneous cap pairs
+  cap_pair_init_min: 0           # (unused: no random individuals are generated)
+  cap_pair_init_max: 0
+  cap_pair_min:      50.0e-15    # 50 fF
+  cap_pair_max:      1000.0e-15  # 1000 fF
+  cap_pair_sigma:    50.0e-15    # perturbation step for perturb_pair_caps
+  cap_pair_min_dist: 2           # Chebyshev pixel distance between the two endpoints
+  cap_pair_max_dist: 3
+  cap_pair_axis_aligned: true    # only horizontal/vertical pairs
+
+seed: 42
+
+ga:
+  # No random-metal immigrants — keeps the metal/via layout frozen.
+  n_immigrants: 0
+
+  # Crossover only recombines cap pairs here (matrices are identical), so any
+  # method is safe; hybrid is fine.
+  p_crossover: 0.6
+  p_mutation:  0.8
+
+  # ONLY cap-pair actions are active.
+  action_weights:
+    flip_01:             0.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     3.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             0.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        2.0
+    remove_cap_pair:     2.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  # --- Fine-tune seeding from the implemented design (SAME grid size) ---
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_with_via/sims/gen198_ind8/worker_1/pixsimple_r21c27_ps12p5_gs10p0_frl10frr19_w1/config.yaml"   # REQUIRED — set to your implemented design's pixelated YAML
+  finetune_seed_ratio: 1.0
+  finetune_expand:
+    enabled: true
+    p_completely_random: 0.0   # 0 → ALL individuals seeded from the design (frozen metal)
+    init_max_mutations: 4      # apply up to N cap-pair mutations per seeded individual (diversity)
+    zero_pad_first: false      # individual 0 = exact seed copy (no zero-padding)
+    n_immigrants_expanded: 2   # immigrants are seed copies (same metal) — safe

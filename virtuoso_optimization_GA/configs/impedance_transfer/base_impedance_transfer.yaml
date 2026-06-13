@@ -1,0 +1,145 @@
+# ===========================================================================
+# GA Base Config — Impedance-Transformation Filter (metal-only, single state)
+#
+# This file is a SHARED BASE — do not run it directly.
+# Create an experiment config that sets:
+#   _base_: ./base_impedance_transfer.yaml
+#   virtuoso_config: ".../virtuoso_engine/config_impedance_transfer.yaml"
+#   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   grid:
+#     rows: <R>   # REQUIRED — grid shape lives here (NOT in a size-named folder)
+#     cols: <C>   # REQUIRED
+#   seed: 42
+#
+# Design space:
+#   Metal + vias — pixels are 0 (ground), 1 (metal), or 4 (via-ground). Up to
+#   2 vias allowed (init seeds >=1 to suppress low frequencies). No switches,
+#   inductors, or capacitors yet ("other parts optimized later"). The flip_01
+#   and flip_via actions are active.
+#
+# Objective:
+#   Single-state S21 filter spec, target band centred at 35 GHz (~3 GHz BW).
+#   The S21 already reflects the 30 -> 50 ohm impedance transformation + the
+#   122 fF parasitic input cap defined in config_impedance_transfer.yaml.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# GRID / DESIGN SPACE  (0/1 metal + up to 2 vias — no switches, inductors, caps)
+# ---------------------------------------------------------------------------
+grid:
+  # rows and cols MUST be set in the experiment config
+  n_states: 1
+
+  min_switches: 0
+  max_switches: 0
+  max_inductors: 0
+  n_max_vias: 2          # allow up to 2 vias (>=1 needed to suppress low freq)
+
+  init_min_switches: 0
+  init_max_switches: 0
+  init_min_inductors: 0
+  init_max_inductors: 0
+  init_min_vias: 1       # seed at least one via for low-frequency suppression
+  init_max_vias: 2       # ...up to the 2-via budget
+
+  cap_min: 0.0
+  cap_max: 0.0
+  n_inductor_values: 1
+  single_inductor_value: true
+
+  enable_cap_pairs: false
+  max_cap_pairs: 0
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATION  (35 GHz centre, ~3 GHz bandwidth)
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [33.5e9, 36.5e9]    # 35 GHz centre, 3 GHz BW
+    passband_min_db: -0.0
+    stopband_regions:
+      - [10.0e9, 31.0e9]
+      - [39.0e9, 55.0e9]
+    stopband_max_db: -20.0
+    weight: 1.0
+    passband_weight: 6.0
+    stopband_weight: 1.0
+    cross_stopband_regions: []
+    cross_stopband_max_db: -30.0
+    cross_stopband_weight: 0.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    cost_order: 1.5
+    enable_peak_matching:         false
+    enable_spurious_peak_penalty: false
+    enable_pv_contrast:           false   # single state → no per-variant contrast
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS  (flip_01 + flip_via active)
+# ---------------------------------------------------------------------------
+ga:
+  pop_size_start:    60
+  pop_size_end:      30
+  pop_size_step_size: 10
+  pop_schedule_gens_per_step: 10
+  elite_fraction:   0.20
+  n_keep_bad: 1
+  n_gen:    200
+  n_immigrants: 2
+
+  p_crossover: 0.5
+  p_mutation:  0.5
+  crossover_method: "hybrid"
+  hybrid_method_weights: [1.0, 1.0, 1.0]
+  n_centroids: 5
+  block_min_size: 5
+  block_max_size: 15
+
+  selection:       "tournament"
+  tournament_size: 5
+
+  n_parallel: 5
+
+  n_regular_flip: 15
+  cap_sigma: 0.0
+  via_flip_max_count: 1   # add/remove up to 1 via per flip_via action
+
+  # flip_01 + flip_via active — other special-pixel actions zeroed out
+  action_weights:
+    flip_01:             8.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+
+  use_state_champions:      false
+  dynamic_state_assignment: false
+  p_champion_parent:        0.0
+  p_champion_parent2:       0.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            1.0
+    perturb_inductor_caps: 0.0
+
+  feasibility_cost_threshold: 1.0e6
+  population_plot_top_k: 5

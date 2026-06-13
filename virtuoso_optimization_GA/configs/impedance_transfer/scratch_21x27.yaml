@@ -1,0 +1,20 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, 21x27 grid, metal-only scratch
+#
+# Grid shape (rows x cols) is configured HERE, not encoded in a size-named
+# folder. Change rows/cols freely to try other shapes.
+#
+# Keep config_impedance_transfer.yaml's pixelated.feedline.feedline_row
+# consistent with the grid rows below (centre row = (rows - 1) / 2).
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_with_via"
+
+grid:
+  rows: 21   # grid shape — edit as needed
+  cols: 27
+
+seed: 42

@@ -1,0 +1,74 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, SCRATCH co-optimization
+#
+# From-random training that CO-OPTIMIZES, simultaneously:
+#   * pixel metal 0/1  (flip_01)
+#   * vias             (flip_via, type-4 pixels)
+#   * series MIM cap pairs on the metal  (add / remove / perturb_pair_caps)
+#
+# NOT optimized (kept off): switchable caps (switch pixels) and inductors.
+#
+# This is a fresh scratch run (no finetune seeding). Grid shape (rows x cols)
+# is configured here. Keep config_impedance_transfer.yaml's
+# pixelated.feedline.feedline_row consistent with grid.rows.
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_cap"
+
+grid:
+  rows: 21   # grid shape — edit as needed
+  cols: 27
+
+  # No switches, no inductors. Vias allowed (inherited from base: n_max_vias=2,
+  # init seeds >=1 via for low-frequency suppression).
+  max_switches: 0
+  max_inductors: 0
+
+  # --- Series cap pairs ON TOP of the metal (co-optimized from scratch) ---
+  enable_cap_pairs:  true
+  max_cap_pairs:     12          # upper bound on simultaneous cap pairs
+  cap_pair_init_min: 0           # random init seeds 0..4 cap pairs per individual
+  cap_pair_init_max: 6
+  cap_pair_min:      50.0e-15    # 50 fF
+  cap_pair_max:      1000.0e-15  # 1000 fF
+  cap_pair_sigma:    50.0e-15    # perturbation step for perturb_pair_caps
+  cap_pair_min_dist: 2           # Chebyshev pixel distance between endpoints
+  cap_pair_max_dist: 3
+  cap_pair_axis_aligned: true    # only horizontal/vertical pairs
+
+seed: 42
+
+ga:
+  # Active: flip_01 (metal), flip_via, and the three cap-pair actions.
+  # All switch/inductor actions stay at 0.
+  action_weights:
+    flip_01:             6.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             2.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        2.0
+    remove_cap_pair:     2.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0

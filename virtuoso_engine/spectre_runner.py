@@ -24,11 +24,17 @@ The Spectre netlist structure per state
   //  nport_sw<i>(sw_mid<i> 0) nport file=<on|off.s1p> N=1
   //  Topology: SW EMX port (mim_m) → mimcap → (mim_p) sw_mid → nport(s1p) → GND
 
-  p_in  (pix_in  0) port r=50 num=1
-  p_out (pix_out 0) port r=50 num=2
+  p_in  (pix_in  0) port r=<port1_impedance> num=1
+  p_out (pix_out 0) port r=<port2_impedance> num=2
+  // optional parasitic input shunt cap (simulation.input_shunt_cap):
+  c_in_par (pix_in 0) capacitor c=<input_shunt_cap>
 
   sp_sim sp ports=[p_in p_out] start=... stop=... step=...
          file=<output.s2p> datafmt=touchstone
+
+Port impedances and the input shunt capacitor are optional simulation-config
+keys (port1_impedance, port2_impedance, input_shunt_cap).  When absent they
+default to 50 ohm / 50 ohm / no capacitor — i.e. the original behaviour.
 """
 
 from __future__ import annotations
@@ -291,9 +297,19 @@ def generate_state_netlist(
         lines.append("")
 
     # --- I/O ports ---
+    # Port reference impedances and an optional parasitic input shunt capacitor
+    # are read from the simulation config.  Defaults reproduce the original
+    # behaviour (both ports 50 ohm, no capacitor).
+    r_in   = sim_cfg.get("port1_impedance", 50)
+    r_out  = sim_cfg.get("port2_impedance", 50)
+    shunt  = sim_cfg.get("input_shunt_cap", None)   # F (e.g. "122e-15"); None/0 → omit
     lines.append("// Input/output RF ports")
-    lines.append("p_in  (pix_in  0) port r=50 num=1")
-    lines.append("p_out (pix_out 0) port r=50 num=2\n")
+    lines.append(f"p_in  (pix_in  0) port r={r_in} num=1")
+    lines.append(f"p_out (pix_out 0) port r={r_out} num=2")
+    if shunt:
+        lines.append("// Parasitic input shunt capacitor (port 1 to ground)")
+        lines.append(f"c_in_par (pix_in 0) capacitor c={shunt}")
+    lines.append("")
 
     # --- S-parameter analysis ---
     lines.append("// 2-port S-parameter sweep")

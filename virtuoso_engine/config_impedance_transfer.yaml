@@ -1,0 +1,47 @@
+# ============================================================
+# Virtuoso Pixel Engine — Impedance-Transformation Filter
+#
+# New simulation option for pixelated_design_simple.  The pixel layout is
+# unchanged, but the Spectre S-parameter measurement is modified:
+#   * Port 1 (input)  reference impedance = 30 ohm
+#   * Port 2 (output) reference impedance = 50 ohm
+#   * An ideal parasitic capacitor (122 fF) is placed from the port-1 node
+#     (pix_in) to ground.  Port 1 looks in from OUTSIDE this capacitor, so it
+#     sees the cap in parallel with the pixel network.  The output side is
+#     unchanged.
+#
+# Input/output feedlines may also use independent widths
+# (feedline_width_in / feedline_width_out).
+#
+# This config inherits config_base.yaml and only overrides the geometry and the
+# new simulation keys.  All defaults elsewhere are untouched, so existing
+# configs are unaffected.
+# ============================================================
+
+_base_: config_base.yaml
+
+layout:
+  pixel_size: 12.5   # um — metal patch size (EDIT to taste)
+  grid_size:  10.0   # um — pixel pitch; the GA reads this for connectivity
+
+# ------------------------------------------------------------
+# SIMULATION — impedance-transformation port setup
+# ------------------------------------------------------------
+simulation:
+  port1_impedance: 30          # input  port reference impedance (ohm)
+  port2_impedance: 50          # output port reference impedance (ohm)
+  input_shunt_cap: "122e-15"   # ideal parasitic cap (F), pix_in -> gnd; "" / 0 disables
+
+# ------------------------------------------------------------
+# PIXELATED — feedline geometry
+#   feedline_row must match the row index where the GA grid feeds in/out.
+#   For an R-row grid the centre row is (R - 1) / 2.  Keep this consistent
+#   with the GA experiment config's grid.rows.
+# ------------------------------------------------------------
+pixelated:
+  feedline:
+    feedline_row: 1            # EDIT to the centre row of the GA grid
+    feedline_width: 10.2       # legacy fallback (used if in/out unset)
+    feedline_width_in: 20    # input  (left) feedline width (um) — EDIT
+    feedline_width_out: 10.2   # output (right) feedline width (um) — EDIT
+    feedline_padding: 10.0

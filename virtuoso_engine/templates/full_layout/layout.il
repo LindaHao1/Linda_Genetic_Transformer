@@ -41,14 +41,14 @@ let( ( cv libName cellName
        cap_pair_count cap_pair_pixels cap_pair_dims cap_pair_orient
        cap_pair_wire_width
        via_size
-       feedline_row_left feedline_row_right feedline_width feedline_padding
+       feedline_row_left feedline_row_right feedline_width_left feedline_width_right feedline_padding
        gnd_y_extension
        constraint_group_id viaOptions
        fl_left_y_center  fl_left_y_bottom  fl_left_y_top
        fl_right_y_center fl_right_y_bottom fl_right_y_top
        gnd_y_bottom gnd_y_top
        fl_x_left fl_x_right
-       pin_size feedline_pin_size
+       pin_size feedline_pin_size_left feedline_pin_size_right
        sw_idx ind_idx
        keepout_list gnd_fill_list
      )
@@ -90,12 +90,14 @@ cap_pair_wire_width  = ${CAP_PAIR_WIRE_WIDTH}
 via_size             = ${VIA_SIZE}
 feedline_row_left    = ${FEEDLINE_ROW_LEFT}
 feedline_row_right   = ${FEEDLINE_ROW_RIGHT}
-feedline_width       = ${FEEDLINE_WIDTH}
+feedline_width_left  = ${FEEDLINE_WIDTH_LEFT}   ; input  (col 0) feedline width
+feedline_width_right = ${FEEDLINE_WIDTH_RIGHT}  ; output (col N-1) feedline width
 feedline_padding     = ${FEEDLINE_PADDING}
 gnd_y_extension      = ${GND_Y_EXTENSION}
 
 pin_size         = 0.5
-feedline_pin_size = feedline_width
+feedline_pin_size_left  = feedline_width_left
+feedline_pin_size_right = feedline_width_right
 
 ; ============================================================
 ; SECTION 2 — OPEN CELL VIEW
@@ -128,12 +130,12 @@ viaOptions~>createInRoute = nil
 ; pixelated_design_simple: the single non-zero cell in each feed column marks
 ; the feedline row.  This means the matrix drives geometry, not a config field.
 fl_left_y_center  = (num_rows - 1 - feedline_row_left)  * grid_size + grid_size / 2.0
-fl_left_y_bottom  = fl_left_y_center  - feedline_width / 2.0
-fl_left_y_top     = fl_left_y_center  + feedline_width / 2.0
+fl_left_y_bottom  = fl_left_y_center  - feedline_width_left / 2.0
+fl_left_y_top     = fl_left_y_center  + feedline_width_left / 2.0
 
 fl_right_y_center = (num_rows - 1 - feedline_row_right) * grid_size + grid_size / 2.0
-fl_right_y_bottom = fl_right_y_center - feedline_width / 2.0
-fl_right_y_top    = fl_right_y_center + feedline_width / 2.0
+fl_right_y_bottom = fl_right_y_center - feedline_width_right / 2.0
+fl_right_y_top    = fl_right_y_center + feedline_width_right / 2.0
 
 gnd_y_bottom = 0.0 - gnd_y_extension
 gnd_y_top    = num_rows * grid_size + gnd_y_extension
@@ -170,8 +172,8 @@ dbCreateRect(cv gnd_layer
 ; PIX_IN and PIX_IN_GND (left end)
 let( (pin_box)
     pin_box = list(
-        list(fl_x_left            fl_left_y_center - feedline_pin_size/2.0)
-        list(fl_x_left + pin_size fl_left_y_center + feedline_pin_size/2.0))
+        list(fl_x_left            fl_left_y_center - feedline_pin_size_left/2.0)
+        list(fl_x_left + pin_size fl_left_y_center + feedline_pin_size_left/2.0))
     fl_create_pin(cv "PIX_IN"     list(pixel_layer "pin") pin_box "input")
     fl_create_pin(cv "PIX_IN_GND" list(gnd_layer   "pin") pin_box "inputOutput")
 )
@@ -179,8 +181,8 @@ let( (pin_box)
 ; PIX_OUT and PIX_OUT_GND (right end)
 let( (pin_box)
     pin_box = list(
-        list(fl_x_right - pin_size fl_right_y_center - feedline_pin_size/2.0)
-        list(fl_x_right            fl_right_y_center + feedline_pin_size/2.0))
+        list(fl_x_right - pin_size fl_right_y_center - feedline_pin_size_right/2.0)
+        list(fl_x_right            fl_right_y_center + feedline_pin_size_right/2.0))
     fl_create_pin(cv "PIX_OUT"     list(pixel_layer "pin") pin_box "output")
     fl_create_pin(cv "PIX_OUT_GND" list(gnd_layer   "pin") pin_box "inputOutput")
 )

@@ -1405,6 +1405,12 @@ class SwitchableFilterGA:
         """
         if not result.success:
             return 1e9, None
+        # A run can report success (the Virtuoso SKILL script exited 0) yet
+        # produce no S-parameter files when EMX failed to generate a .snp.
+        # Treat a missing/short s-param set as a failed design so it gets the
+        # large penalty rather than a misleadingly low cost.
+        if len(result.s_param_files) < self.cfg.n_states:
+            return 1e9, None
         agg_mode = self.cfg.state_aggregation_mode
         agg_temp = self.cfg.state_aggregation_temperature
         if self.cfg.dynamic_state_assignment:

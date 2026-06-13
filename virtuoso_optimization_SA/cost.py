@@ -830,11 +830,15 @@ def compute_total_cost(
     state_costs: List[float] = []
     spec_by_idx: Dict[int, FilterStateSpec] = {s.state_index: s for s in specs}
 
-    for state_idx, s2p_path in enumerate(s2p_paths):
-        spec = spec_by_idx.get(state_idx)
-        if spec is None:
-            continue  # no target for this state → skip
+    # Iterate over the EXPECTED states (one per spec), not over the s2p files
+    # produced.  A state whose s2p is missing — including the case where the
+    # whole simulation failed and s2p_paths is empty or shorter than the number
+    # of states — gets the failure penalty.  (Iterating over s2p_paths instead
+    # would score an empty list as 0.0, masking a failed design as "perfect".)
+    for state_idx in sorted(spec_by_idx):
+        spec = spec_by_idx[state_idx]
 
+        s2p_path = s2p_paths[state_idx] if state_idx < len(s2p_paths) else None
         if s2p_path is None or not Path(s2p_path).exists():
             state_costs.append(_FAIL_PENALTY * spec.weight)
             continue

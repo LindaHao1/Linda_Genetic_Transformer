@@ -725,7 +725,10 @@ class VirtuosoPixelEngine:
             PORT_NAMES_SKILL    = build_skill_port_names_list(mat_info),
             FEEDLINE_ROW_LEFT   = feed_row_left,
             FEEDLINE_ROW_RIGHT  = feed_row_right,
-            FEEDLINE_WIDTH      = feedline.get("feedline_width", 5.0),
+            FEEDLINE_WIDTH_LEFT  = feedline.get("feedline_width_in",
+                                                feedline.get("feedline_width", 5.0)),
+            FEEDLINE_WIDTH_RIGHT = feedline.get("feedline_width_out",
+                                                feedline.get("feedline_width", 5.0)),
             FEEDLINE_PADDING    = feedline.get("feedline_padding", 10.0),
             GND_Y_EXTENSION     = la.get("gnd_y_extension", 0.0),
             CAP_PORT_DATA_SKILL = cap_port_data_skill,
@@ -913,6 +916,8 @@ class VirtuosoPixelEngine:
         feed_row_left, feed_row_right = get_feed_rows(matrix)
         feedline      = pd.get("feedline", {})
         feedline_w    = feedline.get("feedline_width", 10.2)
+        feedline_w_in = feedline.get("feedline_width_in",  feedline_w)
+        feedline_w_out = feedline.get("feedline_width_out", feedline_w)
         feedline_pad  = feedline.get("feedline_padding", 10.0)
 
         # --- Build SKILL array literals ---
@@ -966,7 +971,8 @@ class VirtuosoPixelEngine:
             GND_Y_EXTENSION        = la.get("gnd_y_extension", 0.0),
             FEEDLINE_ROW_LEFT      = feed_row_left,
             FEEDLINE_ROW_RIGHT     = feed_row_right,
-            FEEDLINE_WIDTH         = feedline_w,
+            FEEDLINE_WIDTH_LEFT    = feedline_w_in,
+            FEEDLINE_WIDTH_RIGHT   = feedline_w_out,
             FEEDLINE_PADDING       = feedline_pad,
         )
         output_path.write_text(rendered)
