@@ -16,7 +16,7 @@
 _base_: ./base_impedance_transfer.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_cap"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_cap_fixed"
 
 grid:
   rows: 21   # grid shape — edit as needed

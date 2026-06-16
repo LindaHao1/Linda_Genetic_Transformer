@@ -183,6 +183,21 @@ class GAConfig:
     cap_pair_max_dist:     int   = 3
     cap_pair_axis_aligned: bool  = True  # if True, only horizontal/vertical pairs are allowed
 
+    # Shunt-capacitor pixels (type 5): permanent MIM cap to ground; value GA-tunable, no states.
+    enable_shunt_caps:    bool  = False
+    max_shunt_caps:       int   = 0
+    min_shunt_caps:       int   = 0    # lower bound enforced by modify_shunt_cap (remove sub-action)
+    shunt_cap_init_min:   int   = 0    # min shunt caps placed in a new random design
+    shunt_cap_init_max:   int   = 0    # max shunt caps placed in a new random design
+    shunt_cap_min:        float = 50e-15
+    shunt_cap_max:        float = 1000e-15
+    shunt_cap_sigma:      float = 50e-15
+
+    # Fraction of interior pixels set to metal (type 1) in a fresh random design
+    # and in random immigrants.  0.50 = the original 50/50 metal/ground fill;
+    # lower values produce sparser starting layouts.
+    init_metal_density:   float = 0.50
+
     # Inductor series MIM cap range (one cap per inductor pixel, same topology as switch caps)
     inductor_cap_min:   float = 200e-15
     inductor_cap_max:   float = 1000e-15
@@ -326,6 +341,16 @@ class GAConfig:
             cap_pair_min_dist     = int(grid.get("cap_pair_min_dist", 2)),
             cap_pair_max_dist     = int(grid.get("cap_pair_max_dist", 3)),
             cap_pair_axis_aligned = bool(grid.get("cap_pair_axis_aligned", True)),
+
+            enable_shunt_caps     = bool(grid.get("enable_shunt_caps", False)),
+            max_shunt_caps        = int(grid.get("max_shunt_caps", 0)),
+            min_shunt_caps        = int(grid.get("min_shunt_caps", 0)),
+            shunt_cap_init_min    = int(grid.get("shunt_cap_init_min", 0)),
+            shunt_cap_init_max    = int(grid.get("shunt_cap_init_max", 0)),
+            shunt_cap_min         = float(grid.get("shunt_cap_min", 50e-15)),
+            shunt_cap_max         = float(grid.get("shunt_cap_max", 1000e-15)),
+            shunt_cap_sigma       = float(grid.get("shunt_cap_sigma", 50e-15)),
+            init_metal_density    = float(grid.get("init_metal_density", 0.50)),
 
             inductor_cap_min   = float(grid.get("inductor_cap_min",   200e-15)),
             inductor_cap_max   = float(grid.get("inductor_cap_max",  1000e-15)),
@@ -519,12 +544,20 @@ class SwitchableFilterGA:
         self.specs = specs_from_config(raw["filter_specs"])
         self.rng   = random.Random(self.cfg.seed)
 
-        # grid_size is needed for overlap-based connectivity when per-pixel
-        # sizing is enabled.  Read it from the Virtuoso engine config (falls
-        # back to pixel_size, mirroring the engine's own default).
+        # Layout geometry (pixel_size / grid_size).  By default these come from
+        # the Virtuoso engine config, but an experiment config may override them
+        # with its own top-level ``layout:`` block — this lets different
+        # experiments use different geometry without editing the shared engine
+        # config.  The override (if any) is deep-merged into every simulation's
+        # config via _build_override, and is also used for the GA's own
+        # overlap-based connectivity (self.grid_size).
         _vcfg   = load_config(Path(self.cfg.virtuoso_config))
-        _layout = _vcfg.get("layout", {})
-        self.grid_size = float(_layout.get("grid_size", _layout.get("pixel_size", 25.0)))
+        self._layout_override = dict(raw.get("layout", {}))
+        _eff_layout = {**_vcfg.get("layout", {}), **self._layout_override}
+        self.grid_size = float(_eff_layout.get("grid_size", _eff_layout.get("pixel_size", 25.0)))
+        if self._layout_override:
+            print(f"[GA] layout override from experiment config: {self._layout_override} "
+                  f"(grid_size={self.grid_size})")
 
         self.output_dir = Path(self.cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -705,6 +738,11 @@ class SwitchableFilterGA:
                             grid_size                = self.grid_size,
                             connect_margin           = cfg.connect_margin,
                             n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
+                            max_shunt_caps           = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                            min_shunt_caps           = cfg.min_shunt_caps,
+                            shunt_cap_min            = cfg.shunt_cap_min,
+                            shunt_cap_max            = cfg.shunt_cap_max,
+                            shunt_cap_sigma          = cfg.shunt_cap_sigma,
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias,
                                                                pixel_sizes=(mutated.pixel_sizes or None), grid_size=self.grid_size, connect_margin=cfg.connect_margin):
@@ -825,6 +863,9 @@ class SwitchableFilterGA:
                             inductor_cap_max   = cfg.inductor_cap_max,
                             grid_size          = self.grid_size,
                             connect_margin     = cfg.connect_margin,
+                            max_shunt_caps     = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                            shunt_cap_min      = cfg.shunt_cap_min,
+                            shunt_cap_max      = cfg.shunt_cap_max,
                         )
                         # Resolve actual method (hybrid picks randomly each call)
                         _method = cfg.crossover_method
@@ -906,6 +947,11 @@ class SwitchableFilterGA:
                             grid_size                = self.grid_size,
                             connect_margin           = cfg.connect_margin,
                             n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
+                            max_shunt_caps           = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                            min_shunt_caps           = cfg.min_shunt_caps,
+                            shunt_cap_min            = cfg.shunt_cap_min,
+                            shunt_cap_max            = cfg.shunt_cap_max,
+                            shunt_cap_sigma          = cfg.shunt_cap_sigma,
                         )
                         if mutated is not None:
                             child = mutated
@@ -931,6 +977,8 @@ class SwitchableFilterGA:
                         cap_min             = cfg.cap_min,
                         cap_max             = cfg.cap_max,
                         rng                 = self.rng,
+                        p0                  = 1.0 - cfg.init_metal_density,
+                        p1                  = cfg.init_metal_density,
                         n_inductor_values   = cfg.n_inductor_values,
                         n_init_vias         = self.rng.randint(cfg.init_min_vias, cfg.init_max_vias),
                         max_vias            = cfg.n_max_vias,
@@ -945,6 +993,11 @@ class SwitchableFilterGA:
                         inductor_cap_min    = cfg.inductor_cap_min,
                         inductor_cap_max    = cfg.inductor_cap_max,
                         n_caps_per_switch   = cfg.n_caps_per_switch,
+                        n_init_shunt_caps   = (self.rng.randint(cfg.shunt_cap_init_min, cfg.shunt_cap_init_max)
+                                               if cfg.enable_shunt_caps else 0),
+                        max_shunt_caps      = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                        shunt_cap_min       = cfg.shunt_cap_min,
+                        shunt_cap_max       = cfg.shunt_cap_max,
                         enable_pixel_sizing = cfg.enable_pixel_sizing,
                         pixel_size_min      = cfg.pixel_size_min,
                         pixel_size_max      = cfg.pixel_size_max,
@@ -1290,6 +1343,11 @@ class SwitchableFilterGA:
                             grid_size                = self.grid_size,
                             connect_margin           = cfg.connect_margin,
                             n_pixel_size_perturb     = cfg.n_pixel_size_perturb,
+                            max_shunt_caps           = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                            min_shunt_caps           = cfg.min_shunt_caps,
+                            shunt_cap_min            = cfg.shunt_cap_min,
+                            shunt_cap_max            = cfg.shunt_cap_max,
+                            shunt_cap_sigma          = cfg.shunt_cap_sigma,
                         )
                         if candidate is not None:
                             current = candidate
@@ -1319,6 +1377,8 @@ class SwitchableFilterGA:
                 cap_min             = cfg.cap_min,
                 cap_max             = cfg.cap_max,
                 rng                 = self.rng,
+                p0                  = 1.0 - cfg.init_metal_density,
+                p1                  = cfg.init_metal_density,
                 n_inductor_values   = cfg.n_inductor_values,
                 n_init_vias         = self.rng.randint(cfg.init_min_vias, cfg.init_max_vias),
                 max_vias            = cfg.n_max_vias,
@@ -1333,6 +1393,11 @@ class SwitchableFilterGA:
                 inductor_cap_min    = cfg.inductor_cap_min,
                 inductor_cap_max    = cfg.inductor_cap_max,
                 n_caps_per_switch   = cfg.n_caps_per_switch,
+                n_init_shunt_caps   = (self.rng.randint(cfg.shunt_cap_init_min, cfg.shunt_cap_init_max)
+                                       if cfg.enable_shunt_caps else 0),
+                max_shunt_caps      = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
+                shunt_cap_min       = cfg.shunt_cap_min,
+                shunt_cap_max       = cfg.shunt_cap_max,
                 enable_pixel_sizing = cfg.enable_pixel_sizing,
                 pixel_size_min      = cfg.pixel_size_min,
                 pixel_size_max      = cfg.pixel_size_max,
@@ -1359,11 +1424,15 @@ class SwitchableFilterGA:
     ) -> dict:
         tag        = f"gen{gen_idx}_ind{cand_idx}"
         output_dir = str(self.output_dir / "sims" / tag)
-        return {
+        override = {
             "mode":      "pixelated_design_simple",
             "pixelated": design.to_pixelated_config(),
             "project":   {"parent_output_dir": output_dir},
         }
+        # Experiment-level geometry override (pixel_size / grid_size), if any.
+        if self._layout_override:
+            override["layout"] = dict(self._layout_override)
+        return override
 
     def _evaluate_batch(
         self,
@@ -1605,6 +1674,7 @@ class SwitchableFilterGA:
             "inductor_values":       design.inductor_values,
             "inductor_switch_states": design.inductor_switch_states,
             "inductor_cap_values":   design.inductor_cap_values,
+            "shunt_cap_values":      design.shunt_cap_values,
         }
         path = self.output_dir / "best_design.json"
         path.write_text(json.dumps(data, indent=2))

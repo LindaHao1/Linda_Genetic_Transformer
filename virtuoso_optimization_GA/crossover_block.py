@@ -30,8 +30,10 @@ from .crossover import (
     _build_pos_map,
     _fix_connectivity,
     _fix_inductors,
+    _fix_shunt_caps,
     _fix_switches,
     _fix_vias,
+    _inherit_shunt_caps,
 )
 from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 from .crossover_weighted_clustering import (
@@ -196,6 +198,9 @@ def crossover_block(
     inductor_cap_max: float = 1000e-15,
     grid_size: Optional[float] = None,
     connect_margin: float = 2.0,
+    max_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -313,6 +318,8 @@ def crossover_block(
         _fix_switches(child_matrix, min_switches, max_switches, rng)
         if max_vias > 0:
             _fix_vias(child_matrix, max_vias, rng)
+        if max_shunt_caps > 0:
+            _fix_shunt_caps(child_matrix, max_shunt_caps, rng)
         if not _fix_connectivity(child_matrix, rng):
             continue   # try a new placement
 
@@ -371,6 +378,10 @@ def crossover_block(
             rng,
         )
 
+        shunt_cap_values = _inherit_shunt_caps(
+            child_matrix, parent1, parent2, rng, shunt_cap_min, shunt_cap_max
+        )
+
         return DesignState(
             matrix                 = child_matrix,
             switch_states          = switch_states,
@@ -380,6 +391,7 @@ def crossover_block(
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values,
             inductor_cap_values    = inductor_cap_values,
+            shunt_cap_values       = shunt_cap_values,
             pixel_sizes            = child_pixel_sizes if sizing_on else [],
         ), xover_params
 

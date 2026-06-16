@@ -94,8 +94,10 @@ def _insert_column(
             new_val = rng.randint(0, 1)
         else:  # "duplicate"
             src = row[col_pos - 1]
-            # Demote special pixels so Chebyshev ≥ 3 spacing is not immediately violated
-            new_val = 1 if src in (2, 3) else src
+            # Demote special pixels so Chebyshev ≥ 3 spacing is not immediately violated.
+            # Type-5 (shunt cap) is demoted too: a duplicated shunt cap would have no
+            # matching shunt_cap_values entry and break port/value alignment.
+            new_val = 1 if src in (2, 3, 5) else src
         new_row = list(row)
         new_row.insert(col_pos, new_val)
         new_matrix.append(new_row)
@@ -131,8 +133,8 @@ def _insert_row(
         for c, v in enumerate(src_row):
             if c == 0 or c == cols - 1:
                 new_row.append(0)  # never duplicate feed pixels
-            elif v in (2, 3):
-                new_row.append(1)  # demote special pixels
+            elif v in (2, 3, 5):
+                new_row.append(1)  # demote special pixels (incl. shunt cap: no orphan value)
             else:
                 new_row.append(v)
     result = [list(r) for r in matrix]
@@ -265,6 +267,7 @@ def embed_centered_with_density(
         cap_pixel_pairs        = shifted_pairs,
         cap_pair_values        = list(design.cap_pair_values),
         inductor_cap_values    = list(design.inductor_cap_values),
+        shunt_cap_values       = list(design.shunt_cap_values),
         pixel_sizes            = new_pixel_sizes,
     )
 
@@ -407,6 +410,7 @@ def expand_design_to_size(
             cap_pixel_pairs         = valid_pairs,
             cap_pair_values         = valid_vals,
             inductor_cap_values     = list(current.inductor_cap_values),
+            shunt_cap_values        = list(current.shunt_cap_values),
         )
 
     # Insertion does not track per-pixel sizes through each op; if the seed was a

@@ -1,0 +1,84 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, SCRATCH co-optimization with
+#              SHUNT CAPACITORS
+#
+# From-random training that CO-OPTIMIZES, simultaneously:
+#   * pixel metal 0/1            (flip_01)
+#   * vias                       (flip_via, type-4 pixels)
+#   * shunt capacitors           (modify_shunt_cap / perturb_shunt_caps, type-5)
+#
+# A shunt-capacitor pixel (type 5) is a switch pixel with the switch removed:
+# the metal pixel is permanently tied to ground through a MIM cap.  There is no
+# ON/OFF state — only the capacitance value is GA-tunable.
+#
+# NOT optimized (kept off): switches (type 3), inductors (type 2), and series
+# MIM cap pairs.  This is a fresh scratch run (no finetune seeding).  Grid shape
+# (rows x cols) is configured here.  Keep config_impedance_transfer.yaml's
+# pixelated.feedline.feedline_row consistent with grid.rows.
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_shunt_cap"
+
+grid:
+  rows: 21   # grid shape — edit as needed
+  cols: 27
+
+  # No switches, no inductors. Vias allowed (inherited from base: n_max_vias=2,
+  # init seeds >=1 via for low-frequency suppression).
+  max_switches: 0
+  max_inductors: 0
+
+  # No series cap pairs in this experiment — shunt caps only.
+  enable_cap_pairs: false
+  max_cap_pairs:    0
+
+  # --- Shunt-capacitor pixels (type 5), co-optimized from scratch ---
+  enable_shunt_caps:  true
+  max_shunt_caps:     16           # upper bound on simultaneous shunt caps
+  min_shunt_caps:     0
+  shunt_cap_init_min: 0            # random init seeds 0..6 shunt caps per individual
+  shunt_cap_init_max: 6
+  shunt_cap_min:      50.0e-15     # 50 fF
+  shunt_cap_max:      1000.0e-15   # 1000 fF
+  shunt_cap_sigma:    50.0e-15     # perturbation step for perturb_shunt_caps
+
+seed: 42
+
+ga:
+  # Active: flip_01 (metal), flip_via, and the two shunt-cap actions.
+  # All switch / inductor / cap-pair actions stay at 0.
+  action_weights:
+    flip_01:             6.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    4.0
+    perturb_shunt_caps:  4.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             2.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    2.0
+    perturb_shunt_caps:  6.0

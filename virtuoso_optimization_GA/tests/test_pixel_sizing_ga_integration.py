@@ -41,8 +41,9 @@ ga = SwitchableFilterGA(CFG)
 check("config parsed: enable_pixel_sizing", ga.cfg.enable_pixel_sizing is True)
 check("grid_size derived from engine config", abs(ga.grid_size - 25.0) < 1e-9,
       f"grid_size={ga.grid_size}")
+from virtuoso_optimization_SA.actions import _ACTION_NAMES as _AN
 check("perturb_pixel_sizes weight > 0",
-      ga.cfg.action_weights[-1] > 0, str(ga.cfg.action_weights))
+      ga.cfg.action_weights[_AN.index("perturb_pixel_sizes")] > 0, str(ga.cfg.action_weights))
 
 print("[GA] Building initial population")
 pop = ga._init_population()

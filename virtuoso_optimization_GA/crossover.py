@@ -203,6 +203,88 @@ def _fix_vias(
             matrix[r][c] = 1
 
 
+def _fix_shunt_caps(
+    matrix: List[List[int]],
+    max_shunt_caps: int,
+    rng: random.Random,
+) -> None:
+    """
+    Repair shunt-capacitor pixels (type 5) in-place:
+    1. Remove type-5 pixels that violate the 3×3 footprint-spacing rule
+       (Chebyshev distance < required to any other special-footprint pixel,
+       i.e. inductor/switch/shunt-cap) — same rule a switch gets.
+    2. Trim the remaining count down to ``max_shunt_caps``.
+
+    A combined (crossover) matrix can place two parents' shunt caps within each
+    other's 3×3 footprint; without pass 1 those children would be rejected by
+    is_feasible instead of repaired.
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+
+    # Pass 1: spacing violations — shunt-cap footprint overlap
+    violators = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if matrix[r][c] == 5 and _special_pixel_too_close(matrix, r, c, new_type=5)
+    ]
+    rng.shuffle(violators)
+    for r, c in violators:
+        if matrix[r][c] == 5:
+            matrix[r][c] = 1
+
+    # Pass 2: count trim
+    positions = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if matrix[r][c] == 5
+    ]
+    excess = len(positions) - max_shunt_caps
+    if excess > 0:
+        rng.shuffle(positions)
+        for r, c in positions[:excess]:
+            matrix[r][c] = 1
+
+
+def _inherit_shunt_caps(
+    child_matrix: List[List[int]],
+    parent1: DesignState,
+    parent2: DesignState,
+    rng: random.Random,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
+) -> List[float]:
+    """
+    Build ``shunt_cap_values`` for a child matrix in row-first type-5 order.
+
+    Each type-5 cell in the child came directly from a parent half (the repair
+    pipeline never creates type-5 pixels), so its value is inherited from
+    whichever parent had a shunt cap at that exact (row, col).  Parent1 takes
+    precedence on the rare collision where both parents have one at the same
+    cell; a genuinely new position (should not occur) falls back to a random
+    value in range.
+    """
+    vm1 = {pos: idx for pos, idx in _build_pos_map(parent1.matrix, 5).items()}
+    vm2 = {pos: idx for pos, idx in _build_pos_map(parent2.matrix, 5).items()}
+
+    values: List[float] = []
+    for r in range(len(child_matrix)):
+        for c in range(len(child_matrix[0])):
+            if child_matrix[r][c] != 5:
+                continue
+            val: Optional[float] = None
+            if (r, c) in vm1 and vm1[(r, c)] < len(parent1.shunt_cap_values):
+                val = parent1.shunt_cap_values[vm1[(r, c)]]
+            elif (r, c) in vm2 and vm2[(r, c)] < len(parent2.shunt_cap_values):
+                val = parent2.shunt_cap_values[vm2[(r, c)]]
+            if val is None:
+                val = rng.uniform(shunt_cap_min, shunt_cap_max)
+            values.append(val)
+    return values
+
+
 def _fix_connectivity(
     matrix: List[List[int]],
     rng: random.Random,
@@ -649,6 +731,9 @@ def crossover_zig_zag(
     inductor_cap_max: float = 1000e-15,
     grid_size: Optional[float] = None,
     connect_margin: float = 2.0,
+    max_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -728,6 +813,8 @@ def crossover_zig_zag(
     _fix_switches(child_matrix, min_switches, max_switches, rng)
     if max_vias > 0:
         _fix_vias(child_matrix, max_vias, rng)
+    if max_shunt_caps > 0:
+        _fix_shunt_caps(child_matrix, max_shunt_caps, rng)
     if not _fix_connectivity(child_matrix, rng):
         return None, xover_params
 
@@ -790,6 +877,11 @@ def crossover_zig_zag(
         child_matrix, parent1, parent2, max_cap_pairs, cap_pair_min_dist, cap_pair_max_dist, rng
     )
 
+    # --- Inherit shunt-capacitor values (type-5 pixels) ---
+    shunt_cap_values = _inherit_shunt_caps(
+        child_matrix, parent1, parent2, rng, shunt_cap_min, shunt_cap_max
+    )
+
     return DesignState(
         matrix                 = child_matrix,
         switch_states          = switch_states,
@@ -799,5 +891,6 @@ def crossover_zig_zag(
         cap_pixel_pairs        = cap_pixel_pairs,
         cap_pair_values        = cap_pair_values,
         inductor_cap_values    = inductor_cap_values,
+        shunt_cap_values       = shunt_cap_values,
         pixel_sizes            = child_pixel_sizes if sizing_on else [],
     ), xover_params

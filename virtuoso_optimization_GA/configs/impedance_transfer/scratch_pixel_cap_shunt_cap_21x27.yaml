@@ -1,0 +1,106 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, SCRATCH co-optimization with
+#              CAP PAIRS + SHUNT CAPS
+#
+# From-random training that CO-OPTIMIZES, simultaneously:
+#   * pixel metal 0/1            (flip_01)
+#   * vias                       (flip_via, type-4 pixels)
+#   * series MIM cap pairs       (add / remove / perturb_pair_caps) — on the metal
+#   * shunt capacitors           (modify_shunt_cap / perturb_shunt_caps, type-5)
+#
+# Two distinct capacitor mechanisms are optimized together:
+#   - Cap PAIRS are series MIM caps bridging two nearby type-1 metal pixels
+#     (extra ports CP_<i>A/CP_<i>B; the metal stays metal).
+#   - SHUNT caps (type-5 pixels) are a metal pixel permanently tied to ground
+#     through a MIM cap — a switch pixel with the switch removed, no ON/OFF
+#     state, only the capacitance value is tunable.
+#
+# NOT optimized (kept off): switches (type 3) and inductors (type 2).  Fresh
+# scratch run (no finetune seeding).  Grid shape (rows x cols) is configured
+# here.  Keep config_impedance_transfer.yaml's pixelated.feedline.feedline_row
+# consistent with grid.rows.
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_cap_shunt_cap_large"
+
+# ---------------------------------------------------------------------------
+# LAYOUT GEOMETRY — overrides the Virtuoso engine config's layout block.
+# Deep-merged into every simulation's config and used for the GA's own
+# connectivity check, so this experiment runs on a larger pixel pitch without
+# editing the shared engine config.
+# ---------------------------------------------------------------------------
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
+
+grid:
+  rows: 21   # grid shape — edit as needed
+  cols: 27
+
+  # No switches, no inductors. Vias allowed (inherited from base: n_max_vias=2,
+  # init seeds >=1 via for low-frequency suppression).
+  max_switches: 0
+  max_inductors: 0
+
+  # --- Series cap pairs ON TOP of the metal (co-optimized from scratch) ---
+  enable_cap_pairs:  true
+  max_cap_pairs:     8          # upper bound on simultaneous cap pairs
+  cap_pair_init_min: 0           # random init seeds 0..6 cap pairs per individual
+  cap_pair_init_max: 6
+  cap_pair_min:      50.0e-15    # 50 fF
+  cap_pair_max:      1000.0e-15  # 1000 fF
+  cap_pair_sigma:    50.0e-15    # perturbation step for perturb_pair_caps
+  cap_pair_min_dist: 2           # Chebyshev pixel distance between endpoints
+  cap_pair_max_dist: 3
+  cap_pair_axis_aligned: true    # only horizontal/vertical pairs
+
+  # --- Shunt-capacitor pixels (type 5), co-optimized from scratch ---
+  enable_shunt_caps:  true
+  max_shunt_caps:     8          # upper bound on simultaneous shunt caps
+  min_shunt_caps:     0
+  shunt_cap_init_min: 0           # random init seeds 0..6 shunt caps per individual
+  shunt_cap_init_max: 6
+  shunt_cap_min:      50.0e-15    # 50 fF
+  shunt_cap_max:      1000.0e-15  # 1000 fF
+  shunt_cap_sigma:    50.0e-15    # perturbation step for perturb_shunt_caps
+
+seed: 42
+
+ga:
+  # Active: flip_01 (metal), flip_via, the three cap-pair actions, and the two
+  # shunt-cap actions.  All switch / inductor actions stay at 0.
+  action_weights:
+    flip_01:             6.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     4.0
+    perturb_pair_caps:   4.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    4.0
+    perturb_shunt_caps:  4.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             2.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        2.0
+    remove_cap_pair:     2.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    2.0
+    perturb_shunt_caps:  6.0

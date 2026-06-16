@@ -1,0 +1,112 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, SHUNT-CAP fine-tune ON A LAYOUT
+#
+# Reads an already-implemented design (metal + vias) and runs the regular GA,
+# but ONLY adds / removes / re-values SHUNT-CAPACITOR pixels (type 5) placed on
+# top of the existing metal.  A shunt cap is a switch pixel with the switch
+# removed: the pixel is permanently tied to ground through a MIM cap whose value
+# is the only tunable quantity (no ON/OFF states).
+#
+# Nothing else is touched:
+#   * The metal (type-1) and via (type-4) layout is FROZEN.  It comes entirely
+#     from finetune_design_path and never changes, because:
+#       - every individual is seeded from that one design
+#         (finetune_expand.p_completely_random = 0.0),
+#       - the only non-zero mutation weights are the shunt-cap actions,
+#       - random-metal immigrants are disabled (n_immigrants = 0),
+#       - crossover of two identical metal matrices returns that same metal
+#         (only the type-5 overlay recombines).
+#   * Adding a shunt cap only converts an existing type-1 metal pixel to type 5
+#     (metal is never removed), so connectivity is preserved by construction.
+#
+# REQUIRED before running:
+#   ga.finetune_design_path  → path to your implemented design's pixelated YAML
+#                              (a file with a `pixelated:` block).
+#   grid.rows / grid.cols    → MUST equal the seed design's grid (same size).
+# ===========================================================================
+
+_base_: ./base_impedance_transfer.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_tune_shunt_cap_has_pixel_change"
+
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
+
+grid:
+  rows: 21   # MUST match the seed design's rows
+  cols: 27   # MUST match the seed design's cols
+
+  # Freeze everything except shunt caps.
+  max_switches: 0
+  max_inductors: 0
+  n_max_vias: 2          # >= number of vias in the seed design (vias kept, not changed)
+
+  enable_cap_pairs: false
+  max_cap_pairs:    0
+
+  # --- Shunt-capacitor pixels (type 5) ON TOP of the metal ---
+  enable_shunt_caps:  true
+  max_shunt_caps:     16           # upper bound on simultaneous shunt caps
+  min_shunt_caps:     0            # allow the optimiser to remove caps entirely
+  shunt_cap_init_min: 0            # (unused here: no random individuals are generated)
+  shunt_cap_init_max: 0
+  shunt_cap_min:      50.0e-15     # 50 fF
+  shunt_cap_max:      1000.0e-15   # 1000 fF
+  shunt_cap_sigma:    50.0e-15     # perturbation step for perturb_shunt_caps
+
+seed: 42
+
+ga:
+  # No random-metal immigrants — keeps the metal/via layout frozen.
+  n_immigrants: 0
+
+  # Crossover only recombines the shunt-cap overlay here (metal matrices are
+  # identical), so any method is safe; hybrid is fine.
+  p_crossover: 0.6
+  p_mutation:  0.8
+
+  # ONLY shunt-cap actions are active.
+  action_weights:
+    flip_01:             4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    4.0     # add / remove a shunt cap on the metal
+    perturb_shunt_caps:  6.0     # re-value existing shunt caps
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    2.0
+    perturb_shunt_caps:  6.0
+
+  # --- Fine-tune seeding from the implemented design (SAME grid size) ---
+  finetune_design_path: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_with_via/sims/gen198_ind8/worker_1/pixsimple_r21c27_ps12p5_gs10p0_frl10frr19_w1/config.yaml"   # REQUIRED — set to your implemented design's pixelated YAML
+  finetune_seed_ratio: 1.0
+  finetune_expand:
+    enabled: true
+    p_completely_random: 0.0   # 0 → ALL individuals seeded from the design (frozen metal)
+    init_max_mutations: 4      # apply up to N shunt-cap mutations per seeded individual (diversity)
+    zero_pad_first: false      # individual 0 = exact seed copy (no shunt caps yet)
+    n_immigrants_expanded: 2   # immigrants are seed copies (same metal) — safe

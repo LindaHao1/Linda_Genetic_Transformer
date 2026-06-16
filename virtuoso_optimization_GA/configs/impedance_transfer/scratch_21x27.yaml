@@ -8,10 +8,14 @@
 # consistent with the grid rows below (centre row = (rows - 1) / 2).
 # ===========================================================================
 
-_base_: ./base_impedance_transfer.yaml
+_base_: ./base_impedance_transfer_via.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_with_via"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_with_via_2"
+
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
 
 grid:
   rows: 21   # grid shape — edit as needed

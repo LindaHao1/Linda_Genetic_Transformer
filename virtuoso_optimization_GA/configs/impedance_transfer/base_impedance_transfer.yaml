@@ -33,14 +33,17 @@ grid:
   min_switches: 0
   max_switches: 0
   max_inductors: 0
-  n_max_vias: 2          # allow up to 2 vias (>=1 needed to suppress low freq)
+  n_max_vias: 0          # allow up to 2 vias (>=1 needed to suppress low freq)
 
   init_min_switches: 0
   init_max_switches: 0
   init_min_inductors: 0
   init_max_inductors: 0
-  init_min_vias: 1       # seed at least one via for low-frequency suppression
-  init_max_vias: 2       # ...up to the 2-via budget
+  init_min_vias: 0       # seed at least one via for low-frequency suppression
+  init_max_vias: 0       # ...up to the 2-via budget
+
+  init_metal_density: 0.45
+
 
   cap_min: 0.0
   cap_max: 0.0
@@ -52,29 +55,52 @@ grid:
 
 # ---------------------------------------------------------------------------
 # FILTER TARGET SPECIFICATION  (35 GHz centre, ~3 GHz bandwidth)
+#
+# Uses PEAK-VALLEY (PV) CONTRAST mode (enable_pv_contrast: true).  This replaces
+# the standard passband-min / stopband-max penalty terms with a direct
+# passband-to-stopband separation objective:
+#   cost = pv_contrast_weight * -(pb_avg - worst_k_stopband_avg)      # maximise contrast
+#        + pv_passband_weight * max(0, passband_target_db - pb_level)^pv_passband_order
+#        + pv_flatness_weight * std(passband_S21)                     # flatten passband
+# The passband / stopband_regions below still define which frequencies are
+# passband vs stop/cross band; passband_min_db / stopband_max_db / *_weight are
+# inert in PV mode (used only if enable_s11_cost is turned on).
+# Parameter set mirrors the bandpass states in
+#   configs/base/scratch_lowpass_3states.yaml.
 # ---------------------------------------------------------------------------
 filter_specs:
   - state_index:     0
     passband:        [33.5e9, 36.5e9]    # 35 GHz centre, 3 GHz BW
-    passband_min_db: -0.0
     stopband_regions:
       - [10.0e9, 31.0e9]
-      - [39.0e9, 55.0e9]
-    stopband_max_db: -20.0
-    weight: 1.0
-    passband_weight: 6.0
-    stopband_weight: 1.0
+      - [39.0e9, 65.0e9]
     cross_stopband_regions: []
+    weight: 1.0
+    cost_order: 1.5
+
+    # --- PV contrast mode ---
+    enable_pv_contrast:    true
+    pv_contrast_k:         80      # mean of the 15 worst (highest) stop/cross-band points
+    pv_contrast_weight:    8.0     # weight on the -(contrast) term
+    pv_passband_weight:    16.0    # weight on the passband-level shortfall term
+    passband_target_db:    -2.0    # one-sided: penalise only when passband level < -5 dB (EDIT to achievable IL)
+    pv_passband_order:     2.0     # quadratic — large shortfalls dominate (enforce passband first)
+    pv_pb_worst_k:         10      # passband level = mean of the 10 lowest passband points (0 = all)
+    pv_flatness_weight:    1.0     # penalise std(passband S21)
+
+    # --- Inert in PV mode (kept for reference / S11 option) ---
+    passband_min_db: -0.0
+    stopband_max_db: -30.0
+    passband_weight: 5.0
+    stopband_weight: 5.0
     cross_stopband_max_db: -30.0
     cross_stopband_weight: 0.0
     enable_s11_cost:           false
     s11_passband_max_db:       -20.0
     s11_stopband_min_db:       -0.0
     s11_cross_stopband_min_db: -0.0
-    cost_order: 1.5
     enable_peak_matching:         false
     enable_spurious_peak_penalty: false
-    enable_pv_contrast:           false   # single state → no per-variant contrast
 
 # ---------------------------------------------------------------------------
 # GENETIC ALGORITHM PARAMETERS  (flip_01 + flip_via active)
@@ -85,9 +111,9 @@ ga:
   pop_size_step_size: 10
   pop_schedule_gens_per_step: 10
   elite_fraction:   0.20
-  n_keep_bad: 1
-  n_gen:    200
-  n_immigrants: 2
+  n_keep_bad: 5
+  n_gen:    300
+  n_immigrants: 15
 
   p_crossover: 0.5
   p_mutation:  0.5
@@ -100,7 +126,7 @@ ga:
   selection:       "tournament"
   tournament_size: 5
 
-  n_parallel: 5
+  n_parallel: 3
 
   n_regular_flip: 15
   cap_sigma: 0.0
@@ -118,7 +144,7 @@ ga:
     remove_cap_pair:     0.0
     perturb_pair_caps:   0.0
     flip_inductor_state: 0.0
-    flip_via:            2.0
+    flip_via:            0.0
     perturb_inductor_caps: 0.0
 
   use_state_champions:      false
@@ -138,7 +164,7 @@ ga:
     remove_cap_pair:     0.0
     perturb_pair_caps:   0.0
     flip_inductor_state: 0.0
-    flip_via:            1.0
+    flip_via:            0.0
     perturb_inductor_caps: 0.0
 
   feasibility_cost_threshold: 1.0e6
