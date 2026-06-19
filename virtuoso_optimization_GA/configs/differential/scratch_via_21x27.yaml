@@ -9,8 +9,8 @@
 
 _base_: ./base_differential.yaml
 
-virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_scratch_with_via"
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_differential_scratch_via_21x27"
 
 layout:
   pixel_size: 12.5   # um — metal patch size must include .0 if integer

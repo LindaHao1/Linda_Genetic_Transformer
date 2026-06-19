@@ -188,7 +188,7 @@ full_layout:
 # CLEANUP
 # ============================================================
 cleanup:
-  delete_intermediate_files: true
+  delete_intermediate_files: false
 
 # ============================================================
 # PARALLEL ENGINE

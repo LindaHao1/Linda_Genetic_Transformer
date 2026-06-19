@@ -447,17 +447,24 @@ class VirtuosoPixelEngine:
         if self._runner is None:
             proj = cfg["project"]
             display = proj.get("display", ":99")
-            log_dir = Path(proj["parent_output_dir"]) / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
             runner_label = (
                 f"VirtuosoRunner-W{self._worker_id}"
                 if self._worker_id is not None
                 else "VirtuosoRunner"
             )
+            # Keep the Virtuoso session log on local disk (/tmp) rather than
+            # the NFS-backed output directory.  Cadence uses flock() to lock
+            # the session log, which fails on NFS and causes CIW initialisation
+            # to abort.  The console log (Virtuoso stdout before SKILL loads)
+            # is derived from the same path, so it lands in /tmp as well;
+            # check /tmp/virtuoso_<worker>_<exp>_console.log on startup failure.
+            worker_tag = f"w{self._worker_id}" if self._worker_id is not None else "main"
+            exp_tag    = self.experiment_code or "sess"
+            session_log = Path("/tmp") / f"virtuoso_{worker_tag}_{exp_tag}.log"
             self._runner = PersistentVirtuosoRunner(
                 virtuoso_dir=proj["virtuoso_dir"],
                 display=display,
-                session_log=log_dir / "virtuoso_session.log",
+                session_log=session_log,
                 label=runner_label,
                 server=cfg.get("server"),
             )

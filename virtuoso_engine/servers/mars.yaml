@@ -1,0 +1,48 @@
+# ============================================================
+# Server profile: mars  (mars-*.ece.wisc.edu)
+#
+# Activate with:  export RFIC_SERVER=mars
+# (or set server.active: mars in config_base.yaml to make it the default).
+#
+# This overlay is deep-merged on top of every config loaded via
+# config_loader.load_config when RFIC_SERVER=mars.
+#
+# Virtuoso and Spectre are wrapped with module loads + Singularity:
+#   bash -lc 'module purge && module load ... && singularity exec ... <cmd>'
+# ============================================================
+
+# --- Server-specific paths (override config_base.yaml) ---------------------
+project:
+  # Virtuoso working directory — must contain cds.lib and .cdsinit.
+  virtuoso_dir: "/volumes/research-localdata/mcao53/virtuoso65nm"
+
+paths:
+  proc_file:   "/volumes/research-localdata/mcao53/virtuoso65nm/RC_IRCX_CRN65G+_1P9M+UT-ALRDL_6X1Z1U_MiM_typical.proc"
+  tsmc_models: "/volumes/research-localdata/PDKs/TSMC65_05_12_26/MSRF_General_Purpose_Plus/PDK/CadenceOA/tn65cmsp018k3_1_0c/models/spectre/crn65gplus_2d5_lk_v1d0.scs"
+  emx_binary:  "/cae/apps/data/cadence-2025/installs/EMX20251/bin/emx"
+
+# --- Command wrapper -------------------------------------------------------
+server:
+  active: "mars"
+  enabled: true
+  pre_launch_commands:
+    - "module purge"
+    - "module load cadence/2025 keysight/2026 rfic-link/2026"
+  # Singularity exec with all required binds.
+  # /tmp is auto-bound (mount tmp = yes in singularity.conf) — session logs
+  # and SKILL temp scripts live there and are visible inside the container.
+  # /volumes/research-localdata/mcao53 is explicitly bound so the user's
+  # virtuoso_dir, output dirs, and EMX results are writable inside the container.
+  container_command: >
+    singularity exec
+    --env PATH=$PATH
+    --env DISPLAY=$DISPLAY
+    --env WAYLAND_DISPLAY=$WAYLAND_DISPLAY
+    --env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
+    --bind /run/user/$UID:/run/user/$UID
+    --bind /tmp/.X11-unix:/tmp/.X11-unix
+    --bind /cae/apps/data:/cae/apps/data:ro
+    --bind /srv/auto/apps/:/srv/auto/apps/:ro
+    --bind /volumes/research-localdata/PDKs/TSMC65_05_12_26/
+    --bind /volumes/research-localdata/mcao53
+    /srv/auto/containers/cae-alma8-base_latest.sif

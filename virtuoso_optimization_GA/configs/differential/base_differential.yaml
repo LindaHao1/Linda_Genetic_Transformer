@@ -38,7 +38,7 @@ grid:
   init_min_vias: 0
   init_max_vias: 0
 
-  init_metal_density: 0.45
+  init_metal_density: 0.60
 
   cap_min: 0.0
   cap_max: 0.0

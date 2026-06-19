@@ -560,6 +560,7 @@ class SwitchableFilterGA:
         # config via _build_override, and is also used for the GA's own
         # overlap-based connectivity (self.grid_size).
         _vcfg   = load_config(Path(self.cfg.virtuoso_config))
+        self._sim_mode = _vcfg.get("mode", "pixelated_design_simple")
         self._layout_override = dict(raw.get("layout", {}))
         _eff_layout = {**_vcfg.get("layout", {}), **self._layout_override}
         self.grid_size = float(_eff_layout.get("grid_size", _eff_layout.get("pixel_size", 25.0)))
@@ -1437,7 +1438,7 @@ class SwitchableFilterGA:
         tag        = f"gen{gen_idx}_ind{cand_idx}"
         output_dir = str(self.output_dir / "sims" / tag)
         override = {
-            "mode":      "pixelated_design_simple",
+            "mode":      self._sim_mode,
             "pixelated": design.to_pixelated_config(),
             "project":   {"parent_output_dir": output_dir},
         }
@@ -2006,6 +2007,10 @@ class InductorGA(SwitchableFilterGA):
         self.specs = []  # unused; avoids KeyError on absent filter_specs key
         self.inductor_spec = inductor_spec_from_config(raw)
         self.rng = random.Random(self.cfg.seed)
+
+        _vcfg = load_config(Path(self.cfg.virtuoso_config))
+        self._sim_mode = _vcfg.get("mode", "pixelated_design_simple")
+        self._layout_override = dict(raw.get("layout", {}))
 
         self.output_dir = Path(self.cfg.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)

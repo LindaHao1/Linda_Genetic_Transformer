@@ -232,7 +232,11 @@ class PersistentVirtuosoRunner:
         # Virtuoso's own stdout/stderr (license/exec errors land here BEFORE the
         # SKILL -log file is opened) -- captured so startup crashes are
         # diagnosable instead of silently discarded.
-        self._console_log = self._session_log.with_name("virtuoso_console.log")
+        # Derive the name from the session log stem so the paths stay unique
+        # even when multiple workers share the same directory (e.g. /tmp).
+        self._console_log = self._session_log.with_name(
+            self._session_log.stem + "_console.log"
+        )
 
         self._proc: Optional[subprocess.Popen] = None
         self._console_fh = None
