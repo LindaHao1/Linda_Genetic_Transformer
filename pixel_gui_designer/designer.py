@@ -10,6 +10,7 @@ Pixel types
   2  IND  — inductor port (amber)
   3  SW   — switch port (red)
   4  VIA  — via / gnd-short (purple)
+  5  SCAP — shunt-capacitor port (permanent MIM cap to ground) (teal-green)
 
 Usage
 -----
@@ -53,11 +54,13 @@ PIXEL_INFO: Dict[int, Tuple[str, QColor]] = {
     2: ("IND", QColor("#c8861a")),
     3: ("SW",  QColor("#c0392b")),
     4: ("VIA", QColor("#7d3c98")),
+    5: ("SCAP", QColor("#17a589")),
 }
 
 INDUCTOR_LABELS = ["300 pH (EM)"]
 DEFAULT_CAP_F   = 1.0e-12   # 1 pF
 DEFAULT_PAIR_F  = 1.0e-12
+DEFAULT_SCAP_F  = 122.0e-15  # 122 fF — default shunt-cap value
 
 MODE_SELECT = "select"
 MODE_BRUSH  = "brush"
@@ -191,6 +194,7 @@ class DesignModel:
         self.inductor_switch_states: Optional[List[List[int]]] = None
         self.cap_pixel_pairs:       List[List[List[int]]]       = []
         self.cap_pair_values:       List[float]                 = []
+        self.shunt_cap_values:      List[float]                 = []   # one per type-5 (SCAP) pixel, row-first
         self.file_path:             Optional[str]               = None
 
     # ── I/O ──────────────────────────────────────────────────────────────────
@@ -235,6 +239,7 @@ class DesignModel:
         cpp = px.get("cap_pixel_pairs", []) or []
         self.cap_pixel_pairs    = [[list(p) for p in pair] for pair in cpp]
         self.cap_pair_values    = list(px.get("cap_pair_values", []) or [])
+        self.shunt_cap_values   = [float(v) for v in (px.get("shunt_cap_values", []) or [])]
         self._repair_lengths()
 
     def _push_to_config(self) -> None:
@@ -251,11 +256,17 @@ class DesignModel:
             px.pop("inductor_switch_states", None)
         px["cap_pixel_pairs"] = self.cap_pixel_pairs
         px["cap_pair_values"] = self.cap_pair_values
+        px["shunt_cap_values"] = self.shunt_cap_values
 
     def _repair_lengths(self) -> None:
         """Clamp derived lists to match actual pixel counts."""
         n_sw  = len(self.sw_pixels())
         n_ind = len(self.ind_pixels())
+        n_scap = len(self.scap_pixels())
+        # shunt_cap_values — one float per type-5 (SCAP) pixel, row-first
+        while len(self.shunt_cap_values) < n_scap:
+            self.shunt_cap_values.append(DEFAULT_SCAP_F)
+        self.shunt_cap_values = self.shunt_cap_values[:n_scap]
         # cap_values — each entry is a List[float] bank
         while len(self.cap_values) < n_sw:
             self.cap_values.append([DEFAULT_CAP_F])
@@ -335,6 +346,21 @@ class DesignModel:
                 return i
         return None
 
+    def scap_pixels(self) -> List[Tuple[int, int, int]]:
+        """(row, col, scap_index) for all SCAP (type-5) pixels in row-first order."""
+        out, idx = [], 0
+        for r in range(self.num_rows()):
+            for c in range(self.num_cols()):
+                if self.matrix[r][c] == 5:
+                    out.append((r, c, idx)); idx += 1
+        return out
+
+    def scap_index_at(self, row: int, col: int) -> Optional[int]:
+        for r, c, i in self.scap_pixels():
+            if r == row and c == col:
+                return i
+        return None
+
     def cap_pair_index_at(self, row: int, col: int) -> Optional[int]:
         for i, pair in enumerate(self.cap_pixel_pairs):
             if [row, col] in pair:
@@ -367,6 +393,11 @@ class DesignModel:
                     for s in self.inductor_switch_states:
                         _pop_idx(s, ii)
 
+        elif old_type == 5:
+            ci = self.scap_index_at(row, col)
+            if ci is not None:
+                _pop_idx(self.shunt_cap_values, ci)
+
         # --- Commit the change ---
         self.matrix[row][col] = new_type
 
@@ -385,6 +416,11 @@ class DesignModel:
                 if self.inductor_switch_states:
                     for s in self.inductor_switch_states:
                         s.insert(ii, 1)
+
+        elif new_type == 5:
+            ci = self.scap_index_at(row, col)
+            if ci is not None:
+                self.shunt_cap_values.insert(ci, DEFAULT_SCAP_F)
 
     # ── Cap bank management ──────────────────────────────────────────────────
 
@@ -471,6 +507,7 @@ class DesignModel:
         # Collect sw/ind indices in this row (descending so pops don't shift)
         sw_in  = sorted([si for r, c, si in self.sw_pixels()  if r == idx], reverse=True)
         ind_in = sorted([ii for r, c, ii in self.ind_pixels() if r == idx], reverse=True)
+        scap_in = sorted([ci for r, c, ci in self.scap_pixels() if r == idx], reverse=True)
         for si in sw_in:
             _pop_idx(self.cap_values, si)
             for state in self.state_list:
@@ -480,6 +517,8 @@ class DesignModel:
             if self.inductor_switch_states:
                 for s in self.inductor_switch_states:
                     _pop_idx(s, ii)
+        for ci in scap_in:
+            _pop_idx(self.shunt_cap_values, ci)
         # Drop cap pairs referencing this row, keep others + shift rows
         keep_p, keep_v = [], []
         for pair, val in zip(self.cap_pixel_pairs, self.cap_pair_values):
@@ -505,6 +544,7 @@ class DesignModel:
             return
         sw_in  = sorted([si for r, c, si in self.sw_pixels()  if c == idx], reverse=True)
         ind_in = sorted([ii for r, c, ii in self.ind_pixels() if c == idx], reverse=True)
+        scap_in = sorted([ci for r, c, ci in self.scap_pixels() if c == idx], reverse=True)
         for si in sw_in:
             _pop_idx(self.cap_values, si)
             for state in self.state_list:
@@ -514,6 +554,8 @@ class DesignModel:
             if self.inductor_switch_states:
                 for s in self.inductor_switch_states:
                     _pop_idx(s, ii)
+        for ci in scap_in:
+            _pop_idx(self.shunt_cap_values, ci)
         keep_p, keep_v = [], []
         for pair, val in zip(self.cap_pixel_pairs, self.cap_pair_values):
             if pair[0][1] == idx or pair[1][1] == idx:
@@ -1026,6 +1068,19 @@ class PropertyPanel(QGroupBox):
         root.addWidget(gb_ind)
         self._ind_gb = gb_ind
 
+        # ── Shunt cap (type 5) ────────────────────────────────────────────
+        gb_scap = QGroupBox("Shunt cap value")
+        vl_sc = QVBoxLayout(gb_scap)
+        self._scap_spin = QDoubleSpinBox()
+        self._scap_spin.setRange(0.001, 1000.0)
+        self._scap_spin.setDecimals(3)
+        self._scap_spin.setSuffix(" pF")
+        self._scap_spin.setSingleStep(0.01)
+        self._scap_spin.valueChanged.connect(self._on_scap)
+        vl_sc.addWidget(self._scap_spin)
+        root.addWidget(gb_scap)
+        self._scap_gb = gb_scap
+
         # ── Switch cap bank ───────────────────────────────────────────────
         gb_sw = QGroupBox("Switch cap bank")
         gb_sw.setMinimumWidth(220)
@@ -1096,6 +1151,7 @@ class PropertyPanel(QGroupBox):
             self._hint.show()
             self._type_gb.hide(); self._ind_gb.hide()
             self._sw_gb.hide();   self._cp_gb.hide()
+            self._scap_gb.hide()
             return
 
         r, c   = self.selected
@@ -1126,6 +1182,15 @@ class PropertyPanel(QGroupBox):
             self._rebuild_sw_bank_ui(si)
         else:
             self._sw_gb.hide()
+
+        # Shunt cap value (type 5)
+        if ptype == 5:
+            ci = model.scap_index_at(r, c)
+            self._scap_gb.show()
+            if ci is not None and ci < len(model.shunt_cap_values):
+                self._scap_spin.setValue(model.shunt_cap_values[ci] * 1e12)
+        else:
+            self._scap_gb.hide()
 
         # Cap pair (available for any non-ground pixel)
         if ptype > 0:
@@ -1167,6 +1232,15 @@ class PropertyPanel(QGroupBox):
         ii   = self.model.ind_index_at(r, c)
         if ii is not None and ii < len(self.model.inductor_values):
             self.model.inductor_values[ii] = idx
+            self.changed.emit()
+
+    def _on_scap(self, pf: float) -> None:
+        if self._loading or self.selected is None:
+            return
+        r, c = self.selected
+        ci   = self.model.scap_index_at(r, c)
+        if ci is not None and ci < len(self.model.shunt_cap_values):
+            self.model.shunt_cap_values[ci] = pf * 1e-12
             self.changed.emit()
 
     def _rebuild_sw_bank_ui(self, si: Optional[int]) -> None:
@@ -2592,12 +2666,17 @@ class MainWindow(QMainWindow):
         extras  = []
         si      = self.model.sw_index_at(r, c)
         ii      = self.model.ind_index_at(r, c)
+        ci      = self.model.scap_index_at(r, c)
         pi      = self.model.cap_pair_index_at(r, c)
         if si  is not None: extras.append(f"SW_{si}")
         if ii  is not None:
             iv = (self.model.inductor_values[ii]
                   if ii < len(self.model.inductor_values) else 0)
             extras.append(f"IND_{ii} ({INDUCTOR_LABELS[iv]})")
+        if ci  is not None:
+            cv = (self.model.shunt_cap_values[ci]
+                  if ci < len(self.model.shunt_cap_values) else DEFAULT_SCAP_F)
+            extras.append(f"SCAP_{ci} ({cv*1e15:.0f} fF)")
         if pi  is not None: extras.append(f"cap-pair {pi}")
         tail = "  [" + ", ".join(extras) + "]" if extras else ""
         self.statusBar().showMessage(f"({r},{c}) → {label}{tail}")

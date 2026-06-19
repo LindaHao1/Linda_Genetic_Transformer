@@ -41,6 +41,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from .server_launch import wrap_command
+
 
 # ---------------------------------------------------------------------------
 # Result container
@@ -206,12 +208,16 @@ class PersistentVirtuosoRunner:
         default_timeout: int = 3600,
         max_restarts: int = 3,
         label: str = "VirtuosoRunner",
+        server: Optional[dict] = None,
     ) -> None:
         self.virtuoso_dir    = Path(virtuoso_dir)
         self.display         = display
         self.default_timeout = default_timeout
         self.max_restarts    = max_restarts
         self._label          = label
+        # Server profile for command wrapping (module load + singularity).
+        # None / {enabled: false} → launch virtuoso directly (current behaviour).
+        self._server         = server
 
         # Unique job directory per instance — pid alone is not enough when
         # multiple runners live in the same process (parallel workers).
@@ -257,6 +263,8 @@ class PersistentVirtuosoRunner:
             "-log",    str(self._session_log),
             "-replay", str(server_il),
         ]
+        # Wrap with the server profile (module load + singularity) when enabled.
+        cmd = wrap_command(cmd, self._server)
 
         # Capture Virtuoso's console output (env/license/exec errors that occur
         # before the SKILL -log file exists) so a startup crash is diagnosable.

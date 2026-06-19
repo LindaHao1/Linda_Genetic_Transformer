@@ -9,6 +9,7 @@ Pixel types:
   2  IND  — inductor port
   3  SW   — switch port
   4  VIA  — via
+  5  SCAP — shunt-capacitor port (permanent MIM cap to ground)
 
 Usage:
   python pixel_gui_designer/cli_designer.py
@@ -24,14 +25,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from pixel_gui_designer.designer import DesignModel
 
-PIXEL_NAMES = {0: "GND", 1: "MTL", 2: "IND", 3: "SW", 4: "VIA"}
-PIXEL_CHARS = {0: ".", 1: "#", 2: "I", 3: "S", 4: "V"}
+PIXEL_NAMES = {0: "GND", 1: "MTL", 2: "IND", 3: "SW", 4: "VIA", 5: "SCAP"}
+PIXEL_CHARS = {0: ".", 1: "#", 2: "I", 3: "S", 4: "V", 5: "C"}
 
 HELP_TEXT = """
 Commands:
   print / p          Print the current matrix
   info               Show pixel type legend and grid dimensions
-  set R C T          Set pixel at row R, col C to type T (0-4)
+  set R C T          Set pixel at row R, col C to type T (0-5)
   fill T             Fill entire grid with type T
   addrow [IDX]       Add a blank row before IDX (default: append at bottom)
   delrow IDX         Delete row IDX

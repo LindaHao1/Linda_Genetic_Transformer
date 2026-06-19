@@ -1,0 +1,21 @@
+# ===========================================================================
+# Experiment — Differential-Mode Filter, 21x27 HALF grid, metal-only scratch
+#
+# The grid below is the HALF design.  The engine mirrors it about the bottom
+# row, so the simulated full layout is 41x27 (2*21-1 rows).
+# ===========================================================================
+
+_base_: ./base_differential.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_scratch"
+
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
+
+grid:
+  rows: 21   # HALF-design rows — engine mirrors to 41 rows
+  cols: 27
+
+seed: 42

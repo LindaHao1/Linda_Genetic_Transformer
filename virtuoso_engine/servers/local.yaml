@@ -1,0 +1,14 @@
+# ============================================================
+# Server profile: local (default)
+#
+# The original / current server.  EDA tools are on PATH directly, so commands
+# are NOT wrapped and no paths are overridden — behaviour is identical to before
+# server profiles existed.
+#
+# This overlay is deep-merged on top of any config loaded via
+# config_loader.load_config when RFIC_SERVER is unset (or set to "local").
+# ============================================================
+
+server:
+  active: "local"
+  enabled: false        # false → commands run directly (no module load / container)

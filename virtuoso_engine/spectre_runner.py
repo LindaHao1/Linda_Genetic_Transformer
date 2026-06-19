@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .cap_utils import _lookup_cap_dims
+from .server_launch import wrap_command
 
 # ---------------------------------------------------------------------------
 # Backward-compatibility normalization helpers
@@ -148,6 +149,9 @@ def generate_state_netlist(
     mimflag: int = 3,
     mismatchflag: int = 0,
     ind_dims: Optional[List[tuple]] = None,
+    scap_indices_in_port_order: Optional[List[int]] = None,
+    scap_cap_values: Optional[List[float]] = None,
+    scap_dims: Optional[List[tuple]] = None,
 ) -> Path:
     """
     Write a Spectre .scs testbench for one switch state and return its path.
@@ -186,6 +190,9 @@ def generate_state_netlist(
                                   Defaults to "H" (node_a = mim_p) when None.
         ind_dims                  Per-inductor (lt_um, wt_um) for the series MIM cap.
                                   Defaults to (10.0, 10.0) for each inductor when None.
+        scap_indices_in_port_order Indices into port_order that are SCAP_* (shunt-cap) ports.
+        scap_cap_values           Per-shunt-cap capacitance values (F), SCAP_* order.
+        scap_dims                 Per-shunt-cap (lt_um, wt_um) from _lookup_cap_dims.
 
     Returns:
         Path to the written .scs netlist file.
@@ -228,6 +235,31 @@ def generate_state_netlist(
         for local_idx, port_idx in enumerate(via_indices_in_port_order):
             node = node_names[port_idx]
             lines.append(f"v_via{local_idx} ({node} 0) vsource dc=0")
+        lines.append("")
+
+    # --- Shunt capacitor connections (state-independent, always present) ---
+    # A type-5 pixel is a switch pixel whose switch was removed: the pixel port
+    # is tied to ground through a MIM cap (no s1p, no ON/OFF state).
+    # Topology: SCAP pixel port (mim_m) → mimcap_um_sin_rf → (mim_p) GND ; bulk → GND
+    if scap_indices_in_port_order:
+        lines.append("// Shunt capacitor connections (pixel → MIM cap → GND, always connected)")
+        for local_idx, port_idx in enumerate(scap_indices_in_port_order):
+            node = node_names[port_idx]
+            lt, wt = (
+                scap_dims[local_idx]
+                if scap_dims and local_idx < len(scap_dims)
+                else (10.0, 10.0)
+            )
+            cval_fF = (
+                scap_cap_values[local_idx] * 1e15
+                if scap_cap_values and local_idx < len(scap_cap_values)
+                else 0.0
+            )
+            lines.append(f"// SCAP_{local_idx}: {cval_fF:.0f} fF (mim_m=pixel → mim_p=GND)")
+            lines.append(
+                f"mimcap_scap{local_idx} (0 {node} 0) mimcap_um_sin_rf "
+                f"wt={wt}u lt={lt}u mimflag={mimflag} mismatchflag={mismatchflag}"
+            )
         lines.append("")
 
     # --- Inductor connections (state-dependent) ---
@@ -373,6 +405,7 @@ def run_all_states(
     gnd_indices = [i for i, name in enumerate(port_order)
                    if name in ("PIX_IN_GND", "PIX_OUT_GND")]
     via_indices = [i for i, name in enumerate(port_order) if name.startswith("VIA_")]
+    scap_indices = [i for i, name in enumerate(port_order) if name.startswith("SCAP_")]
 
     print(f"  [spectre_runner] GND ports: {[port_order[i] for i in gnd_indices]}")
 
@@ -438,6 +471,19 @@ def run_all_states(
 
     sw_dims = [_lookup_cap_dims(sw_table, cap_bank) for cap_bank in cap_values]
     cp_dims = _lookup_cap_dims(cp_table, cap_pair_values) if cap_pair_values else []
+
+    # --- Shunt capacitor (type-5 pixel) values + MIM dims ---
+    # One capacitance per SCAP_* port, in row-first order (same as shunt_cap_values).
+    shunt_cap_values: List[float] = pd.get("shunt_cap_values", []) or []
+    if len(shunt_cap_values) != len(scap_indices):
+        raise ValueError(
+            f"shunt_cap_values length ({len(shunt_cap_values)}) does not match "
+            f"number of SCAP_* ports in SNP ({len(scap_indices)})."
+        )
+    scap_dims = _lookup_cap_dims(sw_table, shunt_cap_values) if shunt_cap_values else []
+    if scap_indices:
+        print(f"  [spectre_runner] Shunt-cap ports: {[port_order[i] for i in scap_indices]} "
+              f"= {[f'{c*1e15:.0f}fF' for c in shunt_cap_values]}")
 
     inductor_cap_values_cfg: List[float] = pd.get("inductor_cap_values", [])
     ind_dims = _lookup_cap_dims(sw_table, inductor_cap_values_cfg) if inductor_cap_values_cfg else []
@@ -538,11 +584,15 @@ def run_all_states(
             mimflag                   = mimflag,
             mismatchflag              = mismatchflag,
             ind_dims                  = ind_dims,
+            scap_indices_in_port_order = scap_indices,
+            scap_cap_values           = shunt_cap_values,
+            scap_dims                 = scap_dims,
         )
 
         # --- Run Spectre ---
         spectre_log = psf_dir / "spectre.log"
         cmd = ["spectre", "-64", str(netlist_path), "-raw", str(psf_dir), "+aps", "+mt"]
+        cmd = wrap_command(cmd, cfg.get("server"))
         print(f"  [spectre_runner] Executing: {' '.join(cmd)}")
 
         proc = subprocess.run(
@@ -564,3 +614,155 @@ def run_all_states(
             s2p_paths.append(None)
 
     return s2p_paths
+
+
+# ---------------------------------------------------------------------------
+# Differential-mode filter testbench
+# ---------------------------------------------------------------------------
+
+def generate_differential_netlist(
+    snp_path: Path,
+    port_order: List[str],
+    sim_cfg: dict,
+    output_s2p: Path,
+    netlist_dir: Path,
+    tsmc_models_path: str = "",
+    diff_cap: str = "61e-15",
+    port1_impedance: float = 60,
+    port2_impedance: float = 50,
+) -> Path:
+    """
+    Build the differential S-parameter testbench netlist.
+
+    Topology (0/1-only first version):
+        * EMX block exposes PIX_IN_T, PIX_IN_B, PIX_OUT plus their ground refs.
+        * A configurable cap (default 61 fF) bridges the two input nodes.
+        * Port 1 is a *floating* differential port across the two input nodes
+          (default 60 Ω); Port 2 is a single-ended output port (default 50 Ω).
+        * Ground-reference ports are shorted to global ground.
+
+    Returns the written netlist path.
+    """
+    total_ports = len(port_order)
+    node_names  = [p.lower().lstrip("~").replace("~", "_") for p in port_order]
+    name_to_node = {p: node_names[i] for i, p in enumerate(port_order)}
+
+    for required in ("PIX_IN_T", "PIX_IN_B", "PIX_OUT"):
+        if required not in name_to_node:
+            raise ValueError(
+                f"Differential SNP is missing port {required!r}. "
+                f"Found ports: {port_order}"
+            )
+
+    n_in_t = name_to_node["PIX_IN_T"]
+    n_in_b = name_to_node["PIX_IN_B"]
+    n_out  = name_to_node["PIX_OUT"]
+    gnd_ports = [p for p in port_order if p.endswith("_GND")]
+
+    lines: List[str] = []
+    lines.append("// Differential filter S-parameter testbench")
+    lines.append(f"// EMX SNP file: {snp_path}")
+    lines.append("simulator lang=spectre")
+    if tsmc_models_path:
+        lines.append(f'include "{tsmc_models_path}" section=tt_rfmim')
+    lines.append("")
+
+    node_pairs = " ".join(f"{n} 0" for n in node_names)
+    lines.append(f"// EM extraction result ({total_ports} ports)")
+    lines.append(f'emx_blk ({node_pairs}) nport file="{snp_path}" N={total_ports}\n')
+
+    if gnd_ports:
+        lines.append("// Ground reference ports (shorted to global ground)")
+        for gp in gnd_ports:
+            node = name_to_node[gp]
+            lines.append(f"v_{node} ({node} 0) vsource dc=0")
+        lines.append("")
+
+    # Via (type-4) pixels: each VIA_<i> port is a short to global ground.
+    via_ports = [p for p in port_order if p.startswith("VIA_")]
+    if via_ports:
+        lines.append("// Via connections (shorted to global ground)")
+        for vp in via_ports:
+            node = name_to_node[vp]
+            lines.append(f"v_{node} ({node} 0) vsource dc=0")
+        lines.append("")
+
+    lines.append("// Differential input front end")
+    lines.append(f"c_diff ({n_in_t} {n_in_b}) capacitor c={diff_cap}")
+    lines.append(f"p_in  ({n_in_t} {n_in_b}) port r={port1_impedance} num=1")
+    lines.append(f"p_out ({n_out} 0) port r={port2_impedance} num=2")
+    lines.append("")
+
+    lines.append("// 2-port S-parameter sweep")
+    lines.append(
+        f"sp_sim sp ports=[p_in p_out]"
+        f" start={sim_cfg['spectre_freq_start']}"
+        f" stop={sim_cfg['spectre_freq_stop']}"
+        f" step={sim_cfg['spectre_freq_step']}"
+        f' file="{output_s2p}" datafmt=touchstone'
+    )
+
+    netlist_path = Path(netlist_dir) / "tb_state0.scs"
+    netlist_path.write_text("\n".join(lines) + "\n")
+    return netlist_path
+
+
+def run_all_states_differential(
+    snp_path: Path,
+    cfg: dict,
+    emx_dir: Path,
+    cell_name: str,
+) -> List[Optional[Path]]:
+    """
+    Post-EMX driver for differential_filter mode.
+
+    The 0/1-only differential filter is a single-state design: parse the SNP
+    port order, build the differential testbench, run Spectre, return the .s2p.
+    """
+    snp_path = Path(snp_path)
+    emx_dir  = Path(emx_dir)
+
+    sim = cfg["simulation"]
+    p   = cfg.get("paths", {})
+    tsmc_models = p.get("tsmc_models", "")
+
+    diff_cap = sim.get("diff_cap", "61e-15")
+    r_in     = sim.get("port1_impedance", 60)
+    r_out    = sim.get("port2_impedance", 50)
+
+    print(f"  [spectre_runner] Parsing port order from {snp_path.name} ...")
+    port_order = parse_snp_port_order(snp_path)
+    print(f"  [spectre_runner] Port order: {port_order}")
+
+    output_s2p = emx_dir / f"{cell_name}_state0.s2p"
+    psf_dir    = emx_dir / "psf_state0"
+    psf_dir.mkdir(exist_ok=True)
+
+    netlist_path = generate_differential_netlist(
+        snp_path        = snp_path,
+        port_order      = port_order,
+        sim_cfg         = sim,
+        output_s2p      = output_s2p,
+        netlist_dir     = emx_dir,
+        tsmc_models_path = tsmc_models,
+        diff_cap        = diff_cap,
+        port1_impedance = r_in,
+        port2_impedance = r_out,
+    )
+
+    spectre_log = psf_dir / "spectre.log"
+    cmd = ["spectre", "-64", str(netlist_path), "-raw", str(psf_dir), "+aps", "+mt"]
+    cmd = wrap_command(cmd, cfg.get("server"))
+    print(f"  [spectre_runner] Executing: {' '.join(cmd)}")
+
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(emx_dir))
+    spectre_log.write_text(proc.stdout + proc.stderr)
+
+    if proc.returncode != 0:
+        print(f"  [spectre_runner] WARNING: Spectre returned {proc.returncode}")
+
+    if output_s2p.exists():
+        print(f"  [spectre_runner] Differential → {output_s2p.name}")
+        return [output_s2p]
+    print(f"  [spectre_runner] WARNING: {output_s2p} not produced")
+    return [None]

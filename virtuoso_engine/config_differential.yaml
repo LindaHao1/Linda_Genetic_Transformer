@@ -1,0 +1,45 @@
+# ============================================================
+# Virtuoso Pixel Engine — Differential-Mode Filter
+#
+# New simulation mode `differential_filter`.  The GA optimizes only the HALF
+# design; the engine MIRRORS it about the bottom row to build the full layout,
+# places a differential input port pair on the left edge and a single-ended
+# output on the right edge (axis row), then runs a differential S-parameter
+# testbench:
+#   * Port 1 (input)  — floating differential port across the two input nodes,
+#     reference impedance = port1_impedance (60 ohm), with diff_cap (61 fF) in
+#     parallel across the same two nodes.
+#   * Port 2 (output) — single-ended, reference impedance = port2_impedance.
+#
+# First version is 0/1 metal only (no switches/inductors/caps).
+#
+# Inherits config_base.yaml; only overrides geometry + the differential sim
+# keys.  All other modes are unaffected.
+# ============================================================
+
+_base_: config_base.yaml
+
+mode: "differential_filter"
+
+layout:
+  pixel_size: 18      # um — metal patch size (EDIT to taste)
+  grid_size:  15.0    # um — pixel pitch; the GA reads this for connectivity
+
+# ------------------------------------------------------------
+# SIMULATION — differential port setup
+# ------------------------------------------------------------
+simulation:
+  port1_impedance: 60          # input (differential) port reference impedance (ohm)
+  port2_impedance: 50          # output port reference impedance (ohm)
+  diff_cap: "61e-15"           # cap across the two input nodes (F); configurable
+
+# ------------------------------------------------------------
+# PIXELATED — feedline geometry (shared section)
+#   pixel_state_matrix here is the HALF design (engine mirrors it).
+# ------------------------------------------------------------
+pixelated:
+  feedline:
+    feedline_width: 10.2
+    feedline_width_in: 10.2    # input  (left) feedline width (um)
+    feedline_width_out: 10.2   # output (right) feedline width (um)
+    feedline_padding: 10.0

@@ -29,10 +29,17 @@ from .design import DesignState
 
 
 # ---------------------------------------------------------------------------
-# Footprint half-sizes (pixels): inductor=5×5 → half=2, switch=3×3 → half=1
+# Footprint half-sizes (pixels): a pixel type listed here must keep a clear
+# square footprint of (2*half + 1) cells; footprints of two such pixels may
+# not overlap (required Chebyshev distance = half_A + half_B + 1).
+#   inductor (2)  = 5×5 → half=2
+#   switch   (3)  = 3×3 → half=1
+#   shunt cap(5)  = 3×3 → half=1   (same 3×3 clear-space rule as a switch)
+# Membership in this dict is the single source of truth for "has a footprint":
+# the spacing / placement / cap-corridor checks all test ``t in _FOOTPRINT_HALF``.
 # ---------------------------------------------------------------------------
 
-_FOOTPRINT_HALF: dict = {2: 2, 3: 1}
+_FOOTPRINT_HALF: dict = {2: 2, 3: 1, 5: 1}
 
 
 # ---------------------------------------------------------------------------
@@ -240,11 +247,11 @@ def _connectivity_ok(
 
 def check_special_pixel_spacing(matrix: List[List[int]]) -> bool:
     """
-    Rules b/c: footprints of inductor (5×5) and switch (3×3) pixels must not overlap.
-    Required Chebyshev distance = half_A + half_B + 1:
-      Switch  (half=1) ↔ Switch  (half=1): ≥ 3
-      Inductor(half=2) ↔ Switch  (half=1): ≥ 4
-      Inductor(half=2) ↔ Inductor(half=2): ≥ 5
+    Rules b/c: footprints of inductor (5×5), switch (3×3) and shunt-cap (3×3)
+    pixels must not overlap.  Required Chebyshev distance = half_A + half_B + 1:
+      Switch/ShuntCap (half=1) ↔ Switch/ShuntCap (half=1): ≥ 3
+      Inductor        (half=2) ↔ Switch/ShuntCap (half=1): ≥ 4
+      Inductor        (half=2) ↔ Inductor        (half=2): ≥ 5
     """
     rows = len(matrix)
     cols = len(matrix[0])
@@ -252,7 +259,7 @@ def check_special_pixel_spacing(matrix: List[List[int]]) -> bool:
         (r, c)
         for r in range(rows)
         for c in range(cols)
-        if matrix[r][c] in (2, 3)
+        if matrix[r][c] in _FOOTPRINT_HALF
     ]
     for i, (r1, c1) in enumerate(specials):
         h1 = _FOOTPRINT_HALF[matrix[r1][c1]]
@@ -497,7 +504,7 @@ def check_cap_pair_valid(
     # Rule 5: the 3×3 corridor (half=1) around each full-path cell must not
     # overlap with any special pixel's footprint.
     # Required Chebyshev(path_cell, special) ≥ corridor_half + footprint_half + 1:
-    #   switch  (half=1): ≥ 3   inductor (half=2): ≥ 4
+    #   switch/shunt-cap (half=1): ≥ 3   inductor (half=2): ≥ 4
     _CAP_CORRIDOR_HALF = 1
     _max_check = _CAP_CORRIDOR_HALF + max(_FOOTPRINT_HALF.values())
     for (pr, pc) in all_path_cells:
@@ -508,7 +515,7 @@ def check_cap_pair_valid(
         for nr in range(r_lo, r_hi + 1):
             for nc in range(c_lo, c_hi + 1):
                 t = matrix[nr][nc]
-                if t in (2, 3):
+                if t in _FOOTPRINT_HALF:
                     required = _CAP_CORRIDOR_HALF + _FOOTPRINT_HALF[t] + 1
                     if max(abs(pr - nr), abs(pc - nc)) < required:
                         return False
@@ -634,7 +641,7 @@ def _special_pixel_too_close(
             if nr == r and nc == c:
                 continue
             t = matrix[nr][nc]
-            if t in (2, 3):
+            if t in _FOOTPRINT_HALF:
                 required = new_half + _FOOTPRINT_HALF[t] + 1
                 if max(abs(r - nr), abs(c - nc)) < required:
                     return True
@@ -694,6 +701,34 @@ def _can_place_via_at(
     return True
 
 
+def _can_place_shunt_cap_at(
+    matrix: List[List[int]],
+    r: int,
+    c: int,
+) -> bool:
+    """
+    Return True if a shunt-capacitor pixel (type 5) may be placed at (r, c).
+
+    A shunt cap carries the same 3×3 footprint-spacing rule as a switch: its
+    3×3 footprint must not overlap any other special pixel's footprint
+    (inductor/switch/shunt-cap), so every shunt cap keeps a clear 3×3 space and
+    two shunt caps never have overlapping 3×3 regions.  The cell must also be
+    interior (not a feed column) and currently type-1 metal.  Converting
+    metal → shunt-cap never removes metal, so connectivity is unaffected.
+    """
+    cols = len(matrix[0])
+    if c == 0 or c == cols - 1:
+        return False
+    if matrix[r][c] != 1:
+        return False
+    return not _special_pixel_too_close(matrix, r, c, new_type=5)
+
+
+def check_shunt_cap_count(matrix: List[List[int]], max_shunt_caps: int) -> bool:
+    """Return True if the number of type-5 (shunt-cap) pixels does not exceed max."""
+    return sum(v == 5 for row in matrix for v in row) <= max_shunt_caps
+
+
 def check_via_spacing(matrix: List[List[int]]) -> bool:
     """Via spacing rule: all 8-neighbours of every type-4 pixel must be 0 or 1."""
     rows = len(matrix)
@@ -744,11 +779,17 @@ def generate_random_design(
     inductor_cap_min: float = 200e-15,
     inductor_cap_max: float = 1000e-15,
     n_caps_per_switch: int = 1,
+    n_init_shunt_caps: int = 0,
+    max_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
     enable_pixel_sizing: bool = False,
     pixel_size_min: float = 25.0,
     pixel_size_max: float = 37.0,
     grid_size: float = 25.0,
     connect_margin: float = 2.0,
+    left_feed_row_max: Optional[int] = None,
+    right_feed_row_fixed: Optional[int] = None,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -773,10 +814,18 @@ def generate_random_design(
 
     n_ind_target = min(n_initial_inductors, max_inductors)
 
+    # Differential mode constrains the feed rows: the input (left feed) pixel may
+    # not be in the bottom two rows, and the output (right feed) pixel is pinned to
+    # the bottom/axis row.  Feed columns are excluded from all mutation actions, so
+    # these init-time choices persist for the lifetime of the design.
+    left_row_hi = rows - 1 if left_feed_row_max is None else left_feed_row_max
+
     for _attempt in range(max_attempts):
         # --- Step 1: choose feed rows ---
-        left_feed_row  = rng.randint(0, rows - 1)
-        right_feed_row = rng.randint(0, rows - 1)
+        left_feed_row  = rng.randint(0, left_row_hi)
+        right_feed_row = (right_feed_row_fixed
+                          if right_feed_row_fixed is not None
+                          else rng.randint(0, rows - 1))
 
         # --- Step 2: build matrix with only 0/1 types ---
         matrix = [[0] * cols for _ in range(rows)]
@@ -867,6 +916,24 @@ def generate_random_design(
                 if _can_place_via_at(matrix, r, c):
                     matrix[r][c] = 4
                     placed_via += 1
+            # Don't retry matrix if we couldn't place all — just use fewer
+
+        # --- Step 5c: place initial shunt-capacitor pixels (type 5) ---
+        if n_init_shunt_caps > 0 and max_shunt_caps > 0:
+            eligible_scap = [
+                (r, c)
+                for r in range(rows)
+                for c in range(1, cols - 1)
+                if matrix[r][c] == 1 and _can_place_shunt_cap_at(matrix, r, c)
+            ]
+            rng.shuffle(eligible_scap)
+            placed_scap = 0
+            for (r, c) in eligible_scap:
+                if placed_scap >= min(n_init_shunt_caps, max_shunt_caps):
+                    break
+                if _can_place_shunt_cap_at(matrix, r, c):
+                    matrix[r][c] = 5
+                    placed_scap += 1
             # Don't retry matrix if we couldn't place all — just use fewer
 
         # --- Final feasibility check ---
@@ -974,6 +1041,10 @@ def generate_random_design(
                     cap_pixel_pairs.append(candidate)
                     cap_pair_values_list.append(rng.uniform(cap_pair_min, cap_pair_max))
 
+        # --- Shunt-cap values: one per type-5 pixel, row-first order ---
+        n_scap = sum(v == 5 for row in matrix for v in row)
+        shunt_cap_values = [rng.uniform(shunt_cap_min, shunt_cap_max) for _ in range(n_scap)]
+
         return DesignState(
             matrix                 = matrix,
             switch_states          = switch_states,
@@ -983,6 +1054,7 @@ def generate_random_design(
             cap_pixel_pairs        = cap_pixel_pairs,
             cap_pair_values        = cap_pair_values_list,
             inductor_cap_values    = inductor_cap_values,
+            shunt_cap_values       = shunt_cap_values,
             pixel_sizes            = pixel_sizes,
         )
 

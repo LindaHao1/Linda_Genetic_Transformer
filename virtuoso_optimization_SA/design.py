@@ -23,7 +23,8 @@ class DesignState:
     Attributes
     ----------
     matrix : 2-D list of int
-        Pixel grid.  Values: 0=ground, 1=metal, 2=inductor, 3=switch.
+        Pixel grid.  Values: 0=ground, 1=metal, 2=inductor, 3=switch, 4=via,
+        5=shunt-capacitor (permanent MIM cap to ground).
         Row 0 is the bottom of the layout; col 0 / col N-1 are the feed columns.
     switch_states : list of list of list of int
         Outer length = n_states, middle length = n_switches, inner length = n_caps_in_bank.
@@ -47,6 +48,11 @@ class DesignState:
     cap_pixel_pairs: List[List[List[int]]] = field(default_factory=list)  # [[[r1,c1],[r2,c2]], ...]
     cap_pair_values: List[float] = field(default_factory=list)            # [n_cap_pairs]
     inductor_cap_values: List[float] = field(default_factory=list)        # [n_inductors] series MIM cap per inductor
+    shunt_cap_values: List[float] = field(default_factory=list)           # [n_shunt_caps] MIM cap-to-ground per type-5 pixel (row-first)
+    # Shunt capacitor pixels (type 5) behave like a switch pixel whose switch has been
+    # removed: the pixel is permanently tied to ground through a MIM cap.  Unlike switches
+    # there is no per-state ON/OFF — only the capacitance value is GA-tunable.  One float
+    # per type-5 pixel, in row-first order (same ordering as the SCAP_<i> EMX ports).
     pixel_sizes: List[List[float]] = field(default_factory=list)          # [rows][cols] per-pixel metal patch size (um)
     # Empty list  → uniform mode: engine uses scalar layout.pixel_size, connectivity uses
     #               pure grid adjacency (backward-compatible default).
@@ -81,6 +87,11 @@ class DesignState:
         return sum(v == 4 for row in self.matrix for v in row)
 
     @property
+    def n_shunt_caps(self) -> int:
+        """Count shunt-capacitor pixels (type 5) in the matrix."""
+        return sum(v == 5 for row in self.matrix for v in row)
+
+    @property
     def n_states(self) -> int:
         return len(self.switch_states)
 
@@ -102,6 +113,7 @@ class DesignState:
             cap_pixel_pairs        = copy.deepcopy(self.cap_pixel_pairs),
             cap_pair_values        = list(self.cap_pair_values),
             inductor_cap_values    = list(self.inductor_cap_values),
+            shunt_cap_values       = list(self.shunt_cap_values),
             pixel_sizes            = copy.deepcopy(self.pixel_sizes),
         )
 
@@ -130,6 +142,7 @@ class DesignState:
         if self.cap_pixel_pairs:
             cfg["cap_pixel_pairs"] = self.cap_pixel_pairs
             cfg["cap_pair_values"] = self.cap_pair_values
+        cfg["shunt_cap_values"] = self.shunt_cap_values  # always emit, even [] — prevents base config bleed-through via deep_merge
         if self.pixel_sizes:
             cfg["pixel_sizes"] = self.pixel_sizes  # only emit when sizing enabled — keeps uniform path untouched
         return cfg
@@ -148,5 +161,6 @@ class DesignState:
             f"  InductorCapValues:    {self.inductor_cap_values}\n"
             f"  CapPixelPairs:        {self.cap_pixel_pairs}\n"
             f"  CapPairValues:        {self.cap_pair_values}\n"
+            f"  ShuntCapValues:       {self.shunt_cap_values}\n"
             f"  PixelSizes(set):      {bool(self.pixel_sizes)}"
         )

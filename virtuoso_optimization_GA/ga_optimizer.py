@@ -276,6 +276,12 @@ class GAConfig:
     connect_margin:       float = 2.0    # um — min patch overlap to count as connected
     n_pixel_size_perturb: int   = 8      # max pixels perturbed per perturb_pixel_sizes action
 
+    # Differential-mode filter: the GA optimizes the HALF design.  The input
+    # (left feed) pixel must avoid the bottom two rows; the output (right feed)
+    # pixel is pinned to the bottom/axis row.  Feed columns are never mutated,
+    # so these are enforced once, at random-design init.
+    differential: bool = False
+
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
         ga   = d["ga"]
@@ -392,6 +398,8 @@ class GAConfig:
 
             single_inductor_value = bool(grid.get("single_inductor_value", False)),
             n_caps_per_switch     = int(grid.get("n_caps_per_switch", 1)),
+
+            differential          = bool(grid.get("differential", False)),
 
             enable_pixel_sizing   = bool( grid.get("enable_pixel_sizing", False)),
             pixel_size_min        = float(grid.get("pixel_size_min", 25.0)),
@@ -1003,6 +1011,8 @@ class SwitchableFilterGA:
                         pixel_size_max      = cfg.pixel_size_max,
                         grid_size           = self.grid_size,
                         connect_margin      = cfg.connect_margin,
+                        left_feed_row_max    = (cfg.rows - 3) if cfg.differential else None,
+                        right_feed_row_fixed = (cfg.rows - 1) if cfg.differential else None,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -1403,6 +1413,8 @@ class SwitchableFilterGA:
                 pixel_size_max      = cfg.pixel_size_max,
                 grid_size           = self.grid_size,
                 connect_margin      = cfg.connect_margin,
+                left_feed_row_max    = (cfg.rows - 3) if cfg.differential else None,
+                right_feed_row_fixed = (cfg.rows - 1) if cfg.differential else None,
             )
             if design is None:
                 raise RuntimeError(

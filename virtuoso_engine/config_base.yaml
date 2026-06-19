@@ -17,6 +17,20 @@
 mode: "pixelated_design_simple"
 
 # ============================================================
+# SERVER PROFILE
+# Selects how EDA commands (Virtuoso/Spectre) are launched and which
+# server-specific paths apply.  The active profile is chosen by the
+# RFIC_SERVER env var, else server.active below, else "local".
+# Profiles live in virtuoso_engine/servers/<name>.yaml and are deep-merged
+# on top of every config by config_loader.load_config.
+#   local → enabled: false (commands run directly; current behaviour)
+#   hpc   → enabled: true  (module load + singularity wrapper; see servers/hpc.yaml)
+# ============================================================
+server:
+  active: "local"
+  enabled: false
+
+# ============================================================
 # PROJECT SETTINGS
 # ============================================================
 project:
@@ -50,8 +64,8 @@ mim_cap:
 # ============================================================
 switch_model:
   cap_value: "1e-12"
-  switch_on_s1p: "/disk/mcao53/RFIC_RL/Switch_spar/Switch_128um_on.s1p"
-  switch_off_s1p: "/disk/mcao53/RFIC_RL/Switch_spar/Switch_128um_off.s1p"
+  switch_on_s1p: "Switch_spar/Switch_128um_on.s1p"
+  switch_off_s1p: "Switch_spar/Switch_128um_off.s1p"
 
 # ============================================================
 # LAYOUT GEOMETRY — pixel_size and grid_size must be set in child configs

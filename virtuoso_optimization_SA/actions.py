@@ -28,6 +28,7 @@ from .design import DesignState
 from .feasibility import (
     _build_other_path_cells,
     _can_place_inductor_at,
+    _can_place_shunt_cap_at,
     _can_place_switch_at,
     _can_place_via_at,
     check_cap_pair_valid,
@@ -1204,6 +1205,173 @@ def action_perturb_pixel_sizes(
 
 
 # ---------------------------------------------------------------------------
+# Action 13: modify shunt-capacitor pixels (add / remove type-5)
+# ---------------------------------------------------------------------------
+
+def _shunt_cap_row_first_index(matrix: list, r: int, c: int) -> int:
+    """Return the row-first position of shunt-cap pixel (r, c) among all type-5 pixels."""
+    idx = 0
+    for row in range(len(matrix)):
+        for col in range(len(matrix[0])):
+            if matrix[row][col] == 5:
+                if row == r and col == c:
+                    return idx
+                idx += 1
+    raise ValueError(f"No type-5 pixel at ({r}, {c})")
+
+
+def action_modify_shunt_cap(
+    state: DesignState,
+    rng: random.Random,
+    max_shunt_caps: int = 99,
+    min_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
+    require_axis_aligned: bool = True,
+) -> tuple:
+    """
+    Add or remove one shunt-capacitor pixel (type 5).
+
+    A shunt cap is a switch pixel without the switch: a metal pixel permanently
+    tied to ground through a MIM cap.  It has no per-state ON/OFF — only a
+    capacitance value.  This action is the type-5 analogue of the switch
+    add/remove sub-actions, but simpler (no switch_states bookkeeping).
+
+    - add:    convert an eligible interior type-1 pixel to type 5 and insert a
+              random capacitance at its row-first position.
+    - remove: convert a random type-5 pixel back to type 1 and drop its value.
+
+    Sub-actions that would violate min_shunt_caps / max_shunt_caps are excluded.
+    Converting metal ↔ shunt-cap never removes metal, so connectivity is
+    preserved by construction.
+
+    Returns (mutated copy, info_dict), or (None, None) if no sub-action applies.
+    """
+    rows = state.rows
+    cols = state.cols
+
+    scap_positions = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if state.matrix[r][c] == 5
+    ]
+    n_scap = len(scap_positions)
+
+    can_add    = n_scap < max_shunt_caps
+    can_remove = n_scap > min_shunt_caps
+
+    choices = []
+    if can_add:    choices.append("add")
+    if can_remove: choices.append("remove")
+    if not choices:
+        return None, None
+
+    sub_action = rng.choice(choices)
+
+    # ---- add ----
+    if sub_action == "add":
+        eligible = [
+            (r, c)
+            for r in range(rows)
+            for c in range(1, cols - 1)
+            if state.matrix[r][c] == 1 and _can_place_shunt_cap_at(state.matrix, r, c)
+        ]
+        if not eligible:
+            return None, None
+        pr, pc = rng.choice(eligible)
+        new = state.copy()
+        new.matrix[pr][pc] = 5
+        idx = _shunt_cap_row_first_index(new.matrix, pr, pc)
+        new_val = rng.uniform(shunt_cap_min, shunt_cap_max)
+        new.shunt_cap_values.insert(idx, new_val)
+        # Prune any cap pairs whose 3×3 corridor now overlaps the new shunt cap
+        # (same treatment switches get — keeps the type-5 footprint clear).
+        new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+            new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+            cap_pair_min_dist, cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
+        )
+        info = {
+            "action":              "modify_shunt_cap",
+            "sub_action":          "add",
+            "description":         f"Added shunt cap at ({pr},{pc}) = {new_val*1e15:.1f} fF (list index {idx})",
+            "placed_at":           {"row": pr, "col": pc},
+            "shunt_list_index":    idx,
+            "value_fF":            new_val * 1e15,
+            "n_shunt_before":      n_scap,
+            "n_shunt_after":       n_scap + 1,
+        }
+        return new, info
+
+    # ---- remove ----
+    else:
+        rm_r, rm_c = rng.choice(scap_positions)
+        idx = _shunt_cap_row_first_index(state.matrix, rm_r, rm_c)
+        new = state.copy()
+        new.matrix[rm_r][rm_c] = 1
+        removed_val = (new.shunt_cap_values.pop(idx)
+                       if idx < len(new.shunt_cap_values) else None)
+        info = {
+            "action":           "modify_shunt_cap",
+            "sub_action":       "remove",
+            "description":      f"Removed shunt cap at ({rm_r},{rm_c}) (list index {idx})",
+            "removed_from":     {"row": rm_r, "col": rm_c},
+            "shunt_list_index": idx,
+            "value_fF":         (removed_val * 1e15) if removed_val is not None else None,
+            "n_shunt_before":   n_scap,
+            "n_shunt_after":    n_scap - 1,
+        }
+        return new, info
+
+
+# ---------------------------------------------------------------------------
+# Action 14: perturb shunt-capacitor values
+# ---------------------------------------------------------------------------
+
+def action_perturb_shunt_caps(
+    state: DesignState,
+    sigma: float,
+    shunt_cap_min: float,
+    shunt_cap_max: float,
+    rng: random.Random,
+) -> tuple:
+    """
+    Add independent Gaussian noise (std = ``sigma``) to every shunt-cap value,
+    then clip to [shunt_cap_min, shunt_cap_max].
+
+    Returns (mutated copy, info_dict), or (None, None) if no shunt caps exist.
+    """
+    if not state.shunt_cap_values:
+        return None, None
+
+    new = state.copy()
+    cap_changes = []
+    for i in range(len(new.shunt_cap_values)):
+        old_val = new.shunt_cap_values[i]
+        noise = rng.gauss(0.0, sigma)
+        new.shunt_cap_values[i] = max(shunt_cap_min, min(shunt_cap_max, old_val + noise))
+        cap_changes.append({
+            "index": i,
+            "old_fF": round(old_val * 1e15, 4),
+            "new_fF": round(new.shunt_cap_values[i] * 1e15, 4),
+            "delta_fF": round((new.shunt_cap_values[i] - old_val) * 1e15, 4),
+        })
+    info = {
+        "action": "perturb_shunt_caps",
+        "description": (
+            f"Perturbed {len(cap_changes)} shunt cap(s) with Gaussian noise "
+            f"(sigma={sigma*1e15:.1f} fF)"
+        ),
+        "sigma_fF": sigma * 1e15,
+        "cap_changes": cap_changes,
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
 # Dispatcher: pick a random action and apply it
 # ---------------------------------------------------------------------------
 
@@ -1221,6 +1389,8 @@ _ACTION_NAMES = [
     "flip_via",
     "perturb_inductor_caps",
     "perturb_pixel_sizes",
+    "modify_shunt_cap",
+    "perturb_shunt_caps",
 ]
 
 
@@ -1261,6 +1431,11 @@ def _dispatch_action(
     grid_size: float = 25.0,
     connect_margin: float = 2.0,
     n_pixel_size_perturb: int = 8,
+    max_shunt_caps: int = 0,
+    min_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
+    shunt_cap_sigma: float = 50e-15,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -1329,6 +1504,21 @@ def _dispatch_action(
             state, n_pixel_size_perturb, pixel_size_sigma,
             pixel_size_min, pixel_size_max, grid_size, connect_margin, rng,
         )
+    elif action_name == "modify_shunt_cap":
+        return action_modify_shunt_cap(
+            state, rng,
+            max_shunt_caps=max_shunt_caps,
+            min_shunt_caps=min_shunt_caps,
+            shunt_cap_min=shunt_cap_min,
+            shunt_cap_max=shunt_cap_max,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
+        )
+    elif action_name == "perturb_shunt_caps":
+        return action_perturb_shunt_caps(
+            state, shunt_cap_sigma, shunt_cap_min, shunt_cap_max, rng,
+        )
     return None, None
 
 
@@ -1370,6 +1560,11 @@ def random_action(
     grid_size: float = 25.0,
     connect_margin: float = 2.0,
     n_pixel_size_perturb: int = 8,
+    max_shunt_caps: int = 0,
+    min_shunt_caps: int = 0,
+    shunt_cap_min: float = 50e-15,
+    shunt_cap_max: float = 1000e-15,
+    shunt_cap_sigma: float = 50e-15,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -1392,7 +1587,8 @@ def random_action(
         [flip_01, modify_switch, flip_inductor, flip_inductor_value,
          perturb_caps, flip_switch_state,
          add_cap_pair, remove_cap_pair, perturb_pair_caps, flip_inductor_state,
-         flip_via, perturb_inductor_caps]
+         flip_via, perturb_inductor_caps, perturb_pixel_sizes,
+         modify_shunt_cap, perturb_shunt_caps]
         Lists shorter than len(_ACTION_NAMES) are zero-padded; longer lists are truncated.
     max_retries_per_action : number of attempts for the chosen action before
         giving up on it and sampling a different one.
@@ -1440,6 +1636,11 @@ def random_action(
         grid_size=grid_size,
         connect_margin=connect_margin,
         n_pixel_size_perturb=n_pixel_size_perturb,
+        max_shunt_caps=max_shunt_caps,
+        min_shunt_caps=min_shunt_caps,
+        shunt_cap_min=shunt_cap_min,
+        shunt_cap_max=shunt_cap_max,
+        shunt_cap_sigma=shunt_cap_sigma,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

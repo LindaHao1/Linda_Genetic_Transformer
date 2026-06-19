@@ -68,6 +68,7 @@ from __future__ import annotations
 import copy
 import shutil
 import string
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -82,14 +83,17 @@ from .plotter import plot_s11_results, plot_s2p_results, plot_pixel_sizes
 from .pixel_matrix import (
     analyze_matrix,
     build_cap_pair_port_entries,
+    build_differential_emx_port_flags,
     build_emx_port_flags,
     build_skill_pixel_types_list,
     build_skill_pixel_sizes_list,
     build_skill_port_names_list,
+    differential_total_ports,
     get_feed_rows,
+    mirror_half_matrix,
     total_ports as matrix_total_ports,
 )
-from .spectre_runner import run_all_states
+from .spectre_runner import run_all_states, run_all_states_differential
 from .cap_utils import _lookup_cap_dims
 
 # Absolute path to the templates directory (next to this file)
@@ -114,6 +118,12 @@ _MODE_TEMPLATES: Dict[str, dict] = {
     },
     "pixelated_design_simple": {
         "layout": "pixelated_design_simple/layout.il",
+        "emx":    "pixelated_design_simple/emx.il",
+    },
+    "differential_filter": {
+        # Layout differs (differential I/O ports); EMX driver is the shared,
+        # fully-parameterized pixelated_design_simple template.
+        "layout": "differential_filter/layout.il",
         "emx":    "pixelated_design_simple/emx.il",
     },
     "full_layout": {
@@ -185,14 +195,26 @@ class VirtuosoPixelEngine:
             results = engine.sweep(...)
     """
 
-    def __init__(self, config_path: str | Path, worker_id: Optional[int] = None):
+    def __init__(
+        self,
+        config_path: str | Path,
+        worker_id: Optional[int] = None,
+        experiment_code: Optional[str] = None,
+    ):
         self.config_path = Path(config_path)
         self.base_config = self._load_yaml(self.config_path)
         self._runner: Optional[PersistentVirtuosoRunner] = None
         self._worker_id  = worker_id
+        # Per-experiment code appended to the Virtuoso cell name so that two
+        # experiments launched simultaneously (which share the same per-worker
+        # library {base}_w{id}) never create the same cell and clobber each
+        # other's layout.  Stable for the lifetime of this engine; generated
+        # lazily on first run() if not supplied here or in the config.
+        self.experiment_code = experiment_code
         self._lp = f"[W{worker_id}] " if worker_id is not None else ""
         print(f"[VirtuosoPixelEngine] Loaded config: {self.config_path}"
-              + (f" (worker {worker_id})" if worker_id is not None else ""))
+              + (f" (worker {worker_id})" if worker_id is not None else "")
+              + (f" (exp {experiment_code})" if experiment_code else ""))
 
     # ------------------------------------------------------------------
     # Context manager support
@@ -237,6 +259,17 @@ class VirtuosoPixelEngine:
         if self._worker_id is not None:
             cfg = _apply_worker_config(cfg, self._worker_id)
         mode = cfg.get("mode", "layout_pixel")
+
+        # --- Resolve the per-experiment cell-name code ---
+        # Precedence: explicit project.experiment_code in the (merged) config >
+        # the code supplied to this engine > a freshly generated one (cached so
+        # it stays constant across this engine's runs).
+        proj = cfg.setdefault("project", {})
+        code = proj.get("experiment_code") or self.experiment_code
+        if not code:
+            code = _generate_experiment_code()
+        self.experiment_code = code
+        proj["experiment_code"] = code
 
         if mode not in _MODE_TEMPLATES:
             raise ValueError(
@@ -426,6 +459,7 @@ class VirtuosoPixelEngine:
                 display=display,
                 session_log=log_dir / "virtuoso_session.log",
                 label=runner_label,
+                server=cfg.get("server"),
             )
             self._runner.start()
         return self._runner
@@ -448,6 +482,8 @@ class VirtuosoPixelEngine:
             self._render_simplified_layout(cfg, cell_name, output_path)
         elif mode == "pixelated_design_simple":
             self._render_pixelated_simple_layout(cfg, cell_name, output_path)
+        elif mode == "differential_filter":
+            self._render_differential_layout(cfg, cell_name, output_path)
         elif mode == "full_layout":
             self._render_full_layout(cfg, cell_name, output_path)
         else:
@@ -468,6 +504,8 @@ class VirtuosoPixelEngine:
             self._render_simplified_sim(cfg, cell_name, emx_dir, output_path)
         elif mode == "pixelated_design_simple":
             self._render_pixelated_simple_emx(cfg, cell_name, emx_dir, output_path)
+        elif mode == "differential_filter":
+            self._render_differential_emx(cfg, cell_name, emx_dir, output_path)
         elif mode == "full_layout":
             # EMX + Spectre not yet implemented for full_layout — emit a no-op script.
             output_path.write_text(
@@ -496,6 +534,8 @@ class VirtuosoPixelEngine:
         mode = cfg.get("mode", "layout_pixel")
         if mode == "pixelated_design_simple":
             return self._run_pixelated_simple_states(cfg, cell_name, emx_dir)
+        if mode == "differential_filter":
+            return self._run_differential_states(cfg, cell_name, emx_dir)
         return []
 
     # ------------------------------------------------------------------
@@ -670,6 +710,14 @@ class VirtuosoPixelEngine:
                             f"cap_values[{sw_i}] bank length ({len(cap_values[sw_i])})."
                         )
 
+        # Validate shunt-capacitor pixels (type 5): one value per pixel, row-first.
+        shunt_cap_values = pd.get("shunt_cap_values", []) or []
+        if len(shunt_cap_values) != mat_info["num_scap"]:
+            raise ValueError(
+                f"shunt_cap_values length ({len(shunt_cap_values)}) must equal "
+                f"number of shunt-cap pixels ({mat_info['num_scap']})."
+            )
+
         # Validate cap pixel pairs
         cap_pixel_pairs = pd.get("cap_pixel_pairs", [])
         cap_pair_values = pd.get("cap_pair_values", [])
@@ -829,6 +877,115 @@ class VirtuosoPixelEngine:
             cell_name            = cell_name,
             cap_pair_values      = pd.get("cap_pair_values", []),
             inductor_state_list  = pd.get("inductor_switch_states"),
+        )
+        return [p for p in s2p_paths if p is not None]
+
+    # ------------------------------------------------------------------
+    # differential_filter renderers
+    #
+    # The GA optimizes only the HALF matrix; the engine mirrors it about the
+    # bottom row to build the full layout, places the differential I/O ports,
+    # runs the shared EMX driver, then a differential Spectre testbench.
+    # First version is 0/1-only (no central pixel ports).
+    # ------------------------------------------------------------------
+
+    def _render_differential_layout(
+        self,
+        cfg: dict,
+        cell_name: str,
+        output_path: Path,
+    ) -> None:
+        """Render layout.il for differential_filter mode (mirrors the half matrix)."""
+        pd = cfg["pixelated"]
+        la = cfg["layout"]
+        half = pd["pixel_state_matrix"]
+
+        # Mirror + resolve the differential feed rows (validates input/output
+        # placement constraints).
+        full, in_top_row, in_bot_row, out_row = mirror_half_matrix(half)
+        mat_info  = analyze_matrix(full)
+        grid_size = la.get("grid_size", la["pixel_size"])
+        feedline  = pd.get("feedline", {})
+
+        template_text = (_TEMPLATES_DIR / "differential_filter/layout.il").read_text()
+
+        rendered = string.Template(template_text).substitute(
+            LIB_NAME            = cfg["project"]["lib_name"],
+            CELL_NAME           = cell_name,
+            PIXEL_SIZE          = la["pixel_size"],
+            GRID_SIZE           = grid_size,
+            GND_LAYER           = la["gnd_layer"],
+            PIXEL_LAYER         = la["pixel_layer"],
+            NUM_ROWS            = mat_info["num_rows"],
+            NUM_COLS            = mat_info["num_cols"],
+            PIXEL_TYPES_SKILL   = build_skill_pixel_types_list(full),
+            PIXEL_SIZES_SKILL   = build_skill_pixel_sizes_list(full, None, la["pixel_size"]),
+            PORT_NAMES_SKILL    = build_skill_port_names_list(mat_info),
+            FEEDLINE_ROW_IN_TOP = in_top_row,
+            FEEDLINE_ROW_IN_BOT = in_bot_row,
+            FEEDLINE_ROW_OUT    = out_row,
+            FEEDLINE_WIDTH_IN   = feedline.get("feedline_width_in",
+                                               feedline.get("feedline_width", 5.0)),
+            FEEDLINE_WIDTH_OUT  = feedline.get("feedline_width_out",
+                                               feedline.get("feedline_width", 5.0)),
+            FEEDLINE_PADDING    = feedline.get("feedline_padding", 10.0),
+            GND_Y_EXTENSION     = la.get("gnd_y_extension", 0.0),
+        )
+        output_path.write_text(rendered)
+
+    def _render_differential_emx(
+        self,
+        cfg: dict,
+        cell_name: str,
+        emx_dir: Path,
+        output_path: Path,
+    ) -> None:
+        """Render the (shared) EMX script with the differential 6-port set."""
+        sim = cfg["simulation"]
+        p   = cfg["paths"]
+
+        # Mirror the half matrix (validates placement) and analyze the FULL
+        # matrix so via (type-4) pixels contribute VIA_<i> EMX ports.
+        full, *_ = mirror_half_matrix(cfg["pixelated"]["pixel_state_matrix"])
+        mat_info = analyze_matrix(full)
+
+        template_text = (_TEMPLATES_DIR / "pixelated_design_simple/emx.il").read_text()
+
+        rendered = string.Template(template_text).substitute(
+            LIB_NAME       = cfg["project"]["lib_name"],
+            CELL_NAME      = cell_name,
+            DEST_FOLDER    = str(emx_dir),
+            EMX_BINARY     = p["emx_binary"],
+            PROC_FILE      = p["proc_file"],
+            EMX_FREQ_START = sim["emx_freq_start"],
+            EMX_FREQ_STOP  = sim["emx_freq_stop"],
+            EMX_FREQ_STEP  = sim["emx_freq_step"],
+            EMX_PARALLEL   = sim["emx_parallel_threads"],
+            EMX_PORT_FLAGS = build_differential_emx_port_flags(mat_info),
+            TOTAL_PORTS    = differential_total_ports(mat_info),
+        )
+        output_path.write_text(rendered)
+
+    def _run_differential_states(
+        self,
+        cfg: dict,
+        cell_name: str,
+        emx_dir: Path,
+    ) -> List[Path]:
+        """Post-EMX driver for differential_filter: differential Spectre testbench."""
+        full, *_ = mirror_half_matrix(cfg["pixelated"]["pixel_state_matrix"])
+        n_ports  = differential_total_ports(analyze_matrix(full))
+        snp_path = emx_dir / f"{cell_name}.s{n_ports}p"
+        if not snp_path.exists():
+            print(f"  [engine] WARNING: EMX SNP file not found: {snp_path}")
+            print("  [engine] Skipping differential Spectre simulation.")
+            return []
+
+        s2p_paths = run_all_states_differential(
+            snp_path  = snp_path,
+            cfg       = cfg,
+            emx_dir   = emx_dir,
+            cell_name = cell_name,
         )
         return [p for p in s2p_paths if p is not None]
 
@@ -1121,6 +1278,17 @@ def _cellname_safe(v: Any) -> str:
     return str(v).replace("-", "m").replace(".", "p").replace("+", "")
 
 
+def _generate_experiment_code() -> str:
+    """
+    Return a short, cell-name-safe code identifying one experiment launch.
+
+    Six hex characters from a random UUID (≈16M space).  Used as a Virtuoso
+    cell-name suffix so concurrent experiments sharing the same per-worker
+    library never collide on a cell.  Independent of any GA/SA random seed.
+    """
+    return uuid.uuid4().hex[:6]
+
+
 def _make_cell_name(cfg: dict) -> str:
     """
     Generate a unique, filesystem-safe cell name from the tunable parameters
@@ -1131,7 +1299,13 @@ def _make_cell_name(cfg: dict) -> str:
     pixelated_design_simple  → pixsimple_r3c5_ps35p0_fr1
     """
     mode   = cfg.get("mode", "layout_pixel")
-    suffix = f"_w{cfg['_worker_id']}" if cfg.get("_worker_id") is not None else ""
+    # Per-experiment code first (constant within an experiment), then the
+    # per-worker suffix.  Result: ``<base>_x<code>_w<id>`` — unique across
+    # simultaneous experiment launches, identical for every sim within one.
+    code   = (cfg.get("project") or {}).get("experiment_code")
+    exp    = f"_x{code}" if code else ""
+    worker = f"_w{cfg['_worker_id']}" if cfg.get("_worker_id") is not None else ""
+    suffix = exp + worker
 
     if mode == "simplified_pixel":
         la  = cfg["layout"]
@@ -1152,13 +1326,30 @@ def _make_cell_name(cfg: dict) -> str:
         rows = len(mat)
         cols = len(mat[0]) if rows else 0
         grid_size = la.get("grid_size", la["pixel_size"])
-        frl, frr  = get_feed_rows(mat)
+        # Feed rows are intentionally NOT in the name: they change per design,
+        # so including them spawns a new Virtuoso cell for every feed-row combo.
+        # Omitting them lets a worker reuse/overwrite one cell per grid size.
         return (
             f"pixsimple"
             f"_r{rows}c{cols}"
             f"_ps{_cellname_safe(la['pixel_size'])}"
             f"_gs{_cellname_safe(grid_size)}"
-            f"_frl{frl}frr{frr}"
+        ) + suffix
+
+    if mode == "differential_filter":
+        pd  = cfg["pixelated"]
+        la  = cfg["layout"]
+        mat = pd["pixel_state_matrix"]            # HALF matrix
+        rows = len(mat)
+        cols = len(mat[0]) if rows else 0
+        grid_size = la.get("grid_size", la["pixel_size"])
+        # Input feed row omitted for the same reason as pixelated_design_simple:
+        # it varies per design and would create a new cell per input position.
+        return (
+            f"diff"
+            f"_r{rows}c{cols}"
+            f"_ps{_cellname_safe(la['pixel_size'])}"
+            f"_gs{_cellname_safe(grid_size)}"
         ) + suffix
 
     if mode == "full_layout":
@@ -1191,6 +1382,9 @@ def _get_run_labels(cfg: dict) -> list:
     if mode == "pixelated_design_simple":
         n_states = len(cfg.get("pixelated", {}).get("state_list", []))
         return [f"state{i}" for i in range(n_states)]
+    if mode == "differential_filter":
+        # 0/1-only differential filter is a single-state design.
+        return ["state0"]
     if mode == "full_layout":
         return []  # No Spectre states in layout-only mode
     return cfg["simulation"]["control_voltages"]
@@ -1216,6 +1410,22 @@ def _make_plots(
     cfg: Optional[Dict[str, Any]] = None,
 ) -> dict:
     """Dispatch to the appropriate plotter based on mode."""
+    if mode == "differential_filter":
+        # S2P plot (S21/S11); overlay the full mirrored matrix for context.
+        matrix = None
+        if cfg is not None:
+            half = cfg.get("pixelated", {}).get("pixel_state_matrix")
+            if half is not None:
+                try:
+                    matrix, *_ = mirror_half_matrix(half)
+                except Exception:
+                    matrix = None
+        return plot_s2p_results(
+            s2p_files=s_param_files,
+            state_labels=labels,
+            output_dir=plot_dir,
+            pixel_matrix=matrix,
+        )
     if mode == "pixelated_design_simple":
         matrix = None
         cap_pixel_pairs = None

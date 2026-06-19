@@ -13,14 +13,14 @@ layout:
 pixelated:
   # Single-value inductor translation table — layout-extracted EM s1p
   inductor_translation_table:
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
+    - "Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
 
   # Example values — overridden per run by the optimizer
   inductor_values: [0]
-  inductor_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
+  inductor_s1p: "Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_on.s1p"
 
   # OFF-state layout-extracted EM s1p (replaces large-resistor open-circuit model)
   inductor_off_translation_table:
-    - "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"
+    - "Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"
 
-  inductor_off_s1p: "/disk/mcao53/RFIC_RL/Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"
+  inductor_off_s1p: "Inductor_spar/Ind_from_layout/Active_inductor_300pH_EM_off.s1p"

@@ -53,7 +53,7 @@ from typing import Dict, List, Optional, TextIO
 
 import yaml
 
-from .engine import VirtuosoPixelEngine, RunResult
+from .engine import VirtuosoPixelEngine, RunResult, _generate_experiment_code
 from .config_loader import load_config
 
 
@@ -139,15 +139,21 @@ class _WorkerThread(threading.Thread):
         worker_id: int,
         config_path: Path,
         task_queue: "queue.Queue[Optional[_Task]]",
+        experiment_code: Optional[str] = None,
     ) -> None:
         super().__init__(name=f"virt-worker-{worker_id}", daemon=True)
         self.worker_id   = worker_id
         self.config_path = config_path
         self.task_queue  = task_queue
+        self.experiment_code = experiment_code
         self._engine: Optional[VirtuosoPixelEngine] = None
 
     def run(self) -> None:
-        self._engine = VirtuosoPixelEngine(self.config_path, worker_id=self.worker_id)
+        self._engine = VirtuosoPixelEngine(
+            self.config_path,
+            worker_id=self.worker_id,
+            experiment_code=self.experiment_code,
+        )
         print(f"[Worker-{self.worker_id}] Ready.")
         try:
             while True:
@@ -196,6 +202,7 @@ class ParallelVirtuosoEngine:
         num_workers: Optional[int] = None,
         log_path: Optional[str | Path] = "auto",
         quiet: bool = False,
+        experiment_code: Optional[str] = None,
     ) -> None:
         """
         Parameters
@@ -205,8 +212,15 @@ class ParallelVirtuosoEngine:
             console.  Output is still captured to ``log_path`` if provided.
             Use this in automated training loops where you want concise
             top-level logging instead of verbose per-simulation messages.
+        experiment_code:
+            Short code appended to every worker's Virtuoso cell name so that
+            two experiments launched at the same time (which share the same
+            per-worker library) never collide on a cell.  Generated once here
+            when omitted, then shared by all workers — constant for the whole
+            experiment.
         """
         self.config_path  = Path(config_path)
+        self.experiment_code = experiment_code or _generate_experiment_code()
         self._num_workers = num_workers
         self._log_path    = log_path      # "auto", a Path, or None
         self._quiet       = quiet
@@ -263,6 +277,7 @@ class ParallelVirtuosoEngine:
                 f"# Started : {datetime.now().isoformat(timespec='seconds')}\n"
                 f"# Config  : {self.config_path}\n"
                 f"# Workers : {n}\n"
+                f"# Exp code: {self.experiment_code}\n"
                 f"# Log file: {resolved_log}\n\n"
             )
         elif self._quiet:
@@ -284,12 +299,13 @@ class ParallelVirtuosoEngine:
                 worker_id=worker_id,
                 config_path=self.config_path,
                 task_queue=self._task_queue,
+                experiment_code=self.experiment_code,
             )
             w.start()
             self._workers.append(w)
 
         self._started = True
-        print(f"[ParallelEngine] Started {n} worker(s).")
+        print(f"[ParallelEngine] Started {n} worker(s).  Experiment code: {self.experiment_code}")
 
     def close(self) -> None:
         """Send shutdown sentinels and wait for all workers to stop."""

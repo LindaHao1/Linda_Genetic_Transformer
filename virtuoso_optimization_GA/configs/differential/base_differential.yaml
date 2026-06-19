@@ -1,0 +1,152 @@
+# ===========================================================================
+# GA Base Config — Differential-Mode Filter (metal-only, single state)
+#
+# This file is a SHARED BASE — do not run it directly.
+# Create an experiment config that sets:
+#   _base_: ./base_differential.yaml
+#   virtuoso_config: ".../virtuoso_engine/config_differential.yaml"
+#   output_dir: "/disk/mcao53/Sim_engine_results/<experiment_name>"
+#   grid: { rows: <R>, cols: <C> }   # the HALF design; engine mirrors to 2R-1 rows
+#   seed: 42
+#
+# Design space:
+#   0/1 metal only (scratch).  No switches, inductors, vias, or caps yet.
+#   ``grid.differential: true`` enables the half-design feed-row constraints:
+#     * input (left feed) pixel avoids the bottom two rows,
+#     * output (right feed) pixel is pinned to the bottom/axis row (R-1, C-1).
+#   Only flip_01 is active; feed columns are never mutated.
+#
+# Objective:
+#   Single-state S21 filter spec.  The S21 already reflects the differential
+#   60 ohm input port, the 61 fF input cap, and the 50 ohm output port defined
+#   in config_differential.yaml.
+# ===========================================================================
+
+grid:
+  differential: true     # enable half-design input/output feed-row constraints
+  n_states: 1
+
+  min_switches: 0
+  max_switches: 0
+  max_inductors: 0
+  n_max_vias: 0
+
+  init_min_switches: 0
+  init_max_switches: 0
+  init_min_inductors: 0
+  init_max_inductors: 0
+  init_min_vias: 0
+  init_max_vias: 0
+
+  init_metal_density: 0.45
+
+  cap_min: 0.0
+  cap_max: 0.0
+  n_inductor_values: 1
+  single_inductor_value: true
+
+  enable_cap_pairs: false
+  max_cap_pairs: 0
+
+# ---------------------------------------------------------------------------
+# FILTER TARGET SPECIFICATION  (35 GHz centre, ~3 GHz bandwidth — EDIT to taste)
+# Uses PEAK-VALLEY (PV) CONTRAST mode (same objective form as impedance_transfer).
+# ---------------------------------------------------------------------------
+filter_specs:
+  - state_index:     0
+    passband:        [33.5e9, 36.5e9]
+    stopband_regions:
+      - [10.0e9, 31.0e9]
+      - [39.0e9, 65.0e9]
+    cross_stopband_regions: []
+    weight: 1.0
+    cost_order: 1.5
+
+    enable_pv_contrast:    true
+    pv_contrast_k:         80
+    pv_contrast_weight:    8.0
+    pv_passband_weight:    16.0
+    passband_target_db:    -2.0
+    pv_passband_order:     2.0
+    pv_pb_worst_k:         10
+    pv_flatness_weight:    1.0
+
+    passband_min_db: -0.0
+    stopband_max_db: -30.0
+    passband_weight: 5.0
+    stopband_weight: 5.0
+    cross_stopband_max_db: -30.0
+    cross_stopband_weight: 0.0
+    enable_s11_cost:           false
+    s11_passband_max_db:       -20.0
+    s11_stopband_min_db:       -0.0
+    s11_cross_stopband_min_db: -0.0
+    enable_peak_matching:         false
+    enable_spurious_peak_penalty: false
+
+# ---------------------------------------------------------------------------
+# GENETIC ALGORITHM PARAMETERS  (flip_01 only)
+# ---------------------------------------------------------------------------
+ga:
+  pop_size_start:    60
+  pop_size_end:      30
+  pop_size_step_size: 10
+  pop_schedule_gens_per_step: 10
+  elite_fraction:   0.20
+  n_keep_bad: 5
+  n_gen:    300
+  n_immigrants: 15
+
+  p_crossover: 0.5
+  p_mutation:  0.5
+  crossover_method: "hybrid"
+  hybrid_method_weights: [1.0, 1.0, 1.0]
+  n_centroids: 5
+  block_min_size: 5
+  block_max_size: 15
+
+  selection:       "tournament"
+  tournament_size: 5
+
+  n_parallel: 3
+
+  n_regular_flip: 15
+  cap_sigma: 0.0
+  via_flip_max_count: 0
+
+  action_weights:
+    flip_01:             8.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  use_state_champions:      false
+  dynamic_state_assignment: false
+  p_champion_parent:        0.0
+  p_champion_parent2:       0.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  feasibility_cost_threshold: 1.0e6
+  population_plot_top_k: 5

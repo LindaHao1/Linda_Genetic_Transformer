@@ -261,6 +261,7 @@ _PIXEL_STYLE = {
     2: ("IND",  "#e8a838"),   # amber      — inductor port
     3: ("SW",   "#d94f3d"),   # red        — switch port
     4: ("VIA",  "#9b59b6"),   # purple     — via/gnd-short
+    5: ("SCAP", "#2ecc71"),   # green      — shunt-cap (MIM cap to gnd)
 }
 
 

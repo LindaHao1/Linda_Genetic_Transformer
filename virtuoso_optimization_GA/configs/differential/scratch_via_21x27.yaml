@@ -1,0 +1,36 @@
+# ===========================================================================
+# Experiment — Differential-Mode Filter, 21x27 HALF grid, metal + VIA scratch
+#
+# Same as scratch_21x27.yaml but enables type-4 via-ground pixels: each via
+# shorts a pixel to ground (an extra EMX VIA_<i> port shorted in Spectre).
+# Vias help suppress low-frequency transmission.  The half design is still
+# 21x27; the engine mirrors it to a 41x27 full layout (vias mirror too).
+# ===========================================================================
+
+_base_: ./base_differential.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_scratch_with_via"
+
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
+
+grid:
+  rows: 21   # HALF-design rows — engine mirrors to 41 rows
+  cols: 27
+
+  # --- Via option (overrides base_differential.yaml, which disables vias) ---
+  n_max_vias:    3   # max type-4 via pixels in the half design
+  init_min_vias: 0   # seed range for a fresh random / immigrant design
+  init_max_vias: 2
+
+ga:
+  via_flip_max_count: 1   # add/remove up to 1 via per flip_via action
+  # action_weights is deep-merged with the base, so only flip_via changes.
+  action_weights:
+    flip_via: 2.0
+  exploitation_action_weights:
+    flip_via: 2.0
+
+seed: 42

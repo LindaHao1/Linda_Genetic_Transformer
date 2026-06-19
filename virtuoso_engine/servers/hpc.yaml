@@ -1,0 +1,53 @@
+# ============================================================
+# Server profile: hpc  (singularity-wrapped EDA tools)
+#
+# Activate with:  export RFIC_SERVER=hpc
+# (or set server.active: hpc in config_base.yaml to make it the default).
+#
+# This overlay is deep-merged on top of every config loaded via
+# config_loader.load_config, so a SINGLE switch flips both the command wrapper
+# and the server-specific paths below — no per-config edits.
+#
+# Each Virtuoso / Spectre command becomes:
+#   bash -lc '<pre_launch_commands joined by &&> && <container_command> <cmd...>'
+# EMX runs via system() inside Virtuoso, so it inherits the container too.
+#
+# >>> EDIT the paths below to match this server before first use. <<<
+# ============================================================
+
+# --- Server-specific paths (override config_base.yaml) ---------------------
+project:
+  virtuoso_dir:      "/volumes/research-localdata/mcao53/virtuoso65nm"      # EDIT
+  parent_output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/virutoso65nm/engine_test" # EDIT
+  # display: ":99"   # uncomment/override if the Xvfb display differs
+
+paths:
+  proc_file:   "/volumes/research-localdata/mcao53/virtuoso65nm/RC_IRCX_CRN65G+_1P9M+UT-ALRDL_6X1Z1U_MiM_typical.proc"      # EDIT
+  tsmc_models: "/volumes/research-localdata/PDKs/TSMC65_05_12_26/MSRF_General_Purpose_Plus/PDK/CadenceOA/tn65cmsp018k3_1_0c/models/spectre/crn65gplus_2d5_lk_v1d0.scs"   # EDIT
+  emx_binary:  "/cae/apps/data/cadence-2025/installs/EMX20251/bin/emx"  # EDIT if different
+
+# --- Command wrapper -------------------------------------------------------
+server:
+  active: "hpc"
+  enabled: true
+  pre_launch_commands:
+    - "module purge"
+    - "module load cadence/2025 keysight/2026 rfic-link/2026"
+  # Everything up to and including the .sif.  Fully editable: binds, env flags,
+  # and exec-vs-run.  `exec` runs the appended command non-interactively; the
+  # module loads above set $PATH, which is carried in via --env PATH=$PATH.
+  # NOTE: add a --bind for the experiment output dir if it is not already
+  # covered by the binds below.
+  container_command: >
+    singularity exec
+    --env PATH=$PATH
+    --env DISPLAY=$DISPLAY
+    --env WAYLAND_DISPLAY=$WAYLAND_DISPLAY
+    --env XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR
+    --bind /run/user/$UID:/run/user/$UID
+    --bind /tmp/.X11-unix:/tmp/.X11-unix
+    --bind $XDG_RUNTIME_DIR/$WAYLAND_DISPLAY:$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY
+    --bind /cae/apps/data:/cae/apps/data:ro
+    --bind /srv/auto/apps/:/srv/auto/apps/:ro
+    --bind /volumes/research-localdata/PDKs/TSMC65_05_12_26/
+    /srv/auto/containers/cae-alma8-base_latest.sif

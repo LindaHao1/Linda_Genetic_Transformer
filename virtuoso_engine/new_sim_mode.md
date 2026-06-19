@@ -35,3 +35,16 @@ Testing: Let's create a single configuration for testing right now. Let's have s
 
 Cap pair description:
 Series cap logic change: The correct series cap placement: If the series if defined horizontal, the cap need to be rotated 90 degree. If the series cap is vertical, it does not need to be rotated. The series cap need to be placed  in the middle point of the line connectng the two pixel centers. after placing the pixels we will wire it in the M8 layer. We first find the PLUS like how we find it in switches, wire it to the center of the left pixel (or top pixel). Take horizontal as example. This will align in the x direction with the pix center. We need  another wire to start from x to the corresponding y, then use via to connect to the top metal layer. It is like a Ninety-degree zigzag line. SImilarly we do for the minus. For the bulk we will connect it to the ground like how we do to the switch.
+
+
+
+Differential mode filter design and optimization.
+
+We want to add a differential mode filter design, that might require another template like pixelated design simple. This is still a filter design but the input is a differential mode. The input is on the left edge, and the entire design is symmetric with respect to the x axis. The design matrix is only half of the design, since the other part is just symmetric. Notice that the bottom row will be the symmetric line, e.g. the bottom row will not be duplicated and the top part is mirrored under. So we will have input still in the left most column, but with the restriction that the input port cannot be on the bottom two rows, since after mirroring it will be too tight together. The output has only one port and it will always be in the middle. We can simply force the output column to have an 1 on the bottom row.
+
+As for s par simulation, the logic is different. We will first add a capacitor in between the two input ports. This cap value will be 61fF (can be configured). Then we will add a 60 ohm port in between the input, and a regular 50ohm port on the output side. Therefore our spar will look into the input port (with the capacitor) and we still get the S21, S11, ...
+
+The optimization will only optimize the half design using GA (remember the constraint of the input port), you can create yet another folder to store those configurations for differential filter design. We will have shunt caps, series caps available. But we can start with a scratch with only 0/1 pixels. 
+
+
+
