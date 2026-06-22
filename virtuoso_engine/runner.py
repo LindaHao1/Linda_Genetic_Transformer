@@ -222,11 +222,15 @@ class PersistentVirtuosoRunner:
         # Unique job directory per instance — pid alone is not enough when
         # multiple runners live in the same process (parallel workers).
         self._job_dir = Path(f"/tmp/virt_job_{os.getpid()}_{id(self)}")
-        # Resolve to an ABSOLUTE path against the launch cwd: Virtuoso runs with
-        # cwd=virtuoso_dir, so a relative log path would be created in the wrong
-        # place (and Virtuoso would fail with "CIW Initialization failure").
+        # Make the log path ABSOLUTE against the launch cwd (Virtuoso runs with
+        # cwd=virtuoso_dir, so a relative path would land in the wrong place and
+        # Virtuoso would fail with "CIW Initialization failure").  Use abspath,
+        # NOT Path.resolve(): resolve() canonicalises symlinks, and on hosts where
+        # /tmp is a symlink (e.g. /tmp -> /local.hd/tmp) Cadence cannot flock the
+        # resolved real path — it locks the symlink path fine.  abspath keeps the
+        # original /tmp prefix while still making relative paths absolute.
         self._session_log = (
-            Path(session_log).resolve() if session_log
+            Path(os.path.abspath(session_log)) if session_log
             else self._job_dir / "session.log"
         )
         # Virtuoso's own stdout/stderr (license/exec errors land here BEFORE the

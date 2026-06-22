@@ -24,6 +24,11 @@ mode: "differential_filter"
 layout:
   pixel_size: 18      # um — metal patch size (EDIT to taste)
   grid_size:  15.0    # um — pixel pitch; the GA reads this for connectivity
+  # Multi-layer metal: primary top metal is layout.pixel_layer (AP, "M10",
+  # inherited from config_base.yaml); the second metal is M9.  Per-pixel layer
+  # codes (0=AP, 1=M9, 2=both) come from pixelated.pixel_layers.  The differential
+  # OUTPUT feedlines/pins are forced onto M9 regardless of pixel layer.
+  pixel_layer_m9: "M9"
 
 # ------------------------------------------------------------
 # SIMULATION — differential port setup

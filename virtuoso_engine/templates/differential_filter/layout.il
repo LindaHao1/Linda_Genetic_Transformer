@@ -6,7 +6,14 @@
 ;
 ; This is the pixelated_design_simple layout with a differential I/O port set.
 ; The Python engine has already MIRRORED the GA half-design about the bottom
-; row, so ``pixel_types`` here is the FULL (2R-1)-row matrix.
+; row, so ``pixel_types`` / ``pixel_layers`` here are the FULL (2R-1)-row matrices.
+;
+; Multi-layer update
+;   * Each pixel carries a metal-layer code in ``pixel_layers``:
+;       0 → pixel_layer (AP, "M10")   1 → pixel_layer_m9 (M9)   2 → both (double)
+;   * The OUTPUT is a differential pair (top + bottom) like the input, and the
+;     output feedlines/pins are forced onto M9 (pixel_layer_m9) so induced
+;     current can flow across layers (single-layer differential is degenerate).
 ;
 ; Coordinate convention (identical to pixelated_design_simple)
 ;   Origin at lower-left corner of the pixel grid.
@@ -14,25 +21,27 @@
 ;   Row i maps to y_center = (num_rows - 1 - i) * grid_size + grid_size/2.
 ;
 ; Pins (differential)
-;   PIX_IN_T  / PIX_IN_T_GND  — top    input, left feed col, row IN_TOP
-;   PIX_IN_B  / PIX_IN_B_GND  — bottom input, left feed col, row IN_BOT
-;   PIX_OUT   / PIX_OUT_GND   — output, right feed col, axis row OUT
-;   (Signal pins on pixel_layer, GND refs on gnd_layer at the same x/y.)
+;   PIX_IN_T  / PIX_IN_T_GND  — top    input,  left feed col, row IN_TOP   (AP)
+;   PIX_IN_B  / PIX_IN_B_GND  — bottom input,  left feed col, row IN_BOT   (AP)
+;   PIX_OUT_T / PIX_OUT_T_GND — top    output, right feed col, row OUT_TOP (M9)
+;   PIX_OUT_B / PIX_OUT_B_GND — bottom output, right feed col, row OUT_BOT (M9)
+;   (Signal pins on the noted layer, GND refs on gnd_layer at the same x/y.)
 ; ============================================================
 
 procedure( build_differential_filter()
 let( (cv libName cellName
-      pixel_size grid_size gnd_layer pixel_layer
-      num_rows num_cols pixel_types pixel_sizes port_names this_size
-      feedline_row_in_top feedline_row_in_bot feedline_row_out
+      pixel_size grid_size gnd_layer pixel_layer pixel_layer_m9
+      num_rows num_cols pixel_types pixel_layers pixel_sizes port_names this_size this_layer
+      feedline_row_in_top feedline_row_in_bot feedline_row_out_top feedline_row_out_bot
       feedline_width_in feedline_width_out feedline_padding gnd_y_extension
       fl_in_top_y_center fl_in_top_y_bottom fl_in_top_y_top
       fl_in_bot_y_center fl_in_bot_y_bottom fl_in_bot_y_top
-      fl_out_y_center    fl_out_y_bottom    fl_out_y_top
+      fl_out_top_y_center fl_out_top_y_bottom fl_out_top_y_top
+      fl_out_bot_y_center fl_out_bot_y_bottom fl_out_bot_y_top
       gnd_y_bottom gnd_y_top
       fl_x_left fl_x_right
       ptype pname center_x center_y
-      patch_left patch_bottom patch_right patch_top
+      patch_left patch_bottom patch_right patch_top patch_box
       pin_size pin_box feedline_pin_size_in feedline_pin_size_out)
 
 ; ============================================================
@@ -43,15 +52,18 @@ cellName            = "${CELL_NAME}"
 pixel_size          = ${PIXEL_SIZE}      ; metal patch size (um); may be > grid_size
 grid_size           = ${GRID_SIZE}       ; pitch between pixel centres (um)
 gnd_layer           = "${GND_LAYER}"
-pixel_layer         = "${PIXEL_LAYER}"
+pixel_layer         = "${PIXEL_LAYER}"     ; primary top metal (AP / "M10")
+pixel_layer_m9      = "${PIXEL_LAYER_M9}"  ; second metal (M9)
 num_rows            = ${NUM_ROWS}        ; FULL mirrored row count (2R-1)
 num_cols            = ${NUM_COLS}
 pixel_types         = ${PIXEL_TYPES_SKILL}
+pixel_layers        = ${PIXEL_LAYERS_SKILL}
 pixel_sizes         = ${PIXEL_SIZES_SKILL}
 port_names          = ${PORT_NAMES_SKILL}
-feedline_row_in_top = ${FEEDLINE_ROW_IN_TOP}   ; top    input row (full-matrix coords)
-feedline_row_in_bot = ${FEEDLINE_ROW_IN_BOT}   ; bottom input row (mirror)
-feedline_row_out    = ${FEEDLINE_ROW_OUT}      ; output row (axis row)
+feedline_row_in_top  = ${FEEDLINE_ROW_IN_TOP}    ; top    input row (full-matrix coords)
+feedline_row_in_bot  = ${FEEDLINE_ROW_IN_BOT}    ; bottom input row (mirror)
+feedline_row_out_top = ${FEEDLINE_ROW_OUT_TOP}   ; top    output row (full-matrix coords)
+feedline_row_out_bot = ${FEEDLINE_ROW_OUT_BOT}   ; bottom output row (mirror)
 feedline_width_in   = ${FEEDLINE_WIDTH_IN}
 feedline_width_out  = ${FEEDLINE_WIDTH_OUT}
 feedline_padding    = ${FEEDLINE_PADDING}
@@ -91,9 +103,13 @@ fl_in_bot_y_center = (num_rows - 1 - feedline_row_in_bot) * grid_size + grid_siz
 fl_in_bot_y_bottom = fl_in_bot_y_center - feedline_width_in / 2.0
 fl_in_bot_y_top    = fl_in_bot_y_center + feedline_width_in / 2.0
 
-fl_out_y_center    = (num_rows - 1 - feedline_row_out) * grid_size + grid_size / 2.0
-fl_out_y_bottom    = fl_out_y_center - feedline_width_out / 2.0
-fl_out_y_top       = fl_out_y_center + feedline_width_out / 2.0
+fl_out_top_y_center = (num_rows - 1 - feedline_row_out_top) * grid_size + grid_size / 2.0
+fl_out_top_y_bottom = fl_out_top_y_center - feedline_width_out / 2.0
+fl_out_top_y_top    = fl_out_top_y_center + feedline_width_out / 2.0
+
+fl_out_bot_y_center = (num_rows - 1 - feedline_row_out_bot) * grid_size + grid_size / 2.0
+fl_out_bot_y_bottom = fl_out_bot_y_center - feedline_width_out / 2.0
+fl_out_bot_y_top    = fl_out_bot_y_center + feedline_width_out / 2.0
 
 gnd_y_bottom = 0.0 - gnd_y_extension
 gnd_y_top    = num_rows * grid_size + gnd_y_extension
@@ -114,15 +130,17 @@ for( col_i 0 (num_cols - 1)
             fc_x_right = (col_i + 1) * grid_size
 
             if( col_i == 0 then
-                ; LEFT feed column: two input traces (top + bottom)
+                ; LEFT feed column: two input traces (top + bottom) on AP
                 dbCreateRect(cv pixel_layer
                     list(list(fc_x_left fl_in_top_y_bottom) list(fc_x_right fl_in_top_y_top)))
                 dbCreateRect(cv pixel_layer
                     list(list(fc_x_left fl_in_bot_y_bottom) list(fc_x_right fl_in_bot_y_top)))
             else
-                ; RIGHT feed column: single output trace (axis row)
-                dbCreateRect(cv pixel_layer
-                    list(list(fc_x_left fl_out_y_bottom) list(fc_x_right fl_out_y_top)))
+                ; RIGHT feed column: two output traces (top + bottom) forced on M9
+                dbCreateRect(cv pixel_layer_m9
+                    list(list(fc_x_left fl_out_top_y_bottom) list(fc_x_right fl_out_top_y_top)))
+                dbCreateRect(cv pixel_layer_m9
+                    list(list(fc_x_left fl_out_bot_y_bottom) list(fc_x_right fl_out_bot_y_top)))
             )
             dbCreateRect(cv gnd_layer
                 list(list(fc_x_left gnd_y_bottom) list(fc_x_right gnd_y_top)))
@@ -143,6 +161,7 @@ for( col_i 0 (num_cols - 1)
             let( (flat_idx_inner)
                 flat_idx_inner = row_i * num_cols + col_i
                 ptype = nth(flat_idx_inner pixel_types)
+                this_layer = nth(flat_idx_inner pixel_layers)
                 pname = nth(flat_idx_inner port_names)
                 this_size = nth(flat_idx_inner pixel_sizes)
             )
@@ -150,22 +169,37 @@ for( col_i 0 (num_cols - 1)
             center_x = col_i * grid_size + grid_size / 2.0
             center_y = (num_rows - 1 - row_i) * grid_size + grid_size / 2.0
 
-            ; --- Top metal patch (types > 0) ---
+            ; --- Top metal patch (types > 0), drawn on the per-pixel metal layer ---
+            ;   layer 0 → pixel_layer (AP)   1 → pixel_layer_m9 (M9)   2 → both (double)
+            ; NOTE (Phase 1): double-metal draws both patches; an inter-layer via
+            ;       stack between AP and M9 is a known follow-up once the via layer
+            ;       name is confirmed for this PDK.
             when( ptype > 0
                 patch_left   = center_x - this_size / 2.0
                 patch_bottom = center_y - this_size / 2.0
                 patch_right  = center_x + this_size / 2.0
                 patch_top    = center_y + this_size / 2.0
-                dbCreateRect(cv pixel_layer
-                    list(list(patch_left patch_bottom) list(patch_right patch_top)))
+                patch_box    = list(list(patch_left patch_bottom) list(patch_right patch_top))
+                if( this_layer == 1 then
+                    dbCreateRect(cv pixel_layer_m9 patch_box)
+                else
+                    when( this_layer == 2
+                        dbCreateRect(cv pixel_layer_m9 patch_box))
+                    dbCreateRect(cv pixel_layer patch_box)
+                )
             )
 
             ; --- Central port pin (types > 1; never fires for 0/1-only) ---
+            ; Adaptive port layer: a pixel that includes M9 (layer 1 or 2) gets
+            ; its port on M9; an M10-only pixel (layer 0) gets its port on AP.
             when( ptype > 1
                 pin_box = list(
                     list(center_x - pin_size/2.0  center_y - pin_size/2.0)
                     list(center_x + pin_size/2.0  center_y + pin_size/2.0))
-                diff_create_pin(cv pname list(pixel_layer "pin") pin_box "inputOutput")
+                let( (port_pin_layer)
+                    port_pin_layer = if( this_layer == 0 pixel_layer pixel_layer_m9 )
+                    diff_create_pin(cv pname list(port_pin_layer "pin") pin_box "inputOutput")
+                )
             )
         )
     )
@@ -175,7 +209,7 @@ printf(" [3] Pixel grid drawn: %d rows x %d cols\n" num_rows num_cols)
 
 ; ============================================================
 ; 4. DRAW FEEDLINE EXTENSIONS  (beyond the grid)
-;    Left: two input extensions.  Right: one output extension.
+;    Left: two input extensions (AP).  Right: two output extensions (M9).
 ; ============================================================
 ; --- Left input extensions (top + bottom) ---
 dbCreateRect(cv pixel_layer
@@ -185,19 +219,21 @@ dbCreateRect(cv pixel_layer
 dbCreateRect(cv gnd_layer
     list(list(fl_x_left gnd_y_bottom) list(0.0 gnd_y_top)))
 
-; --- Right output extension (axis row) ---
-dbCreateRect(cv pixel_layer
-    list(list(num_cols * grid_size fl_out_y_bottom) list(fl_x_right fl_out_y_top)))
+; --- Right output extensions (top + bottom) on M9 ---
+dbCreateRect(cv pixel_layer_m9
+    list(list(num_cols * grid_size fl_out_top_y_bottom) list(fl_x_right fl_out_top_y_top)))
+dbCreateRect(cv pixel_layer_m9
+    list(list(num_cols * grid_size fl_out_bot_y_bottom) list(fl_x_right fl_out_bot_y_top)))
 dbCreateRect(cv gnd_layer
     list(list(num_cols * grid_size gnd_y_bottom) list(fl_x_right gnd_y_top)))
 
-printf(" [4] Left input extensions at y=%.2f,%.2f  right output at y=%.2f\n"
-       fl_in_top_y_center fl_in_bot_y_center fl_out_y_center)
+printf(" [4] Inputs at y=%.2f,%.2f  outputs at y=%.2f,%.2f\n"
+       fl_in_top_y_center fl_in_bot_y_center fl_out_top_y_center fl_out_bot_y_center)
 
 ; ============================================================
 ; 5. PLACE DIFFERENTIAL I/O AND GROUND PINS
 ; ============================================================
-; --- PIX_IN_T (top input) + gnd ref ---
+; --- PIX_IN_T (top input, AP) + gnd ref ---
 let( (pin_box)
     pin_box = list(
         list(fl_x_left              fl_in_top_y_center - feedline_pin_size_in/2.0)
@@ -207,7 +243,7 @@ let( (pin_box)
     printf(" [5a] PIX_IN_T  at x=%.2f y=%.2f\n" fl_x_left fl_in_top_y_center)
 )
 
-; --- PIX_IN_B (bottom input) + gnd ref ---
+; --- PIX_IN_B (bottom input, AP) + gnd ref ---
 let( (pin_box)
     pin_box = list(
         list(fl_x_left              fl_in_bot_y_center - feedline_pin_size_in/2.0)
@@ -217,14 +253,24 @@ let( (pin_box)
     printf(" [5b] PIX_IN_B  at x=%.2f y=%.2f\n" fl_x_left fl_in_bot_y_center)
 )
 
-; --- PIX_OUT (output) + gnd ref ---
+; --- PIX_OUT_T (top output, M9) + gnd ref ---
 let( (pin_box)
     pin_box = list(
-        list(fl_x_right - pin_size  fl_out_y_center - feedline_pin_size_out/2.0)
-        list(fl_x_right             fl_out_y_center + feedline_pin_size_out/2.0))
-    diff_create_pin(cv "PIX_OUT" list(pixel_layer "pin") pin_box "output")
-    diff_create_pin(cv "PIX_OUT_GND" list(gnd_layer "pin") pin_box "inputOutput")
-    printf(" [5c] PIX_OUT   at x=%.2f y=%.2f\n" fl_x_right fl_out_y_center)
+        list(fl_x_right - pin_size  fl_out_top_y_center - feedline_pin_size_out/2.0)
+        list(fl_x_right             fl_out_top_y_center + feedline_pin_size_out/2.0))
+    diff_create_pin(cv "PIX_OUT_T" list(pixel_layer_m9 "pin") pin_box "output")
+    diff_create_pin(cv "PIX_OUT_T_GND" list(gnd_layer "pin") pin_box "inputOutput")
+    printf(" [5c] PIX_OUT_T at x=%.2f y=%.2f\n" fl_x_right fl_out_top_y_center)
+)
+
+; --- PIX_OUT_B (bottom output, M9) + gnd ref ---
+let( (pin_box)
+    pin_box = list(
+        list(fl_x_right - pin_size  fl_out_bot_y_center - feedline_pin_size_out/2.0)
+        list(fl_x_right             fl_out_bot_y_center + feedline_pin_size_out/2.0))
+    diff_create_pin(cv "PIX_OUT_B" list(pixel_layer_m9 "pin") pin_box "output")
+    diff_create_pin(cv "PIX_OUT_B_GND" list(gnd_layer "pin") pin_box "inputOutput")
+    printf(" [5d] PIX_OUT_B at x=%.2f y=%.2f\n" fl_x_right fl_out_bot_y_center)
 )
 
 ; ============================================================

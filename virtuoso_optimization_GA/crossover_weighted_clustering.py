@@ -31,6 +31,7 @@ from virtuoso_optimization_SA.feasibility import is_feasible
 from .crossover import (
     _build_pos_map,
     _fix_connectivity,
+    _fix_feed_cols,
     _fix_inductors,
     _fix_shunt_caps,
     _fix_switches,
@@ -39,34 +40,6 @@ from .crossover import (
     _inherit_shunt_caps,
 )
 from virtuoso_optimization_SA.feasibility import filter_valid_pairs
-
-
-# ---------------------------------------------------------------------------
-# Feed column repair
-# ---------------------------------------------------------------------------
-
-def _fix_feed_cols(matrix: List[List[int]], rng: random.Random) -> None:
-    """
-    Ensure exactly one non-zero pixel per feed column (col 0 and col cols-1).
-
-    - If a feed column has more than one non-zero pixel, keep one at random
-      and zero out the rest.
-    - If a feed column has zero non-zero pixels, place a type-1 pixel at a
-      random row (connectivity repair handles actual path-finding afterwards).
-    """
-    rows = len(matrix)
-    cols = len(matrix[0])
-
-    for feed_col in (0, cols - 1):
-        nonzero_rows = [r for r in range(rows) if matrix[r][feed_col] != 0]
-        if len(nonzero_rows) > 1:
-            keep = rng.choice(nonzero_rows)
-            for r in nonzero_rows:
-                if r != keep:
-                    matrix[r][feed_col] = 0
-        elif len(nonzero_rows) == 0:
-            r = rng.randint(0, rows - 1)
-            matrix[r][feed_col] = 1
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +262,7 @@ def crossover_weighted_clustering(
     max_shunt_caps: int = 0,
     shunt_cap_min: float = 50e-15,
     shunt_cap_max: float = 1000e-15,
+    feed_row_max: Optional[int] = None,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by weighted-clustering crossover of two parent designs.
@@ -309,6 +283,7 @@ def crossover_weighted_clustering(
     cols = parent1.cols
 
     sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
+    layers_on = bool(parent1.pixel_layers) and bool(parent2.pixel_layers)
 
     # --- Randomly draw number of centroids for this call ---
     n_centroids_max = max(2, n_centroids_max)
@@ -349,12 +324,14 @@ def crossover_weighted_clustering(
                     best_idx = i
             pixel_source[(r, c)] = centroid_parent[best_idx]
 
-    # --- Build child matrix (+ sizing matrix mirrored on the same source map) ---
+    # --- Build child matrix (+ sizing & layer matrices mirrored on the same source map) ---
     child_matrix: List[List[int]] = []
     child_pixel_sizes: List[List[float]] = [] if sizing_on else []
+    child_pixel_layers: List[List[int]] = [] if layers_on else []
     for r in range(rows):
         row = []
         size_row = []
+        layer_row = []
         for c in range(cols):
             src = pixel_source[(r, c)]
             row.append(parent1.matrix[r][c] if src == 1 else parent2.matrix[r][c])
@@ -362,12 +339,18 @@ def crossover_weighted_clustering(
                 size_row.append(
                     parent1.pixel_sizes[r][c] if src == 1 else parent2.pixel_sizes[r][c]
                 )
+            if layers_on:
+                layer_row.append(
+                    parent1.pixel_layers[r][c] if src == 1 else parent2.pixel_layers[r][c]
+                )
         child_matrix.append(row)
         if sizing_on:
             child_pixel_sizes.append(size_row)
+        if layers_on:
+            child_pixel_layers.append(layer_row)
 
     # --- Fix feed columns (I/O port repair) ---
-    _fix_feed_cols(child_matrix, rng)
+    _fix_feed_cols(child_matrix, rng, feed_row_max=feed_row_max)
 
     # --- Repair pipeline ---
     _fix_inductors(child_matrix, max_inductors, rng)
@@ -444,4 +427,5 @@ def crossover_weighted_clustering(
         shunt_cap_values       = shunt_cap_values,
         inductor_cap_values    = inductor_cap_values,
         pixel_sizes            = child_pixel_sizes if sizing_on else [],
+        pixel_layers           = child_pixel_layers if layers_on else [],
     ), xover_params

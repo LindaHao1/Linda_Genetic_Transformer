@@ -33,7 +33,7 @@ import random
 import shutil
 import sys
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -289,9 +289,17 @@ class GAConfig:
 
     # Differential-mode filter: the GA optimizes the HALF design.  The input
     # (left feed) pixel must avoid the bottom two rows; the output (right feed)
-    # pixel is pinned to the bottom/axis row.  Feed columns are never mutated,
-    # so these are enforced once, at random-design init.
+    # pixel ALSO avoids the bottom two rows (flexible, mirrored to two outputs).
+    # Feed columns are never mutated, so these are enforced once, at init.
     differential: bool = False
+
+    # --- Multi-layer metal (differential multi-layer update) ---
+    # When enabled, the pixel flip becomes an N-way choice over {empty} plus one
+    # metal state per layer in ``allowed_layers`` (0=M10, 1=M9, 2=double).  The
+    # per-pixel layer is carried in DesignState.pixel_layers.  When disabled, the
+    # flip stays binary empty↔M10 and pixel_layers is never populated.
+    enable_multi_layer: bool = False
+    allowed_layers: List[int] = field(default_factory=lambda: [0, 1, 2])
 
     @classmethod
     def from_dict(cls, d: dict) -> "GAConfig":
@@ -416,6 +424,9 @@ class GAConfig:
             n_caps_per_switch     = int(grid.get("n_caps_per_switch", 1)),
 
             differential          = bool(grid.get("differential", False)),
+
+            enable_multi_layer    = bool(grid.get("enable_multi_layer", False)),
+            allowed_layers        = [int(x) for x in grid.get("allowed_layers", [0, 1, 2])],
 
             enable_pixel_sizing   = bool( grid.get("enable_pixel_sizing", False)),
             pixel_size_min        = float(grid.get("pixel_size_min", 25.0)),
@@ -811,6 +822,7 @@ class SwitchableFilterGA:
                             region_max_half_height   = cfg.region_max_half_height,
                             region_max_half_width    = cfg.region_max_half_width,
                             region_min_half_size     = cfg.region_min_half_size,
+                            allowed_layers           = (cfg.allowed_layers if cfg.enable_multi_layer else None),
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias,
                                                                pixel_sizes=(mutated.pixel_sizes or None), grid_size=self.grid_size, connect_margin=cfg.connect_margin):
@@ -955,6 +967,10 @@ class SwitchableFilterGA:
                             max_shunt_caps     = cfg.max_shunt_caps if cfg.enable_shunt_caps else 0,
                             shunt_cap_min      = cfg.shunt_cap_min,
                             shunt_cap_max      = cfg.shunt_cap_max,
+                            # Differential: feed pixels must avoid the bottom two rows
+                            # (mirror_half_matrix rejects feeds there).  None for the
+                            # regular filter → feeds may sit on any row, as before.
+                            feed_row_max       = (cfg.rows - 3) if cfg.differential else None,
                         )
                         # Resolve actual method (hybrid picks randomly each call)
                         _method = cfg.crossover_method
@@ -1044,6 +1060,7 @@ class SwitchableFilterGA:
                             region_max_half_height   = cfg.region_max_half_height,
                             region_max_half_width    = cfg.region_max_half_width,
                             region_min_half_size     = cfg.region_min_half_size,
+                            allowed_layers           = (cfg.allowed_layers if cfg.enable_multi_layer else None),
                         )
                         if mutated is not None:
                             child = mutated
@@ -1096,7 +1113,10 @@ class SwitchableFilterGA:
                         grid_size           = self.grid_size,
                         connect_margin      = cfg.connect_margin,
                         left_feed_row_max    = (cfg.rows - 3) if cfg.differential else None,
-                        right_feed_row_fixed = (cfg.rows - 1) if cfg.differential else None,
+                        right_feed_row_max   = (cfg.rows - 3) if cfg.differential else None,
+                        allowed_layers       = cfg.allowed_layers if cfg.enable_multi_layer else None,
+                        left_feed_layer      = 0 if (cfg.differential and cfg.enable_multi_layer) else None,
+                        right_feed_layer     = 1 if (cfg.differential and cfg.enable_multi_layer) else None,
                     )
                     if immigrant is not None:
                         immigrants.append(immigrant)
@@ -1464,6 +1484,7 @@ class SwitchableFilterGA:
                             region_max_half_height   = cfg.region_max_half_height,
                             region_max_half_width    = cfg.region_max_half_width,
                             region_min_half_size     = cfg.region_min_half_size,
+                            allowed_layers           = (cfg.allowed_layers if cfg.enable_multi_layer else None),
                         )
                         if candidate is not None:
                             current = candidate
@@ -1520,7 +1541,10 @@ class SwitchableFilterGA:
                 grid_size           = self.grid_size,
                 connect_margin      = cfg.connect_margin,
                 left_feed_row_max    = (cfg.rows - 3) if cfg.differential else None,
-                right_feed_row_fixed = (cfg.rows - 1) if cfg.differential else None,
+                right_feed_row_max   = (cfg.rows - 3) if cfg.differential else None,
+                allowed_layers       = cfg.allowed_layers if cfg.enable_multi_layer else None,
+                left_feed_layer      = 0 if (cfg.differential and cfg.enable_multi_layer) else None,
+                right_feed_layer     = 1 if (cfg.differential and cfg.enable_multi_layer) else None,
             )
             if design is None:
                 raise RuntimeError(

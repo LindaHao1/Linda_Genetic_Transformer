@@ -29,6 +29,7 @@ from virtuoso_optimization_SA.feasibility import is_feasible
 from .crossover import (
     _build_pos_map,
     _fix_connectivity,
+    _fix_feed_cols,
     _fix_inductors,
     _fix_shunt_caps,
     _fix_switches,
@@ -37,7 +38,6 @@ from .crossover import (
 )
 from virtuoso_optimization_SA.feasibility import filter_valid_pairs
 from .crossover_weighted_clustering import (
-    _fix_feed_cols,
     _inherit_values_clustered,
 )
 
@@ -201,6 +201,7 @@ def crossover_block(
     max_shunt_caps: int = 0,
     shunt_cap_min: float = 50e-15,
     shunt_cap_max: float = 1000e-15,
+    feed_row_max: Optional[int] = None,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by block-based crossover of two parent designs.
@@ -217,6 +218,7 @@ def crossover_block(
     cols = parent1.cols
 
     sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
+    layers_on = bool(parent1.pixel_layers) and bool(parent2.pixel_layers)
 
     block_min_size = max(1, block_min_size)
     block_max_size = min(block_max_size, min(rows, cols))
@@ -295,6 +297,10 @@ def crossover_block(
         child_pixel_sizes: List[List[float]] = (
             [row[:] for row in base_parent.pixel_sizes] if sizing_on else []
         )
+        # Mirror on the layer matrix (base copy + donor block overwrite)
+        child_pixel_layers: List[List[int]] = (
+            [row[:] for row in base_parent.pixel_layers] if layers_on else []
+        )
         pixel_source: Dict[Tuple[int, int], int] = {}
 
         for r in range(rows):
@@ -310,10 +316,12 @@ def crossover_block(
                 child_matrix[r_dst][c_dst] = donor_parent.matrix[r_src][c_src]
                 if sizing_on:
                     child_pixel_sizes[r_dst][c_dst] = donor_parent.pixel_sizes[r_src][c_src]
+                if layers_on:
+                    child_pixel_layers[r_dst][c_dst] = donor_parent.pixel_layers[r_src][c_src]
                 pixel_source[(r_dst, c_dst)] = donor_src_val
 
         # Repair pipeline
-        _fix_feed_cols(child_matrix, rng)
+        _fix_feed_cols(child_matrix, rng, feed_row_max=feed_row_max)
         _fix_inductors(child_matrix, max_inductors, rng)
         _fix_switches(child_matrix, min_switches, max_switches, rng)
         if max_vias > 0:
@@ -393,6 +401,7 @@ def crossover_block(
             inductor_cap_values    = inductor_cap_values,
             shunt_cap_values       = shunt_cap_values,
             pixel_sizes            = child_pixel_sizes if sizing_on else [],
+            pixel_layers           = child_pixel_layers if layers_on else [],
         ), xover_params
 
     return None, {"block_h": h, "block_w": w}  # all placement attempts exhausted

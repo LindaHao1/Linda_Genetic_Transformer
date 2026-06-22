@@ -1,0 +1,63 @@
+# ===========================================================================
+# Experiment — Differential Filter, 21x27 HALF grid, MULTI-LAYER metal
+#              + SHUNT CAPACITORS
+#
+# Co-optimizes, on the HALF design (engine mirrors to 41x27):
+#   * pixel metal 0/1 with metal layer  (flip_01 → empty / M10 / M9 / double)
+#   * shunt capacitors  (modify_shunt_cap / perturb_shunt_caps, type-5)
+#
+# A shunt-cap pixel (type 5) is a metal pixel tied to ground through a cap; only
+# its capacitance is GA-tunable.  The cap PORT sits on the pixel's own metal
+# layer — M9 if the base pixel includes M9 (layer 1 or 2), else AP/M10 (layer 0).
+# Each non-axis shunt cap is mirrored to the bottom half with the same value, so
+# the simulated 41x27 layout stays electrically symmetric.
+#
+# Run from scratch by default.  To FINETUNE from an implemented design instead,
+# set ga.finetune_design_path to that design's pixsimple config.yaml (it must be
+# a MULTI-LAYER half design with rows/cols matching the grid below).
+# ===========================================================================
+
+_base_: ./base_differential.yaml
+
+virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_multilayer_shunt_cap"
+
+layout:
+  pixel_size: 12.5   # um — metal patch size must include .0 if integer
+  grid_size:  10.0   # um — pixel pitch (the GA reads this for connectivity)
+
+grid:
+  rows: 21   # HALF-design rows — engine mirrors to 41 rows
+  cols: 27
+
+  # Multi-layer metal ON (flip_01 → empty / M10 / M9 / double).
+  enable_multi_layer: true
+  allowed_layers: [0, 1, 2]
+
+  # No vias / series caps in this experiment — shunt caps only.
+  enable_cap_pairs: false
+  max_cap_pairs:    0
+
+  # --- Shunt-capacitor pixels (type 5), co-optimized ---
+  enable_shunt_caps:  true
+  max_shunt_caps:     16           # upper bound on simultaneous shunt caps (half design)
+  min_shunt_caps:     0
+  shunt_cap_init_min: 0            # random init seeds 0..6 shunt caps per individual
+  shunt_cap_init_max: 6
+  shunt_cap_min:      50.0e-15     # 50 fF
+  shunt_cap_max:      1000.0e-15   # 1000 fF
+  shunt_cap_sigma:    50.0e-15     # perturbation step for perturb_shunt_caps
+
+seed: 42
+
+ga:
+  # finetune_design_path: "/path/to/multilayer_halfdesign/config.yaml"  # uncomment to finetune
+  # action_weights deep-merges with the base — only the changed keys here.
+  action_weights:
+    flip_01:            6.0
+    modify_shunt_cap:   4.0
+    perturb_shunt_caps: 4.0
+  exploitation_action_weights:
+    flip_01:            2.0
+    modify_shunt_cap:   2.0
+    perturb_shunt_caps: 6.0

@@ -262,13 +262,60 @@ def build_skill_pixel_sizes_list(
     return "list(" + " ".join(flat) + ")"
 
 
+def build_skill_pixel_layers_list(
+    matrix: List[List[int]],
+    pixel_layers: Optional[List[List[int]]],
+) -> str:
+    """
+    Convert the per-pixel metal-layer matrix to a flat SKILL int list (row-first).
+
+    Values: 0 = M10 (primary ``pixel_layer``), 1 = M9 (``pixel_layer_m9``),
+    2 = double metal (both).  When ``pixel_layers`` is None/empty (single-layer
+    mode) every cell is emitted as 0, so the layout draws on the primary layer
+    exactly as before.
+
+    Example: [[0,1],[1,0]] layers [[0,1],[2,0]] → "list(0 1 2 0)"
+    """
+    num_rows = len(matrix)
+    num_cols = len(matrix[0]) if num_rows else 0
+    flat: List[str] = []
+    for r in range(num_rows):
+        for c in range(num_cols):
+            if pixel_layers:
+                flat.append(str(int(pixel_layers[r][c])))
+            else:
+                flat.append("0")
+    return "list(" + " ".join(flat) + ")"
+
+
 # ---------------------------------------------------------------------------
 # Differential-mode filter helpers
 # ---------------------------------------------------------------------------
 
+def _first_nonzero_in_col(half: List[List[int]], col: int, side: str) -> int:
+    """First non-zero row index in ``col`` of the half matrix (validated for diff)."""
+    R = len(half)
+    row: Optional[int] = None
+    for r in range(R):
+        if int(half[r][col]) != 0:
+            row = r
+            break
+    if row is None:
+        raise ValueError(
+            f"Differential half matrix: {side} feed column (col {col}) is entirely "
+            "zero — place exactly one feed pixel there."
+        )
+    if row > R - 3:
+        raise ValueError(
+            f"Differential {side} feed pixel is at row {row}; it must not be in the "
+            f"bottom two rows (rows {R-2} and {R-1}) of an {R}-row half matrix."
+        )
+    return row
+
+
 def mirror_half_matrix(
     half: List[List[int]],
-) -> Tuple[List[List[int]], int, int, int]:
+) -> Tuple[List[List[int]], int, int, int, int]:
     """
     Build the full differential layout matrix from a half design.
 
@@ -278,59 +325,116 @@ def mirror_half_matrix(
 
         full = half[0], half[1], ..., half[R-1] (axis),  half[R-2], ..., half[0]
 
-    Port conventions (validated here):
+    Port conventions (validated here) — multi-layer update:
         * Input  — a single non-zero pixel in col 0 of the half matrix, which
-          must NOT be in the bottom two rows (rows R-1, R-2).  It becomes the
-          top input ``PIX_IN_T``; its mirror becomes ``PIX_IN_B``.
-        * Output — forced at (R-1, C-1): the axis row, right-most column.
+          must NOT be in the bottom two rows.  It becomes the top input
+          ``PIX_IN_T``; its mirror becomes ``PIX_IN_B``.
+        * Output — a single non-zero pixel in col C-1 of the half matrix, with
+          the SAME "not in the bottom two rows" rule.  It becomes the top output
+          ``PIX_OUT_T``; its mirror becomes ``PIX_OUT_B``.  (Previously the
+          output was pinned to the axis row; it is now flexible like the input.)
 
     Returns:
-        (full_matrix, in_top_row, in_bot_row, out_row) where the row indices
-        are in *full-matrix* coordinates.
+        (full_matrix, in_top_row, in_bot_row, out_top_row, out_bot_row) where the
+        row indices are in *full-matrix* coordinates.
     """
     R = len(half)
     if R < 3:
         raise ValueError("Differential half matrix needs at least 3 rows.")
-    C = len(half[0])
 
-    # Input row: first non-zero pixel in col 0.
-    in_row: Optional[int] = None
-    for r in range(R):
-        if int(half[r][0]) != 0:
-            in_row = r
-            break
-    if in_row is None:
-        raise ValueError(
-            "Differential half matrix: left column (col 0) is entirely zero — "
-            "place exactly one input pixel there."
-        )
-    if in_row > R - 3:
-        raise ValueError(
-            f"Differential input pixel is at row {in_row}; it must not be in the "
-            f"bottom two rows (rows {R-2} and {R-1}) of an {R}-row half matrix."
-        )
-
-    # Output: must be the axis row (R-1), right-most column.
-    if int(half[R - 1][C - 1]) == 0:
-        raise ValueError(
-            f"Differential output pixel must be forced at (row {R-1}, col {C-1}) "
-            "— the axis row of the right-most column."
-        )
+    in_row  = _first_nonzero_in_col(half, 0, "input (left)")
+    out_row = _first_nonzero_in_col(half, len(half[0]) - 1, "output (right)")
 
     full: List[List[int]] = [list(int(v) for v in half[r]) for r in range(R)]
     for r in range(R - 2, -1, -1):
         full.append(list(int(v) for v in half[r]))
 
-    in_top_row = in_row
-    in_bot_row = (2 * R - 2) - in_row
-    out_row    = R - 1
-    return full, in_top_row, in_bot_row, out_row
+    in_top_row  = in_row
+    in_bot_row  = (2 * R - 2) - in_row
+    out_top_row = out_row
+    out_bot_row = (2 * R - 2) - out_row
+    return full, in_top_row, in_bot_row, out_top_row, out_bot_row
+
+
+def mirror_half_layers(half_layers: List[List[int]]) -> List[List[int]]:
+    """
+    Mirror a half per-pixel layer matrix the same way ``mirror_half_matrix``
+    mirrors the type matrix: rows 0..R-1 then rows R-2..0.  Returns the full
+    (2R-1)-row layer matrix.  Pass an empty list through unchanged.
+    """
+    if not half_layers:
+        return []
+    R = len(half_layers)
+    full: List[List[int]] = [list(int(v) for v in half_layers[r]) for r in range(R)]
+    for r in range(R - 2, -1, -1):
+        full.append(list(int(v) for v in half_layers[r]))
+    return full
+
+
+def mirror_half_shunt_caps(
+    half: List[List[int]],
+    half_shunt_cap_values: List[float],
+) -> List[float]:
+    """
+    Mirror the half-design shunt-capacitor values onto the full (2R-1)-row layout.
+
+    The GA genome stores one capacitance per type-5 pixel of the HALF design, in
+    row-first order.  The engine mirrors the half matrix about the bottom row, so
+    the FULL matrix has type-5 pixels in both halves; each mirrored shunt cap takes
+    the SAME value as its half-design counterpart.  This returns the full-design
+    capacitance list in row-first order, aligned with the ``SCAP_<i>`` EMX ports
+    that ``build_differential_emx_port_flags`` emits for the full matrix.
+
+    Returns [] when there are no shunt caps.
+    """
+    if not half_shunt_cap_values:
+        return []
+    R = len(half)
+    # Map each HALF type-5 position to its value (row-first order).
+    half_pos = [(r, c) for r in range(R) for c in range(len(half[r])) if int(half[r][c]) == 5]
+    pos_to_val = {pos: half_shunt_cap_values[i] for i, pos in enumerate(half_pos)}
+
+    full, *_ = mirror_half_matrix(half)
+    full_vals: List[float] = []
+    for r_full in range(len(full)):
+        half_r = r_full if r_full <= R - 1 else (2 * R - 2) - r_full
+        for c in range(len(full[r_full])):
+            if int(full[r_full][c]) == 5:
+                full_vals.append(pos_to_val[(half_r, c)])
+    return full_vals
+
+
+def enforce_differential_feed_layers(
+    layers: List[List[int]],
+    in_layer: int = 0,
+    out_layer: int = 1,
+) -> List[List[int]]:
+    """
+    Force the differential feed-column metal layers: the LEFT feed column (input)
+    onto ``in_layer`` (default 0 = M10) and the RIGHT feed column (output) onto
+    ``out_layer`` (default 1 = M9).  This matches the layout, where the output
+    feedline/pins are always forced to M9 and the input to M10, so the genome and
+    its visualisation stay consistent regardless of GA init/crossover drift.
+
+    Mutates and returns ``layers`` in place.  An empty list passes through (the
+    single-layer path is untouched).  Differential-only — never called for the
+    regular filter.
+    """
+    if not layers:
+        return layers
+    last = len(layers[0]) - 1
+    for row in layers:
+        row[0]    = in_layer
+        row[last] = out_layer
+    return layers
 
 
 # Fixed differential I/O + ground-reference ports (always present).
+# Multi-layer update: the output is now a differential pair (top read / bottom
+# grounded in Spectre), mirroring the input — 8 fixed ports instead of 6.
 DIFFERENTIAL_FIXED_PORTS = [
-    "PIX_IN_T", "PIX_IN_B", "PIX_OUT",
-    "PIX_IN_T_GND", "PIX_IN_B_GND", "PIX_OUT_GND",
+    "PIX_IN_T", "PIX_IN_B", "PIX_OUT_T", "PIX_OUT_B",
+    "PIX_IN_T_GND", "PIX_IN_B_GND", "PIX_OUT_T_GND", "PIX_OUT_B_GND",
 ]
 # Backward-compatible alias.
 DIFFERENTIAL_PORT_ORDER = DIFFERENTIAL_FIXED_PORTS
@@ -340,23 +444,26 @@ def build_differential_emx_port_flags(matrix_info: Optional[Dict[str, Any]] = No
     """
     EMX CLI port flags for the differential filter.
 
-    Always emits the 6 fixed I/O + ground-reference ports.  When ``matrix_info``
+    Always emits the 8 fixed I/O + ground-reference ports.  When ``matrix_info``
     (from analyze_matrix on the FULL mirrored matrix) is supplied, appends one
-    ``VIA_<i>`` port per type-4 pixel in row-first order — the via index ordering
-    matches build_skill_port_names_list, so the layout pins line up.
+    ``VIA_<i>`` port per type-4 pixel and one ``SCAP_<i>`` port per type-5
+    (shunt-cap) pixel, both in row-first order — the index ordering matches
+    build_skill_port_names_list, so the layout pins line up.
     """
     flags = [f"-p {name}" for name in DIFFERENTIAL_FIXED_PORTS]
     if matrix_info:
         for _, _, idx in matrix_info.get("via_pixels", []):
             flags.append(f"-p VIA_{idx}")
+        for _, _, idx in matrix_info.get("scap_pixels", []):
+            flags.append(f"-p SCAP_{idx}")
     return " ".join(flags)
 
 
 def differential_total_ports(matrix_info: Optional[Dict[str, Any]] = None) -> int:
-    """Total EMX port count: 6 fixed + num_via (when matrix_info supplied)."""
+    """Total EMX port count: 8 fixed + num_via + num_scap (when matrix_info given)."""
     n = len(DIFFERENTIAL_FIXED_PORTS)
     if matrix_info:
-        n += matrix_info.get("num_via", 0)
+        n += matrix_info.get("num_via", 0) + matrix_info.get("num_scap", 0)
     return n
 
 

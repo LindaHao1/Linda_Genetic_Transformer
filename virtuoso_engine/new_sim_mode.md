@@ -48,3 +48,20 @@ The optimization will only optimize the half design using GA (remember the const
 
 
 
+Differential mode multi layer update
+
+This will update the differential filter design with multi layer option. Single layer differential filter will fail, since it is symmetric and the current won't flow through the middle. so we look to add multi layer ability to the pxielated design structure of differential filtering. We have to let the output be in the second metal to leverage the induction current
+
+To achieve this we enable two new pixel types: metal2, and double metal. Easy to under stand, we enable another metal layer (to be configured default as M9). 
+
+The simulation change is that: instead of putting only one single output in the middle, we will still have a flexible output simialr to the input (that is indicated on the last column of the design). This will results in two outputs. In the spectre simulation, we will read the output from one port (let's say the top one), and the other output port will be grounded. Notice that we will force the output to be on the M9 layer (for the differential design only).
+
+After the first few simulation changes is done, we look for adaptive changes in the port simulation and advanced pixel types. (we do not consider switch for now). The first one is shunt inductor, this inductor can be connected to either M10 or M9, depending on the base pixel type. If the base pixel type includes M9 layer, then it port is on M9, if not then its port is on M10 as usual.  
+
+Vias has similar idea to shunt caps.
+
+The most tricky one is the series caps, since we want to allow capacitors that goes beyond layers. We can forget about the in between constraints for series caps for now. But we have to enforce constraints on hw series caps can be applied. 1. if both ends are of the same type e.g. connecting to same layer. Safe. port regularly be put in the same layer for emx 2. If one of them is lay 10 and one is lay 9. The port must be placed on different layers in emx
+
+Visualization change: Since we now have layer metal options/advanced pixel options to visualize. We can make the advanced pixel type an add on marker to not block the original visualization (so that both the original pixel metal type and the advanced pixel type can be displayed)
+
+optimization: Let's start with creating this configuration but only with the metal pixels: /disk/mcao53/RFIC_RL/virtuoso_optimization_GA/configs/differential/scratch_21x27.yaml. (not any advanced pixel to just create some baseline)

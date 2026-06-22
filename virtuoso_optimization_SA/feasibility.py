@@ -790,6 +790,10 @@ def generate_random_design(
     connect_margin: float = 2.0,
     left_feed_row_max: Optional[int] = None,
     right_feed_row_fixed: Optional[int] = None,
+    right_feed_row_max: Optional[int] = None,
+    allowed_layers: Optional[List[int]] = None,
+    left_feed_layer: Optional[int] = None,
+    right_feed_layer: Optional[int] = None,
 ) -> Optional[DesignState]:
     """
     Generate a random feasible DesignState.
@@ -814,18 +818,21 @@ def generate_random_design(
 
     n_ind_target = min(n_initial_inductors, max_inductors)
 
-    # Differential mode constrains the feed rows: the input (left feed) pixel may
-    # not be in the bottom two rows, and the output (right feed) pixel is pinned to
-    # the bottom/axis row.  Feed columns are excluded from all mutation actions, so
-    # these init-time choices persist for the lifetime of the design.
-    left_row_hi = rows - 1 if left_feed_row_max is None else left_feed_row_max
+    # Differential mode constrains the feed rows: BOTH the input (left feed) and
+    # the output (right feed) pixels may not be in the bottom two rows — each is a
+    # single pixel that the engine mirrors into two ports.  ``right_feed_row_max``
+    # makes the output flexible (multi-layer update); ``right_feed_row_fixed`` (if
+    # set) still pins it for backward compatibility.  Feed columns are excluded
+    # from all mutation actions, so these init-time choices persist for life.
+    left_row_hi  = rows - 1 if left_feed_row_max  is None else left_feed_row_max
+    right_row_hi = rows - 1 if right_feed_row_max is None else right_feed_row_max
 
     for _attempt in range(max_attempts):
         # --- Step 1: choose feed rows ---
         left_feed_row  = rng.randint(0, left_row_hi)
         right_feed_row = (right_feed_row_fixed
                           if right_feed_row_fixed is not None
-                          else rng.randint(0, rows - 1))
+                          else rng.randint(0, right_row_hi))
 
         # --- Step 2: build matrix with only 0/1 types ---
         matrix = [[0] * cols for _ in range(rows)]
@@ -1045,6 +1052,27 @@ def generate_random_design(
         n_scap = sum(v == 5 for row in matrix for v in row)
         shunt_cap_values = [rng.uniform(shunt_cap_min, shunt_cap_max) for _ in range(n_scap)]
 
+        # --- Per-pixel metal layer (optional, multi-layer mode) ---
+        # Each non-zero interior pixel gets a random layer from ``allowed_layers``
+        # (0=M10, 1=M9, 2=double).  Feed-column pixels stay on layer 0 (the engine
+        # forces the differential output feed to M9 itself).  Layer variety at init
+        # matters — an all-M10 seed is the degenerate single-layer case.
+        if allowed_layers is not None:
+            pixel_layers = [
+                [(rng.choice(allowed_layers) if (matrix[r][c] != 0 and 0 < c < cols - 1) else 0)
+                 for c in range(cols)]
+                for r in range(rows)
+            ]
+            # Differential feed layers are fixed (input on M10, output on M9), so
+            # the genome matches the layout's forced feed layers.  Feed columns are
+            # never mutated, so these persist for the design's lifetime.
+            if left_feed_layer is not None:
+                pixel_layers[left_feed_row][0] = left_feed_layer
+            if right_feed_layer is not None:
+                pixel_layers[right_feed_row][cols - 1] = right_feed_layer
+        else:
+            pixel_layers = []
+
         return DesignState(
             matrix                 = matrix,
             switch_states          = switch_states,
@@ -1056,6 +1084,7 @@ def generate_random_design(
             inductor_cap_values    = inductor_cap_values,
             shunt_cap_values       = shunt_cap_values,
             pixel_sizes            = pixel_sizes,
+            pixel_layers           = pixel_layers,
         )
 
     return None  # failed to generate within budget

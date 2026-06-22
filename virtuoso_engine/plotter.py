@@ -46,6 +46,7 @@ def plot_s2p_results(
     output_dir: Path,
     pixel_matrix: List[List[int]] | None = None,
     cap_pixel_pairs: List[List[List[int]]] | None = None,
+    pixel_layers: List[List[int]] | None = None,
 ) -> dict:
     """
     Plot S21 and S11 for each switch state and save PNGs to *output_dir*.
@@ -80,10 +81,12 @@ def plot_s2p_results(
 
     _plot_s2p_magnitude(networks, s21_path, row=1, col=0, ylabel="S21 (dB)",
                         title="S21 Magnitude vs Frequency (Filter Transmission)",
-                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs)
+                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs,
+                        pixel_layers=pixel_layers)
     _plot_s2p_magnitude(networks, s11_path, row=0, col=0, ylabel="S11 (dB)",
                         title="S11 Magnitude vs Frequency (Input Match)",
-                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs)
+                        pixel_matrix=pixel_matrix, cap_pixel_pairs=cap_pixel_pairs,
+                        pixel_layers=pixel_layers)
     _plot_inductor_lq(networks, lq_path)
 
     print(f"  [plotter] S21 magnitude → {s21_path}")
@@ -95,7 +98,8 @@ def plot_s2p_results(
 
     if pixel_matrix is not None:
         dm_path = output_dir / "design_matrix.png"
-        _plot_design_matrix(pixel_matrix, dm_path, cap_pixel_pairs=cap_pixel_pairs)
+        _plot_design_matrix(pixel_matrix, dm_path, cap_pixel_pairs=cap_pixel_pairs,
+                            pixel_layers=pixel_layers)
         print(f"  [plotter] Design matrix → {dm_path}")
         result["design_matrix"] = str(dm_path)
 
@@ -111,11 +115,17 @@ def _plot_s2p_magnitude(
     title: str,
     pixel_matrix: List[List[int]] | None = None,
     cap_pixel_pairs: List[List[List[int]]] | None = None,
+    pixel_layers: List[List[int]] | None = None,
+    db_floor: float = -50.0,
 ) -> None:
     """Plot S[row][col] magnitude in dB vs frequency (GHz) for 2-port networks.
 
     When *pixel_matrix* is supplied a design-matrix panel is appended to the
     right of the S-parameter axes.
+
+    *db_floor* clamps the y-axis bottom so deep notches (e.g. −300 dB) don't
+    squash the visible detail.  It only engages when the data actually drops
+    below the floor; otherwise the axis autoscales as before.
     """
     if pixel_matrix is not None:
         fig, (ax, ax_dm) = plt.subplots(
@@ -123,7 +133,8 @@ def _plot_s2p_magnitude(
             figsize=(14, 6),
             gridspec_kw={"width_ratios": [2, 1]},
         )
-        _draw_design_matrix(pixel_matrix, ax_dm, cap_pixel_pairs=cap_pixel_pairs)
+        _draw_design_matrix(pixel_matrix, ax_dm, cap_pixel_pairs=cap_pixel_pairs,
+                            pixel_layers=pixel_layers)
     else:
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -138,6 +149,13 @@ def _plot_s2p_magnitude(
     ax.legend(fontsize=11)
     ax.grid(True, linestyle="--", alpha=0.6)
     ax.set_xlim(left=0)
+
+    # Clamp the y-axis bottom only when the data dips below the floor, so deep
+    # notches don't squash the visible passband detail.  Within-range data is
+    # left to autoscale.
+    y_bottom, y_top = ax.get_ylim()
+    if y_bottom < db_floor:
+        ax.set_ylim(bottom=db_floor, top=y_top)
 
     fig.tight_layout()
     fig.savefig(str(save_path), dpi=150)
@@ -264,13 +282,34 @@ _PIXEL_STYLE = {
     5: ("SCAP", "#2ecc71"),   # green      — shunt-cap (MIM cap to gnd)
 }
 
+# Metal-layer code → (display label, colour).  Used as the BASE cell colour for
+# any non-empty pixel when ``pixel_layers`` is supplied (multi-layer designs),
+# so advanced pixel types can be shown as add-on markers on top.  Light, high-
+# contrast hues so the metal pixels stand out against the dark GND background.
+_LAYER_STYLE = {
+    0: ("M10",    "#74c0e8"),   # light blue    — primary top metal (AP)
+    1: ("M9",     "#6fcf97"),   # light green   — second metal
+    2: ("M9+M10", "#c79be0"),   # light orchid  — double metal (both)
+}
+
+# Advanced pixel types drawn as overlay markers (short label) over the base
+# layer colour, so layer + feature are both visible.
+_ADV_MARKER = {2: "L", 3: "S", 4: "V", 5: "C"}
+
 
 def _draw_design_matrix(
     matrix: List[List[int]],
     ax,
     cap_pixel_pairs: List[List[List[int]]] | None = None,
+    pixel_layers: List[List[int]] | None = None,
 ) -> None:
     """Render the pixel-type matrix as a colour-coded grid on *ax*.
+
+    When *pixel_layers* is provided (multi-layer designs), the BASE cell colour
+    encodes the metal layer (M10 / M9 / double) for every non-empty pixel, and
+    advanced pixel types (inductor / switch / via / shunt-cap) are drawn as small
+    add-on text markers on top — so both the layer and the feature are visible.
+    When *pixel_layers* is None the legacy behaviour applies (cell colour by type).
 
     When *cap_pixel_pairs* is provided, each pair of pixels is annotated with a
     shared index number drawn in the cell centre.  Both pixels in a pair show the
@@ -285,10 +324,29 @@ def _draw_design_matrix(
     for r in range(n_rows):
         for c in range(n_cols):
             ptype = int(matrix[r][c])
-            hex_color = _PIXEL_STYLE.get(ptype, ("?", "#ffffff"))[1]
+            if pixel_layers is not None and ptype != 0:
+                layer = int(pixel_layers[r][c])
+                hex_color = _LAYER_STYLE.get(layer, _LAYER_STYLE[0])[1]
+            else:
+                hex_color = _PIXEL_STYLE.get(ptype, ("?", "#ffffff"))[1]
             img[r, c] = [int(hex_color.lstrip("#")[i:i+2], 16) / 255.0 for i in (0, 2, 4)]
 
     ax.imshow(img, origin="upper", aspect="equal", interpolation="nearest")
+
+    # --- Advanced pixel overlay markers (only in multi-layer render) ---
+    if pixel_layers is not None:
+        for r in range(n_rows):
+            for c in range(n_cols):
+                ptype = int(matrix[r][c])
+                if ptype in _ADV_MARKER:
+                    ax.text(
+                        c, r, _ADV_MARKER[ptype],
+                        ha="center", va="center",
+                        fontsize=8, fontweight="bold",
+                        color=_PIXEL_STYLE[ptype][1],
+                        bbox=dict(boxstyle="square,pad=0.1", facecolor="black",
+                                  edgecolor=_PIXEL_STYLE[ptype][1], linewidth=1.0, alpha=0.7),
+                    )
 
     # Grid lines
     ax.set_xticks(np.arange(-0.5, n_cols, 1), minor=True)
@@ -332,10 +390,22 @@ def _draw_design_matrix(
 
     # Legend patches
     from matplotlib.patches import Patch
-    legend_handles = [
-        Patch(facecolor=style[1], label=f"{ptype}: {style[0]}")
-        for ptype, style in _PIXEL_STYLE.items()
-    ]
+    if pixel_layers is not None:
+        # Multi-layer: legend shows the layer colours plus the advanced markers.
+        legend_handles = [
+            Patch(facecolor=style[1], label=f"{code}: {style[0]}")
+            for code, style in _LAYER_STYLE.items()
+        ]
+        legend_handles += [
+            Patch(facecolor="black", edgecolor=_PIXEL_STYLE[t][1],
+                  label=f"{_ADV_MARKER[t]}: {_PIXEL_STYLE[t][0]}")
+            for t in _ADV_MARKER
+        ]
+    else:
+        legend_handles = [
+            Patch(facecolor=style[1], label=f"{ptype}: {style[0]}")
+            for ptype, style in _PIXEL_STYLE.items()
+        ]
     ax.legend(handles=legend_handles, fontsize=7, loc="upper right",
               bbox_to_anchor=(1.0, -0.08), ncol=2)
 
@@ -344,10 +414,12 @@ def _plot_design_matrix(
     matrix: List[List[int]],
     save_path: Path,
     cap_pixel_pairs: List[List[List[int]]] | None = None,
+    pixel_layers: List[List[int]] | None = None,
 ) -> None:
     """Save a standalone design-matrix visualisation to *save_path*."""
     fig, ax = plt.subplots(figsize=(6, 5))
-    _draw_design_matrix(matrix, ax, cap_pixel_pairs=cap_pixel_pairs)
+    _draw_design_matrix(matrix, ax, cap_pixel_pairs=cap_pixel_pairs,
+                        pixel_layers=pixel_layers)
     fig.tight_layout()
     fig.savefig(str(save_path), dpi=150)
     plt.close(fig)

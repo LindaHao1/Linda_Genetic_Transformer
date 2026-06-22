@@ -67,6 +67,7 @@ def action_flip_01(
     flip_region_size: int = 8,
     grid_size: float = 25.0,
     connect_margin: float = 2.0,
+    allowed_layers: Optional[List[int]] = None,
 ) -> tuple:
     """
     Randomly flip up to ``n_flip`` type-0 or type-1 interior pixels
@@ -75,6 +76,15 @@ def action_flip_01(
     A random ``flip_region_size`` × ``flip_region_size`` window is chosen
     first; only pixels within that window are candidates.  The inner/outer
     probability weighting (``flip_inner_region``) is applied within the window.
+
+    Layer behaviour
+    ---------------
+    * ``allowed_layers`` is None → single-layer: each flip toggles empty↔metal
+      (matrix 0↔1), exactly as before.
+    * ``allowed_layers`` is a list (e.g. [0, 1, 2] for M10/M9/double) →
+      multi-layer: each flipped cell randomly lands on one of the states
+      {empty} ∪ {metal on L for L in allowed_layers}, distinct from its current
+      state.  ``new.pixel_layers`` is updated alongside ``new.matrix``.
 
     Returns (mutated copy, info_dict), or (None, None) if infeasible.
     """
@@ -147,11 +157,32 @@ def action_flip_01(
         chosen = rng.sample(candidates, k)
 
     new = state.copy()
+
+    multi_layer = allowed_layers is not None
+    if multi_layer:
+        # Ensure the layer channel exists and matches the matrix shape.
+        if not new.pixel_layers:
+            new.pixel_layers = [[0] * cols for _ in range(rows)]
+        # Candidate states: empty plus one metal state per allowed layer.
+        state_choices = [(0, 0)] + [(1, L) for L in allowed_layers]
+
     flipped_cells = []
     for r, c in chosen:
-        old_val = new.matrix[r][c]
-        new.matrix[r][c] = 1 - old_val   # 0 → 1, 1 → 0
-        flipped_cells.append({"row": r, "col": c, "from": old_val, "to": new.matrix[r][c]})
+        old_val   = new.matrix[r][c]
+        if multi_layer:
+            old_layer = new.pixel_layers[r][c]
+            options   = [s for s in state_choices if s != (old_val, old_layer)]
+            new_type, new_layer = rng.choice(options)
+            new.matrix[r][c]       = new_type
+            new.pixel_layers[r][c] = new_layer if new_type != 0 else 0
+            flipped_cells.append({
+                "row": r, "col": c,
+                "from": old_val, "to": new_type,
+                "from_layer": old_layer, "to_layer": new.pixel_layers[r][c],
+            })
+        else:
+            new.matrix[r][c] = 1 - old_val   # 0 → 1, 1 → 0
+            flipped_cells.append({"row": r, "col": c, "from": old_val, "to": new.matrix[r][c]})
 
     # Validate — overlap-aware connectivity when per-pixel sizing is enabled.
     if new.pixel_sizes:
@@ -1535,6 +1566,7 @@ def _dispatch_action(
     region_max_half_height: int = 5,
     region_max_half_width: int = 5,
     region_min_half_size: int = 2,
+    allowed_layers: Optional[List[int]] = None,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -1549,6 +1581,7 @@ def _dispatch_action(
             flip_region_size=flip_region_size,
             grid_size=grid_size,
             connect_margin=connect_margin,
+            allowed_layers=allowed_layers,
         )
     elif action_name == "modify_switch":
         return action_modify_switch(
@@ -1679,6 +1712,7 @@ def random_action(
     region_max_half_height: int = 5,
     region_max_half_width: int = 5,
     region_min_half_size: int = 2,
+    allowed_layers: Optional[List[int]] = None,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -1758,6 +1792,7 @@ def random_action(
         region_max_half_height=region_max_half_height,
         region_max_half_width=region_max_half_width,
         region_min_half_size=region_min_half_size,
+        allowed_layers=allowed_layers,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

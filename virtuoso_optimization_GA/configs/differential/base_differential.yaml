@@ -12,8 +12,10 @@
 # Design space:
 #   0/1 metal only (scratch).  No switches, inductors, vias, or caps yet.
 #   ``grid.differential: true`` enables the half-design feed-row constraints:
-#     * input (left feed) pixel avoids the bottom two rows,
-#     * output (right feed) pixel is pinned to the bottom/axis row (R-1, C-1).
+#     * input  (left  feed) pixel avoids the bottom two rows,
+#     * output (right feed) pixel ALSO avoids the bottom two rows — it is a
+#       single flexible pixel that the engine mirrors into two output ports
+#       (top read / bottom grounded; multi-layer update).
 #   Only flip_01 is active; feed columns are never mutated.
 #
 # Objective:
@@ -25,6 +27,13 @@
 grid:
   differential: true     # enable half-design input/output feed-row constraints
   n_states: 1
+
+  # Multi-layer metal (differential multi-layer update).  OFF here so the base
+  # behaves like the original single-layer (empty↔M10) flip; experiment configs
+  # turn it on.  When enabled, flip_01 becomes an N-way choice over {empty} plus
+  # one metal state per layer in ``allowed_layers`` (0=M10, 1=M9, 2=double).
+  enable_multi_layer: false
+  allowed_layers: [0, 1, 2]
 
   min_switches: 0
   max_switches: 0

@@ -87,10 +87,14 @@ from .pixel_matrix import (
     build_emx_port_flags,
     build_skill_pixel_types_list,
     build_skill_pixel_sizes_list,
+    build_skill_pixel_layers_list,
     build_skill_port_names_list,
     differential_total_ports,
+    enforce_differential_feed_layers,
     get_feed_rows,
     mirror_half_matrix,
+    mirror_half_layers,
+    mirror_half_shunt_caps,
     total_ports as matrix_total_ports,
 )
 from .spectre_runner import run_all_states, run_all_states_differential
@@ -908,8 +912,11 @@ class VirtuosoPixelEngine:
         half = pd["pixel_state_matrix"]
 
         # Mirror + resolve the differential feed rows (validates input/output
-        # placement constraints).
-        full, in_top_row, in_bot_row, out_row = mirror_half_matrix(half)
+        # placement constraints).  Output is now a flexible pair (top + bottom).
+        full, in_top_row, in_bot_row, out_top_row, out_bot_row = mirror_half_matrix(half)
+        # Differential feed layers are fixed: input on M10 (0), output on M9 (1).
+        full_layers = enforce_differential_feed_layers(
+            mirror_half_layers(pd.get("pixel_layers", [])))
         mat_info  = analyze_matrix(full)
         grid_size = la.get("grid_size", la["pixel_size"])
         feedline  = pd.get("feedline", {})
@@ -923,14 +930,17 @@ class VirtuosoPixelEngine:
             GRID_SIZE           = grid_size,
             GND_LAYER           = la["gnd_layer"],
             PIXEL_LAYER         = la["pixel_layer"],
+            PIXEL_LAYER_M9      = la.get("pixel_layer_m9", "M9"),
             NUM_ROWS            = mat_info["num_rows"],
             NUM_COLS            = mat_info["num_cols"],
             PIXEL_TYPES_SKILL   = build_skill_pixel_types_list(full),
             PIXEL_SIZES_SKILL   = build_skill_pixel_sizes_list(full, None, la["pixel_size"]),
+            PIXEL_LAYERS_SKILL  = build_skill_pixel_layers_list(full, full_layers),
             PORT_NAMES_SKILL    = build_skill_port_names_list(mat_info),
-            FEEDLINE_ROW_IN_TOP = in_top_row,
-            FEEDLINE_ROW_IN_BOT = in_bot_row,
-            FEEDLINE_ROW_OUT    = out_row,
+            FEEDLINE_ROW_IN_TOP  = in_top_row,
+            FEEDLINE_ROW_IN_BOT  = in_bot_row,
+            FEEDLINE_ROW_OUT_TOP = out_top_row,
+            FEEDLINE_ROW_OUT_BOT = out_bot_row,
             FEEDLINE_WIDTH_IN   = feedline.get("feedline_width_in",
                                                feedline.get("feedline_width", 5.0)),
             FEEDLINE_WIDTH_OUT  = feedline.get("feedline_width_out",
@@ -980,7 +990,8 @@ class VirtuosoPixelEngine:
         emx_dir: Path,
     ) -> List[Path]:
         """Post-EMX driver for differential_filter: differential Spectre testbench."""
-        full, *_ = mirror_half_matrix(cfg["pixelated"]["pixel_state_matrix"])
+        half     = cfg["pixelated"]["pixel_state_matrix"]
+        full, *_ = mirror_half_matrix(half)
         n_ports  = differential_total_ports(analyze_matrix(full))
         snp_path = emx_dir / f"{cell_name}.s{n_ports}p"
         if not snp_path.exists():
@@ -988,9 +999,20 @@ class VirtuosoPixelEngine:
             print("  [engine] Skipping differential Spectre simulation.")
             return []
 
+        # Mirror the half-design shunt-cap values onto the full layout so they
+        # line up with the FULL matrix's SCAP_<i> ports (each mirror keeps the
+        # same value).  Inject into a shallow-copied cfg for the spectre driver.
+        run_cfg = cfg
+        half_scv = cfg["pixelated"].get("shunt_cap_values", []) or []
+        if half_scv:
+            full_scv = mirror_half_shunt_caps(half, half_scv)
+            run_cfg = dict(cfg)
+            run_cfg["pixelated"] = dict(cfg["pixelated"])
+            run_cfg["pixelated"]["shunt_cap_values"] = full_scv
+
         s2p_paths = run_all_states_differential(
             snp_path  = snp_path,
-            cfg       = cfg,
+            cfg       = run_cfg,
             emx_dir   = emx_dir,
             cell_name = cell_name,
         )
@@ -1420,18 +1442,25 @@ def _make_plots(
     if mode == "differential_filter":
         # S2P plot (S21/S11); overlay the full mirrored matrix for context.
         matrix = None
+        layers = None
         if cfg is not None:
-            half = cfg.get("pixelated", {}).get("pixel_state_matrix")
+            pd = cfg.get("pixelated", {})
+            half = pd.get("pixel_state_matrix")
             if half is not None:
                 try:
                     matrix, *_ = mirror_half_matrix(half)
+                    layers = mirror_half_layers(pd.get("pixel_layers", [])) or None
+                    if layers is not None:
+                        enforce_differential_feed_layers(layers)
                 except Exception:
                     matrix = None
+                    layers = None
         return plot_s2p_results(
             s2p_files=s_param_files,
             state_labels=labels,
             output_dir=plot_dir,
             pixel_matrix=matrix,
+            pixel_layers=layers,
         )
     if mode == "pixelated_design_simple":
         matrix = None

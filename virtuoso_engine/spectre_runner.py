@@ -630,16 +630,23 @@ def generate_differential_netlist(
     diff_cap: str = "61e-15",
     port1_impedance: float = 60,
     port2_impedance: float = 50,
+    shunt_cap_values: Optional[List[float]] = None,
 ) -> Path:
     """
     Build the differential S-parameter testbench netlist.
 
-    Topology (0/1-only first version):
-        * EMX block exposes PIX_IN_T, PIX_IN_B, PIX_OUT plus their ground refs.
+    Topology (multi-layer update — differential output pair):
+        * EMX block exposes PIX_IN_T, PIX_IN_B, PIX_OUT_T, PIX_OUT_B plus their
+          ground refs.
         * A configurable cap (default 61 fF) bridges the two input nodes.
         * Port 1 is a *floating* differential port across the two input nodes
-          (default 60 Ω); Port 2 is a single-ended output port (default 50 Ω).
+          (default 60 Ω).  Port 2 is a single-ended output port (default 50 Ω)
+          on the TOP output (PIX_OUT_T); the bottom output (PIX_OUT_B) is shorted
+          to global ground.
         * Ground-reference ports are shorted to global ground.
+        * VIA_<i> ports shorted to ground; SCAP_<i> (shunt-cap) ports tied to
+          ground through an ideal capacitor of value shunt_cap_values[i] (F),
+          in row-first SCAP index order.
 
     Returns the written netlist path.
     """
@@ -647,16 +654,17 @@ def generate_differential_netlist(
     node_names  = [p.lower().lstrip("~").replace("~", "_") for p in port_order]
     name_to_node = {p: node_names[i] for i, p in enumerate(port_order)}
 
-    for required in ("PIX_IN_T", "PIX_IN_B", "PIX_OUT"):
+    for required in ("PIX_IN_T", "PIX_IN_B", "PIX_OUT_T", "PIX_OUT_B"):
         if required not in name_to_node:
             raise ValueError(
                 f"Differential SNP is missing port {required!r}. "
                 f"Found ports: {port_order}"
             )
 
-    n_in_t = name_to_node["PIX_IN_T"]
-    n_in_b = name_to_node["PIX_IN_B"]
-    n_out  = name_to_node["PIX_OUT"]
+    n_in_t  = name_to_node["PIX_IN_T"]
+    n_in_b  = name_to_node["PIX_IN_B"]
+    n_out_t = name_to_node["PIX_OUT_T"]
+    n_out_b = name_to_node["PIX_OUT_B"]
     gnd_ports = [p for p in port_order if p.endswith("_GND")]
 
     lines: List[str] = []
@@ -687,10 +695,34 @@ def generate_differential_netlist(
             lines.append(f"v_{node} ({node} 0) vsource dc=0")
         lines.append("")
 
+    # Shunt-capacitor (type-5) pixels: each SCAP_<i> port is tied to ground
+    # through an ideal capacitor whose value is the GA-tuned shunt_cap_values[i]
+    # (row-first SCAP index order).  The pixel's metal layer (AP vs M9) is set in
+    # the layout; here only the capacitance matters.
+    scap_ports = sorted(
+        (p for p in port_order if p.startswith("SCAP_")),
+        key=lambda p: int(p.split("_")[1]),
+    )
+    if scap_ports:
+        scv = shunt_cap_values or []
+        if len(scv) != len(scap_ports):
+            raise ValueError(
+                f"shunt_cap_values length ({len(scv)}) does not match number of "
+                f"SCAP_* ports ({len(scap_ports)}) in the differential SNP."
+            )
+        lines.append("// Shunt-capacitor connections (pixel → ideal cap → GND)")
+        for i, sp in enumerate(scap_ports):
+            node = name_to_node[sp]
+            lines.append(f"c_{node} ({node} 0) capacitor c={scv[i]}")
+        lines.append("")
+
     lines.append("// Differential input front end")
     lines.append(f"c_diff ({n_in_t} {n_in_b}) capacitor c={diff_cap}")
     lines.append(f"p_in  ({n_in_t} {n_in_b}) port r={port1_impedance} num=1")
-    lines.append(f"p_out ({n_out} 0) port r={port2_impedance} num=2")
+    lines.append("")
+    lines.append("// Differential output: read TOP, ground BOTTOM")
+    lines.append(f"v_{n_out_b} ({n_out_b} 0) vsource dc=0")
+    lines.append(f"p_out ({n_out_t} 0) port r={port2_impedance} num=2")
     lines.append("")
 
     lines.append("// 2-port S-parameter sweep")
@@ -729,6 +761,7 @@ def run_all_states_differential(
     diff_cap = sim.get("diff_cap", "61e-15")
     r_in     = sim.get("port1_impedance", 60)
     r_out    = sim.get("port2_impedance", 50)
+    shunt_cap_values = cfg.get("pixelated", {}).get("shunt_cap_values", []) or []
 
     print(f"  [spectre_runner] Parsing port order from {snp_path.name} ...")
     port_order = parse_snp_port_order(snp_path)
@@ -748,6 +781,7 @@ def run_all_states_differential(
         diff_cap        = diff_cap,
         port1_impedance = r_in,
         port2_impedance = r_out,
+        shunt_cap_values = shunt_cap_values,
     )
 
     spectre_log = psf_dir / "spectre.log"

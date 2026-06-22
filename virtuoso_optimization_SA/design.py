@@ -58,6 +58,13 @@ class DesignState:
     #               pure grid adjacency (backward-compatible default).
     # Populated   → per-pixel sizes (same shape as ``matrix``).  The value at ground (type 0)
     #               and feed-column cells is ignored (kept for shape consistency).
+    pixel_layers: List[List[int]] = field(default_factory=list)           # [rows][cols] per-pixel metal layer
+    # Orthogonal metal-layer channel (independent of the pixel TYPE in ``matrix``).  Values:
+    #   0 → M10 (the primary top metal, ``layout.pixel_layer`` = AP; the back-compatible default)
+    #   1 → M9  (the second metal, ``layout.pixel_layer_m9``)
+    #   2 → double metal (AP + M9, stacked and via-connected)
+    # Empty list → all pixels on M10 (layer 0).  Same shape as ``matrix`` when populated; the
+    # value at ground (type 0) and feed-column cells is ignored (kept for shape consistency).
 
     # ------------------------------------------------------------------
     # Convenience properties
@@ -99,6 +106,12 @@ class DesignState:
     def n_cap_pairs(self) -> int:
         return len(self.cap_pixel_pairs)
 
+    def layer_at(self, r: int, c: int) -> int:
+        """Metal layer of pixel (r, c): 0=M10, 1=M9, 2=double.  0 when unset."""
+        if not self.pixel_layers:
+            return 0
+        return int(self.pixel_layers[r][c])
+
     # ------------------------------------------------------------------
     # Copy helper
     # ------------------------------------------------------------------
@@ -115,6 +128,7 @@ class DesignState:
             inductor_cap_values    = list(self.inductor_cap_values),
             shunt_cap_values       = list(self.shunt_cap_values),
             pixel_sizes            = copy.deepcopy(self.pixel_sizes),
+            pixel_layers           = copy.deepcopy(self.pixel_layers),
         )
 
     # ------------------------------------------------------------------
@@ -145,6 +159,8 @@ class DesignState:
         cfg["shunt_cap_values"] = self.shunt_cap_values  # always emit, even [] — prevents base config bleed-through via deep_merge
         if self.pixel_sizes:
             cfg["pixel_sizes"] = self.pixel_sizes  # only emit when sizing enabled — keeps uniform path untouched
+        if self.pixel_layers:
+            cfg["pixel_layers"] = self.pixel_layers  # only emit when multi-layer enabled — keeps single-layer path untouched
         return cfg
 
     def __repr__(self) -> str:
@@ -162,5 +178,6 @@ class DesignState:
             f"  CapPixelPairs:        {self.cap_pixel_pairs}\n"
             f"  CapPairValues:        {self.cap_pair_values}\n"
             f"  ShuntCapValues:       {self.shunt_cap_values}\n"
-            f"  PixelSizes(set):      {bool(self.pixel_sizes)}"
+            f"  PixelSizes(set):      {bool(self.pixel_sizes)}\n"
+            f"  PixelLayers(set):     {bool(self.pixel_layers)}"
         )

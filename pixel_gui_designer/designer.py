@@ -57,6 +57,16 @@ PIXEL_INFO: Dict[int, Tuple[str, QColor]] = {
     5: ("SCAP", QColor("#17a589")),
 }
 
+# Metal-layer code → (label, colour) for differential multi-layer designs.
+# Used as the BASE cell colour for non-empty pixels so M10 / M9 / double are
+# distinguishable; advanced types (IND/SW/VIA/SCAP) keep their text labels on top.
+# Light, high-contrast hues matching virtuoso_engine/plotter.py.
+LAYER_INFO: Dict[int, Tuple[str, QColor]] = {
+    0: ("M10",    QColor("#74c0e8")),   # light blue   — primary top metal (AP)
+    1: ("M9",     QColor("#6fcf97")),   # light green  — second metal
+    2: ("M9+M10", QColor("#c79be0")),   # light orchid — double metal
+}
+
 INDUCTOR_LABELS = ["300 pH (EM)"]
 DEFAULT_CAP_F   = 1.0e-12   # 1 pF
 DEFAULT_PAIR_F  = 1.0e-12
@@ -195,7 +205,24 @@ class DesignModel:
         self.cap_pixel_pairs:       List[List[List[int]]]       = []
         self.cap_pair_values:       List[float]                 = []
         self.shunt_cap_values:      List[float]                 = []   # one per type-5 (SCAP) pixel, row-first
+        self.pixel_layers:          List[List[int]]             = [[0]] # parallel to matrix; 0=M10/AP 1=M9 2=double
         self.file_path:             Optional[str]               = None
+
+    def is_differential(self) -> bool:
+        """True when the loaded config is a differential-filter (multi-layer) design."""
+        return self.full_config.get("mode") == "differential_filter"
+
+    def layer_at(self, r: int, c: int) -> int:
+        """Metal layer of pixel (r, c): 0=M10/AP, 1=M9, 2=double."""
+        if r < len(self.pixel_layers) and c < len(self.pixel_layers[r]):
+            return int(self.pixel_layers[r][c])
+        return 0
+
+    def set_layer(self, r: int, c: int, layer: int) -> None:
+        """Set the metal layer of pixel (r, c).  No-op for empty (type-0) cells."""
+        if int(self.matrix[r][c]) == 0:
+            return
+        self.pixel_layers[r][c] = int(layer)
 
     # ── I/O ──────────────────────────────────────────────────────────────────
 
@@ -240,6 +267,11 @@ class DesignModel:
         self.cap_pixel_pairs    = [[list(p) for p in pair] for pair in cpp]
         self.cap_pair_values    = list(px.get("cap_pair_values", []) or [])
         self.shunt_cap_values   = [float(v) for v in (px.get("shunt_cap_values", []) or [])]
+        raw_layers = px.get("pixel_layers", None)
+        if raw_layers:
+            self.pixel_layers = [[int(v) for v in row] for row in raw_layers]
+        else:
+            self.pixel_layers = [[0] * len(row) for row in self.matrix]
         self._repair_lengths()
 
     def _push_to_config(self) -> None:
@@ -257,9 +289,33 @@ class DesignModel:
         px["cap_pixel_pairs"] = self.cap_pixel_pairs
         px["cap_pair_values"] = self.cap_pair_values
         px["shunt_cap_values"] = self.shunt_cap_values
+        # Emit pixel_layers for differential (multi-layer) designs or whenever any
+        # non-M10 layer is present; otherwise keep legacy single-layer configs clean.
+        if self.is_differential() or any(v != 0 for row in self.pixel_layers for v in row):
+            px["pixel_layers"] = self.pixel_layers
+        else:
+            px.pop("pixel_layers", None)
+
+    def _repair_layers(self) -> None:
+        """Keep pixel_layers the same shape as matrix (pad/truncate with 0)."""
+        nr, nc = self.num_rows(), self.num_cols()
+        # Row count
+        while len(self.pixel_layers) < nr:
+            self.pixel_layers.append([0] * nc)
+        del self.pixel_layers[nr:]
+        # Column count per row; also force empty cells to layer 0.
+        for r in range(nr):
+            row = self.pixel_layers[r]
+            while len(row) < nc:
+                row.append(0)
+            del row[nc:]
+            for c in range(nc):
+                if int(self.matrix[r][c]) == 0:
+                    row[c] = 0
 
     def _repair_lengths(self) -> None:
         """Clamp derived lists to match actual pixel counts."""
+        self._repair_layers()
         n_sw  = len(self.sw_pixels())
         n_ind = len(self.ind_pixels())
         n_scap = len(self.scap_pixels())
@@ -400,6 +456,11 @@ class DesignModel:
 
         # --- Commit the change ---
         self.matrix[row][col] = new_type
+        # Clearing a cell resets its metal layer to M10 (0); other transitions
+        # keep the existing layer so e.g. a metal pixel turned into a shunt cap
+        # stays on its chosen layer.
+        if new_type == 0 and row < len(self.pixel_layers) and col < len(self.pixel_layers[row]):
+            self.pixel_layers[row][col] = 0
 
         # --- Insert bookkeeping for new type AFTER matrix change ---
         if new_type == 3:
@@ -496,6 +557,7 @@ class DesignModel:
         """Insert a blank row before row *idx* (0 = top, num_rows() = bottom)."""
         new_row = [0] * self.num_cols()
         self.matrix.insert(idx, new_row)
+        self.pixel_layers.insert(idx, [0] * self.num_cols())
         for pair in self.cap_pixel_pairs:
             for p in pair:
                 if p[0] >= idx:
@@ -529,10 +591,14 @@ class DesignModel:
         self.cap_pixel_pairs = keep_p
         self.cap_pair_values = keep_v
         self.matrix.pop(idx)
+        if idx < len(self.pixel_layers):
+            self.pixel_layers.pop(idx)
 
     def add_col(self, idx: int) -> None:
         """Insert a blank column before col *idx* (0 = left, num_cols() = right)."""
         for row in self.matrix:
+            row.insert(idx, 0)
+        for row in self.pixel_layers:
             row.insert(idx, 0)
         for pair in self.cap_pixel_pairs:
             for p in pair:
@@ -566,6 +632,9 @@ class DesignModel:
         self.cap_pair_values = keep_v
         for row in self.matrix:
             row.pop(idx)
+        for row in self.pixel_layers:
+            if idx < len(row):
+                row.pop(idx)
 
     # ── Factory ──────────────────────────────────────────────────────────────
 
@@ -821,6 +890,11 @@ class PixelGridWidget(QWidget):
         fs_sub   = max(6,  int(cs * 0.092))   # secondary label (nH, pF)
         fs_micro = max(5,  int(cs * 0.075))   # tiny r,c corner tag
 
+        # In differential (multi-layer) designs, colour non-empty cells by their
+        # metal layer so M10 / M9 / double are visible; advanced types keep their
+        # text label.  Other modes use the legacy per-type colour.
+        multilayer = model.is_differential()
+
         # --- build cap-pair lookup (row,col) -> pair_index ---
         pair_map: Dict[Tuple[int,int], int] = {}
         for i, pair in enumerate(model.cap_pixel_pairs):
@@ -833,6 +907,11 @@ class PixelGridWidget(QWidget):
                 ptype = model.get_pixel(r, c)
                 label, base_color = PIXEL_INFO.get(ptype, ("?", QColor("#222")))
                 rect  = self._cell_rect(r, c)
+
+                # Base colour by metal layer for differential designs (non-empty
+                # cells); empty (GND) cells and non-differential designs unchanged.
+                if multilayer and ptype != 0:
+                    base_color = LAYER_INFO.get(model.layer_at(r, c), LAYER_INFO[0])[1]
 
                 # Fill
                 fill = QColor(base_color)
@@ -868,6 +947,10 @@ class PixelGridWidget(QWidget):
                         bot_text = f"{len(bank)}×" + _fmt_cap(bank[0])
                 elif ptype == 4:
                     top_text = "VIA"; bot_text = ""
+                elif ptype == 1 and multilayer:
+                    # Metal pixel: show its layer (colour already encodes it too).
+                    top_text = LAYER_INFO.get(model.layer_at(r, c), LAYER_INFO[0])[0]
+                    bot_text = ""
                 else:
                     top_text = label; bot_text = ""
 
@@ -1081,6 +1164,17 @@ class PropertyPanel(QGroupBox):
         root.addWidget(gb_scap)
         self._scap_gb = gb_scap
 
+        # ── Metal layer (differential multi-layer designs only) ───────────────
+        gb_layer = QGroupBox("Metal layer")
+        vl_ly = QVBoxLayout(gb_layer)
+        self._layer_combo = QComboBox()
+        for code, (name, _) in LAYER_INFO.items():
+            self._layer_combo.addItem(f"{code} — {name}", code)
+        self._layer_combo.currentIndexChanged.connect(self._on_layer)
+        vl_ly.addWidget(self._layer_combo)
+        root.addWidget(gb_layer)
+        self._layer_gb = gb_layer
+
         # ── Switch cap bank ───────────────────────────────────────────────
         gb_sw = QGroupBox("Switch cap bank")
         gb_sw.setMinimumWidth(220)
@@ -1151,7 +1245,7 @@ class PropertyPanel(QGroupBox):
             self._hint.show()
             self._type_gb.hide(); self._ind_gb.hide()
             self._sw_gb.hide();   self._cp_gb.hide()
-            self._scap_gb.hide()
+            self._scap_gb.hide(); self._layer_gb.hide()
             return
 
         r, c   = self.selected
@@ -1191,6 +1285,15 @@ class PropertyPanel(QGroupBox):
                 self._scap_spin.setValue(model.shunt_cap_values[ci] * 1e12)
         else:
             self._scap_gb.hide()
+
+        # Metal layer (differential multi-layer designs; any non-empty pixel)
+        if model.is_differential() and ptype > 0:
+            self._layer_gb.show()
+            li = self._layer_combo.findData(model.layer_at(r, c))
+            if li >= 0:
+                self._layer_combo.setCurrentIndex(li)
+        else:
+            self._layer_gb.hide()
 
         # Cap pair (available for any non-ground pixel)
         if ptype > 0:
@@ -1242,6 +1345,14 @@ class PropertyPanel(QGroupBox):
         if ci is not None and ci < len(self.model.shunt_cap_values):
             self.model.shunt_cap_values[ci] = pf * 1e-12
             self.changed.emit()
+
+    def _on_layer(self, _idx: int) -> None:
+        if self._loading or self.selected is None:
+            return
+        r, c = self.selected
+        self.model.set_layer(r, c, self._layer_combo.currentData())
+        self._refresh()
+        self.changed.emit()
 
     def _rebuild_sw_bank_ui(self, si: Optional[int]) -> None:
         """Clear and rebuild the per-cap spinbox rows for switch si."""
@@ -2008,10 +2119,11 @@ class SimulationWindow(QDialog):
             return
 
         # --- Write the simulation config YAML ---
-        sim_cfg = copy.deepcopy(self.model.full_config)
         self.model._push_to_config()          # make sure pixelated section is current
         sim_cfg = copy.deepcopy(self.model.full_config)
-        sim_cfg["mode"] = "pixelated_design_simple"
+        # Preserve the design's own mode (e.g. differential_filter); only fall
+        # back to the simple pixel mode when the config doesn't specify one.
+        sim_cfg.setdefault("mode", "pixelated_design_simple")
         sim_cfg.setdefault("project", {})["parent_output_dir"] = self._output_dir
 
         try:

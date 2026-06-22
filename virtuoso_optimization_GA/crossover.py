@@ -60,6 +60,43 @@ def _build_pos_map(matrix: List[List[int]], pixel_type: int) -> Dict[Tuple[int, 
 # Repair helpers
 # ---------------------------------------------------------------------------
 
+def _fix_feed_cols(
+    matrix: List[List[int]],
+    rng: random.Random,
+    feed_row_max: Optional[int] = None,
+) -> None:
+    """
+    Ensure exactly one non-zero pixel per feed column (col 0 and col cols-1),
+    located on a *valid* row.
+
+    - If a feed column has more than one non-zero pixel, keep one (preferring a
+      valid row) and zero out the rest.
+    - If a feed column has zero non-zero pixels, place a type-1 pixel at a
+      random valid row (connectivity repair handles path-finding afterwards).
+    - ``feed_row_max`` (differential mode) restricts feed pixels to rows
+      ``[0, feed_row_max]`` — the bottom two rows are forbidden because
+      mirror_half_matrix rejects feeds there.  When None (regular filter) any
+      row is allowed, preserving the original behaviour.
+    """
+    rows = len(matrix)
+    cols = len(matrix[0])
+    row_hi = rows - 1 if feed_row_max is None else min(feed_row_max, rows - 1)
+
+    for feed_col in (0, cols - 1):
+        nonzero_rows = [r for r in range(rows) if matrix[r][feed_col] != 0]
+        valid_rows   = [r for r in nonzero_rows if r <= row_hi]
+        if nonzero_rows:
+            # Prefer keeping a pixel already on a valid row; else relocate one.
+            keep = rng.choice(valid_rows) if valid_rows else None
+            for r in nonzero_rows:
+                if r != keep:
+                    matrix[r][feed_col] = 0
+            if keep is None:
+                matrix[rng.randint(0, row_hi)][feed_col] = 1
+        else:
+            matrix[rng.randint(0, row_hi)][feed_col] = 1
+
+
 def _fix_inductors(
     matrix: List[List[int]],
     max_inductors: int,
@@ -734,6 +771,7 @@ def crossover_zig_zag(
     max_shunt_caps: int = 0,
     shunt_cap_min: float = 50e-15,
     shunt_cap_max: float = 1000e-15,
+    feed_row_max: Optional[int] = None,
 ) -> Tuple[Optional[DesignState], dict]:
     """
     Produce one child by zig-zag crossover of two parent designs.
@@ -750,6 +788,7 @@ def crossover_zig_zag(
 
     # Per-pixel sizing is active only when both parents carry a sizing matrix.
     sizing_on = bool(parent1.pixel_sizes) and bool(parent2.pixel_sizes)
+    layers_on = bool(parent1.pixel_layers) and bool(parent2.pixel_layers)
 
     # --- Build position maps BEFORE any changes ---
     sw_map_p1  = _build_pos_map(parent1.matrix, 3)
@@ -784,6 +823,15 @@ def crossover_zig_zag(
                     list(parent1.pixel_sizes[r][:cut]) + list(parent2.pixel_sizes[r][cut:])
                 )
 
+        # Mirror the same jagged cut on the layer matrix.
+        child_pixel_layers: List[List[int]] = []
+        if layers_on:
+            for r in range(rows):
+                cut = cut_cols[r]
+                child_pixel_layers.append(
+                    list(parent1.pixel_layers[r][:cut]) + list(parent2.pixel_layers[r][cut:])
+                )
+
         xover_params = {"orientation": "vertical", "base_cut": base_cut}
 
     else:
@@ -795,6 +843,7 @@ def crossover_zig_zag(
 
         child_matrix = [[0] * cols for _ in range(rows)]
         child_pixel_sizes = [[0.0] * cols for _ in range(rows)] if sizing_on else []
+        child_pixel_layers = [[0] * cols for _ in range(rows)] if layers_on else []
         for r in range(rows):
             for c in range(cols):
                 from_p1 = r < cut_rows[c]
@@ -805,10 +854,18 @@ def crossover_zig_zag(
                     child_pixel_sizes[r][c] = (
                         parent1.pixel_sizes[r][c] if from_p1 else parent2.pixel_sizes[r][c]
                     )
+                if layers_on:
+                    child_pixel_layers[r][c] = (
+                        parent1.pixel_layers[r][c] if from_p1 else parent2.pixel_layers[r][c]
+                    )
 
         xover_params = {"orientation": "horizontal", "base_cut": base_cut}
 
     # --- Repair pipeline ---
+    # Feed columns first: a horizontal cut can leave 0/2 feed pixels or place
+    # one in a forbidden row.  Differential mode constrains them to valid rows
+    # so mirror_half_matrix won't reject the design.
+    _fix_feed_cols(child_matrix, rng, feed_row_max=feed_row_max)
     _fix_inductors(child_matrix, max_inductors, rng)
     _fix_switches(child_matrix, min_switches, max_switches, rng)
     if max_vias > 0:
@@ -893,4 +950,5 @@ def crossover_zig_zag(
         inductor_cap_values    = inductor_cap_values,
         shunt_cap_values       = shunt_cap_values,
         pixel_sizes            = child_pixel_sizes if sizing_on else [],
+        pixel_layers           = child_pixel_layers if layers_on else [],
     ), xover_params

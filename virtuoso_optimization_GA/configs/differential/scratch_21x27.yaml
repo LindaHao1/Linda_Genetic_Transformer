@@ -1,14 +1,24 @@
 # ===========================================================================
-# Experiment — Differential-Mode Filter, 21x27 HALF grid, metal-only scratch
+# Experiment — Differential-Mode Filter, 21x27 HALF grid, MULTI-LAYER metal scratch
+#
+# Metal-only baseline for the differential multi-layer update.  No advanced
+# pixels (no caps / vias / inductors / switches) — just the 0/1 metal grid, but
+# every metal pixel may sit on M10 (AP), M9, or both ("double metal").  This
+# breaks the single-layer symmetry that otherwise kills a differential filter.
 #
 # The grid below is the HALF design.  The engine mirrors it about the bottom
-# row, so the simulated full layout is 41x27 (2*21-1 rows).
+# row, so the simulated full layout is 41x27 (2*21-1 rows).  Both the input
+# (left feed) and the output (right feed) are single flexible pixels that mirror
+# into two ports; the output is read on the top port (M9) and grounded on the
+# bottom port.
+#
+# enable_multi_layer turns flip_01 into a 4-way choice: empty / M10 / M9 / double.
 # ===========================================================================
 
 _base_: ./base_differential.yaml
 
 virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_scratch"
+output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_scratch_multilayer"
 
 layout:
   pixel_size: 12.5   # um — metal patch size must include .0 if integer
@@ -17,5 +27,9 @@ layout:
 grid:
   rows: 21   # HALF-design rows — engine mirrors to 41 rows
   cols: 27
+
+  # Multi-layer metal ON — the only design freedom beyond 0/1 in this baseline.
+  enable_multi_layer: true
+  allowed_layers: [0, 1, 2]   # 0=M10 (AP), 1=M9, 2=double metal
 
 seed: 42
