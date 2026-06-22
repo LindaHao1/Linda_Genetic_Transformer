@@ -44,7 +44,7 @@ from virtuoso_optimization_SA.actions import random_action, _ACTION_NAMES
 from virtuoso_optimization_SA.sa_optimizer import _load_design_from_config
 from virtuoso_optimization_SA.cost import (
     compute_total_cost, compute_total_cost_dynamic, compute_state_cost, get_s21_db, get_s11_db,
-    compute_cost_breakdown,
+    compute_cost_breakdown, compute_stopband_region_means, compute_one_sided_pv_scores,
     specs_from_config, FilterStateSpec,
 )
 from virtuoso_optimization_SA.inductor_cost import (
@@ -209,6 +209,11 @@ class GAConfig:
     flip_outer_prob:   float = 1.0             # relative weight for pixels outside the region
     flip_region_size:  int   = 8               # side length of the random window sampled by flip_01
 
+    # Regional density grow/carve action parameters
+    region_max_half_height: int = 5
+    region_max_half_width:  int = 5
+    region_min_half_size:   int = 2
+
     # Plotting: exclude high-cost (infeasible-performance) designs from mean/worst stats
     feasibility_cost_threshold: float = 1e6   # costs above this are excluded from filtered stats
     population_plot_top_k:      int   = 5     # number of top individuals to track per generation
@@ -251,6 +256,12 @@ class GAConfig:
     # Multi-champion: keep the top-k designs per filter state in the champion registry.
     # n_state_champions=1 reproduces the original single-champion behaviour exactly.
     n_state_champions: int = 1
+
+    # Per-stopband-region champions: track the best design for each stopband region
+    # independently (keyed by (spec_idx, region_idx)).  Injected into population pool
+    # alongside state champions.  Champions are ranked by mean S21 in the region (lower = better).
+    use_stopband_champions: bool = False
+    n_stopband_champions:   int  = 1    # designs kept per (spec, region) slot
 
     # State-cost aggregation mode.
     # "sum"      — simple sum of per-state costs (default, original behaviour).
@@ -365,6 +376,9 @@ class GAConfig:
             flip_inner_prob       = float(ga.get("flip_inner_prob", 1.0)),
             flip_outer_prob       = float(ga.get("flip_outer_prob", 1.0)),
             flip_region_size      = int(ga.get("flip_region_size", 8)),
+            region_max_half_height = int(ga.get("region_max_half_height", 5)),
+            region_max_half_width  = int(ga.get("region_max_half_width",  5)),
+            region_min_half_size   = int(ga.get("region_min_half_size",   2)),
 
             feasibility_cost_threshold = float(ga.get("feasibility_cost_threshold", 1e6)),
             population_plot_top_k      = int(ga.get("population_plot_top_k", 5)),
@@ -392,6 +406,8 @@ class GAConfig:
             }.items()},
 
             n_state_champions           = int(  ga.get("n_state_champions",             1)),
+            use_stopband_champions      = bool( ga.get("use_stopband_champions",      False)),
+            n_stopband_champions        = int(  ga.get("n_stopband_champions",           1)),
             pop_schedule_gens_per_step  = (int(ga["pop_schedule_gens_per_step"])
                                            if ga.get("pop_schedule_gens_per_step") is not None
                                            else None),
@@ -572,6 +588,7 @@ class SwitchableFilterGA:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "population").mkdir(exist_ok=True)
         (self.output_dir / "state_best").mkdir(exist_ok=True)
+        (self.output_dir / "stopband_best").mkdir(exist_ok=True)
 
         # Save config snapshots for future reference
         shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
@@ -630,13 +647,16 @@ class SwitchableFilterGA:
                 {"kind": "initial", "sim_tag": f"gen-1_ind{i}"}
                 for i in range(len(population))
             ]
-            if cfg.use_state_champions:
+            if cfg.use_state_champions or cfg.use_stopband_champions:
                 costs, init_per_state_costs, init_sim_data = self._evaluate_batch_with_state_costs(
                     engine, population, gen_idx=-1, provenance_logs=_init_provenance
                 )
+                init_per_stopband = (self._per_stopband_means_from_sim_data(init_sim_data)
+                                     if cfg.use_stopband_champions else [])
             else:
                 costs, init_sim_data = self._evaluate_batch(engine, population, gen_idx=-1, provenance_logs=_init_provenance)
                 init_per_state_costs = []
+                init_per_stopband = []
 
             best_idx    = min(range(len(costs)), key=lambda i: costs[i])
             best_design = population[best_idx].copy()
@@ -693,6 +713,42 @@ class SwitchableFilterGA:
                                     "mutation_description":  "selected from random initial population",
                                 },
                             )
+
+            # --- Per-stopband-region champion initialisation ---
+            # Flat key list: (spec_idx, region_idx) covering all stopband regions.
+            sb_champ_keys: List[Tuple[int, int]] = [
+                (si, ri)
+                for si, spec in enumerate(self.specs)
+                for ri in range(len(spec.stopband_regions))
+            ]
+            stopband_champions:            List[List[DesignState]]    = [[] for _ in sb_champ_keys]
+            stopband_champion_costs:       List[List[float]]          = [[] for _ in sb_champ_keys]
+            stopband_champion_total_costs: List[List[float]]          = [[] for _ in sb_champ_keys]
+            stopband_champion_sim_tags:    List[List[str]]            = [[] for _ in sb_champ_keys]
+            if cfg.use_stopband_champions and init_per_stopband:
+                for ind_idx, psr in enumerate(init_per_stopband):
+                    for flat_idx, (si, ri) in enumerate(sb_champ_keys):
+                        if si < len(psr) and ri < len(psr[si]):
+                            became_best = _insert_champion(
+                                flat_idx, psr[si][ri], costs[ind_idx],
+                                f"gen-1_ind{ind_idx}", population[ind_idx].copy(),
+                                stopband_champions, stopband_champion_costs,
+                                stopband_champion_total_costs, stopband_champion_sim_tags,
+                                cfg.n_stopband_champions,
+                            )
+                            if became_best:
+                                self._save_stopband_best(
+                                    si, ri, psr[si][ri], costs[ind_idx],
+                                    -1, f"gen-1_ind{ind_idx}", population[ind_idx],
+                                )
+
+            if cfg.use_stopband_champions and sb_champ_keys:
+                sb_summary = ", ".join(
+                    f"(spec{si},sb{ri}): cost={stopband_champion_costs[fi][0]:.3f}"
+                    for fi, (si, ri) in enumerate(sb_champ_keys)
+                    if stopband_champions[fi]
+                )
+                print(f"[GA] Stopband champions initialised — {sb_summary}")
 
             print(f"[GA] Initial best cost: {best_cost:.4f}")
 
@@ -752,6 +808,9 @@ class SwitchableFilterGA:
                             shunt_cap_min            = cfg.shunt_cap_min,
                             shunt_cap_max            = cfg.shunt_cap_max,
                             shunt_cap_sigma          = cfg.shunt_cap_sigma,
+                            region_max_half_height   = cfg.region_max_half_height,
+                            region_max_half_width    = cfg.region_max_half_width,
+                            region_min_half_size     = cfg.region_min_half_size,
                         )
                         if mutated is not None and is_feasible(mutated.matrix, 0, cfg.max_inductors, min_switches=cfg.min_switches, max_switches=cfg.max_switches, max_vias=cfg.n_max_vias,
                                                                pixel_sizes=(mutated.pixel_sizes or None), grid_size=self.grid_size, connect_margin=cfg.connect_margin):
@@ -790,6 +849,27 @@ class SwitchableFilterGA:
                                 # Use total cost so the population costs list stays on the same scale
                                 sc_pool_costs.append(state_champion_total_costs[si][rank])
                                 sc_pool_sim_tags.append(state_champion_sim_tags[si][rank])
+
+                # 2c. Per-stopband-region champion pool (rank-by-rank, deduplicated)
+                n_sb_injected = 0
+                if cfg.use_stopband_champions:
+                    sb_budget = max(0, current_pop_size - current_n_elite - len(kept_bad))
+                    for rank in range(cfg.n_stopband_champions):
+                        for flat_idx in range(len(sb_champ_keys)):
+                            if len(sc_pool) >= sb_budget:
+                                break
+                            sb_champs = stopband_champions[flat_idx]
+                            if rank >= len(sb_champs):
+                                continue
+                            champ = sb_champs[rank]
+                            if not any(champ.matrix == e.matrix for e in elites + sc_pool):
+                                sc_pool.append(champ.copy())
+                                sc_pool_costs.append(stopband_champion_total_costs[flat_idx][rank])
+                                sc_pool_sim_tags.append(stopband_champion_sim_tags[flat_idx][rank])
+                                n_sb_injected += 1
+                if cfg.use_stopband_champions and gen == 0:
+                    print(f"  [GA] Gen 0: {n_sb_injected} stopband champion(s) injected into pool "
+                          f"(slots: {[(si,ri) for si,ri in sb_champ_keys]})")
 
                 # 3. Produce regular offspring via crossover + mutation
                 offspring: List[DesignState] = []
@@ -961,6 +1041,9 @@ class SwitchableFilterGA:
                             shunt_cap_min            = cfg.shunt_cap_min,
                             shunt_cap_max            = cfg.shunt_cap_max,
                             shunt_cap_sigma          = cfg.shunt_cap_sigma,
+                            region_max_half_height   = cfg.region_max_half_height,
+                            region_max_half_width    = cfg.region_max_half_width,
+                            region_min_half_size     = cfg.region_min_half_size,
                         )
                         if mutated is not None:
                             child = mutated
@@ -1050,10 +1133,29 @@ class SwitchableFilterGA:
                         "mutation":              _exp_mut,
                     })
 
-                if cfg.use_state_champions:
+                if cfg.use_state_champions or cfg.use_stopband_champions:
                     new_costs, new_per_state, new_sim_data = self._evaluate_batch_with_state_costs(
                         engine, to_evaluate, gen_idx=gen, provenance_logs=_provenance_logs
                     )
+                    # Update stopband-region champions
+                    if cfg.use_stopband_champions and sb_champ_keys:
+                        new_per_stopband = self._per_stopband_means_from_sim_data(new_sim_data)
+                        for local_idx, psr in enumerate(new_per_stopband):
+                            new_sim_tag = f"gen{gen}_ind{local_idx}"
+                            for flat_idx, (si, ri) in enumerate(sb_champ_keys):
+                                if si < len(psr) and ri < len(psr[si]):
+                                    became_best = _insert_champion(
+                                        flat_idx, psr[si][ri], new_costs[local_idx],
+                                        new_sim_tag, to_evaluate[local_idx].copy(),
+                                        stopband_champions, stopband_champion_costs,
+                                        stopband_champion_total_costs, stopband_champion_sim_tags,
+                                        cfg.n_stopband_champions,
+                                    )
+                                    if became_best:
+                                        self._save_stopband_best(
+                                            si, ri, psr[si][ri], new_costs[local_idx],
+                                            gen, new_sim_tag, to_evaluate[local_idx],
+                                        )
                     # Update state champions from newly evaluated individuals
                     for local_idx, psc in enumerate(new_per_state):
                         for si, sc in enumerate(psc):
@@ -1359,6 +1461,9 @@ class SwitchableFilterGA:
                             shunt_cap_min            = cfg.shunt_cap_min,
                             shunt_cap_max            = cfg.shunt_cap_max,
                             shunt_cap_sigma          = cfg.shunt_cap_sigma,
+                            region_max_half_height   = cfg.region_max_half_height,
+                            region_max_half_width    = cfg.region_max_half_width,
+                            region_min_half_size     = cfg.region_min_half_size,
                         )
                         if candidate is not None:
                             current = candidate
@@ -1538,6 +1643,37 @@ class SwitchableFilterGA:
             except Exception:
                 per_state.append(1e9 * spec.weight)
         return per_state
+
+    def _per_stopband_means_from_sim_data(
+        self,
+        sim_data: List[Tuple[List, Optional[List[int]]]],
+    ) -> List[List[List[float]]]:
+        """
+        Per-individual, per-spec, per-stopband-region mean S21 (dB).
+
+        Returns result[individual_idx][spec_idx][region_idx].
+        Fallback 0.0 (worst, not champion-worthy) on failure.
+        Used for stopband champion tracking.
+        """
+        out: List[List[List[float]]] = []
+        for s2p_files, assignment in sim_data:
+            per_spec: List[List[float]] = []
+            for spec_idx, spec in enumerate(self.specs):
+                n_regions = len(spec.stopband_regions)
+                if not n_regions or not s2p_files:
+                    per_spec.append([0.0] * n_regions)
+                    continue
+                sim_idx = assignment[spec_idx] if assignment is not None else spec.state_index
+                if sim_idx >= len(s2p_files) or s2p_files[sim_idx] is None:
+                    per_spec.append([0.0] * n_regions)
+                    continue
+                try:
+                    freqs, s21_db_vals = get_s21_db(s2p_files[sim_idx])
+                    per_spec.append(compute_one_sided_pv_scores(spec, freqs, s21_db_vals))
+                except Exception:
+                    per_spec.append([0.0] * n_regions)
+            out.append(per_spec)
+        return out
 
     def _save_candidate_summary(
         self,
@@ -1727,6 +1863,45 @@ class SwitchableFilterGA:
         path = self.output_dir / "state_best" / f"state_{state_idx}_best.json"
         path.write_text(json.dumps(data, indent=2))
         print(f"  [GA] State {state_idx} best saved → cost={per_state_cost:.4f}  sim={sim_tag}")
+
+    def _save_stopband_best(
+        self,
+        spec_idx: int,
+        region_idx: int,
+        one_sided_pv_score: float,
+        total_cost: float,
+        generation: int,
+        sim_tag: str,
+        design: "DesignState",
+    ) -> None:
+        """Save the best design for a specific (spec, stopband_region) pair.
+
+        The champion is ranked by one-sided PV score = sb_region_mean - pb_mean
+        (lower = better), so it must have good passband AND good stopband rejection.
+        """
+        sim_dir = str(self.output_dir / "sims" / sim_tag) if sim_tag else ""
+        data = {
+            "spec_idx":              spec_idx,
+            "region_idx":            region_idx,
+            "generation":            generation,
+            "sim_tag":               sim_tag,
+            "sim_dir":               sim_dir,
+            "one_sided_pv_score":    one_sided_pv_score,
+            "total_cost":            total_cost,
+            "matrix":                design.matrix,
+            "switch_states":         design.switch_states,
+            "cap_values":            design.cap_values,
+            "cap_pixel_pairs":       design.cap_pixel_pairs,
+            "cap_pair_values":       design.cap_pair_values,
+            "shunt_cap_values":      design.shunt_cap_values,
+            "inductor_values":       design.inductor_values,
+            "inductor_switch_states": design.inductor_switch_states,
+            "inductor_cap_values":   design.inductor_cap_values,
+        }
+        path = self.output_dir / "stopband_best" / f"spec{spec_idx}_region{region_idx}_best.json"
+        path.write_text(json.dumps(data, indent=2))
+        print(f"  [GA] Stopband best (spec{spec_idx},region{region_idx}) saved → "
+              f"pv_score={one_sided_pv_score:.2f} dB  sim={sim_tag}")
 
     @staticmethod
     def _print_cost_breakdown(breakdown: List[dict]) -> None:
@@ -2016,6 +2191,7 @@ class InductorGA(SwitchableFilterGA):
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "population").mkdir(exist_ok=True)
         (self.output_dir / "state_best").mkdir(exist_ok=True)
+        (self.output_dir / "stopband_best").mkdir(exist_ok=True)
         shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
         shutil.copy2(self.cfg.virtuoso_config, self.output_dir / "virtuoso_config_snapshot.yaml")
 

@@ -87,6 +87,7 @@ filter_specs:
     pv_passband_order:     2.0     # quadratic — large shortfalls dominate (enforce passband first)
     pv_pb_worst_k:         10      # passband level = mean of the 10 lowest passband points (0 = all)
     pv_flatness_weight:    1.0     # penalise std(passband S21)
+    pv_stopband_floor_db:  -40.0   # clip stopband S21 at -40 dB before worst-k aggregation
 
     # --- Inert in PV mode (kept for reference / S11 option) ---
     passband_min_db: -0.0
@@ -132,9 +133,14 @@ ga:
   cap_sigma: 0.0
   via_flip_max_count: 1   # add/remove up to 1 via per flip_via action
 
-  # flip_01 + flip_via active — other special-pixel actions zeroed out
+  # flip_01 + regional_density active — other special-pixel actions zeroed out
+  region_max_half_height: 5   # half-height of ellipse bounding box (pixels)
+  region_max_half_width:  5   # half-width  of ellipse bounding box (pixels)
+  region_min_half_size:   2   # minimum half-dimension in either direction
+
   action_weights:
     flip_01:             8.0
+    regional_density:    4.0
     modify_switch:       0.0
     flip_inductor:       0.0
     flip_inductor_value: 0.0
@@ -148,6 +154,8 @@ ga:
     perturb_inductor_caps: 0.0
 
   use_state_champions:      false
+  use_stopband_champions:   true
+  n_stopband_champions:     1
   dynamic_state_assignment: false
   p_champion_parent:        0.0
   p_champion_parent2:       0.0
@@ -155,6 +163,7 @@ ga:
   exploitation_n: 3
   exploitation_action_weights:
     flip_01:             4.0
+    regional_density:    2.0
     modify_switch:       0.0
     flip_inductor:       0.0
     flip_inductor_value: 0.0

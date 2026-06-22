@@ -1,0 +1,106 @@
+# ===========================================================================
+# Experiment — Impedance-Transformation Filter, CAP-PAIR + SHUNT-CAP fine-tune
+#
+# Reads an already-implemented design (metal + vias) and co-optimises BOTH:
+#   * series MIM cap pairs  (add_cap_pair / remove_cap_pair / perturb_pair_caps)
+#   * shunt-capacitor pixels (modify_shunt_cap / perturb_shunt_caps, type-5)
+#
+# The metal (type-1) and via (type-4) layout is FROZEN:
+#   - all individuals seeded from finetune_design_path (p_completely_random=0)
+#   - flip_01, flip_via, regional_density all zeroed out
+#   - n_immigrants = 0 (no random-metal immigrants)
+#   - crossover of identical metal matrices only recombines the cap overlay
+#
+# Seed design: best from ga_impedance_transfer_21x27_scratch_cap_shunt_v2
+#              (gen299_ind1, cost ≈ -154.7)
+# ===========================================================================
+
+_base_: ./base_impedance_transfer_via.yaml
+
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_tune_cap_pair_shunt_cap"
+
+layout:
+  pixel_size: 12.5
+  grid_size:  10.0
+
+grid:
+  rows: 21   # must match seed design
+  cols: 27
+  n_max_vias: 4   # >= vias in seed; vias are frozen, not changed
+
+  # --- Series cap pairs ON TOP of the metal ---
+  enable_cap_pairs:  true
+  max_cap_pairs:     12
+  cap_pair_init_min: 0
+  cap_pair_init_max: 0    # unused: no random individuals
+  cap_pair_min:      50.0e-15
+  cap_pair_max:      1000.0e-15
+  cap_pair_sigma:    50.0e-15
+  cap_pair_min_dist: 2
+  cap_pair_max_dist: 3
+  cap_pair_axis_aligned: true
+
+  # --- Shunt-capacitor pixels (type 5) ON TOP of the metal ---
+  enable_shunt_caps:  true
+  max_shunt_caps:     12
+  min_shunt_caps:     0
+  shunt_cap_init_min: 0
+  shunt_cap_init_max: 0    # unused: no random individuals
+  shunt_cap_min:      50.0e-15
+  shunt_cap_max:      1000.0e-15
+  shunt_cap_sigma:    50.0e-15
+
+seed: 42
+
+ga:
+  n_immigrants: 0   # frozen metal — no random immigrants
+
+  p_crossover: 0.6
+  p_mutation:  0.8
+
+  # Metal and via actions zeroed out — only cap overlay actions active.
+  action_weights:
+    flip_01:             0.0
+    regional_density:    0.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        4.0
+    remove_cap_pair:     3.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    4.0
+    perturb_shunt_caps:  6.0
+
+  exploitation_n: 3
+  exploitation_action_weights:
+    flip_01:             0.0
+    regional_density:    0.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        2.0
+    remove_cap_pair:     2.0
+    perturb_pair_caps:   6.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    2.0
+    perturb_shunt_caps:  6.0
+
+  # --- Fine-tune seeding (same grid size, metal frozen) ---
+  finetune_design_path: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_cap_shunt_v2/sims/gen299_ind1/worker_3/pixsimple_r21c27_ps12p5_gs10p0_x823032_w3/config.yaml"
+
+  finetune_expand:
+    enabled:             true
+    p_completely_random: 0.0    # all individuals from seed (metal frozen)
+    init_max_mutations:  6      # up to 6 cap/shunt mutations per seeded individual
+    zero_pad_first:      true   # individual 0 = exact seed copy
+    n_immigrants_expanded: 0    # no immigrants (metal frozen)

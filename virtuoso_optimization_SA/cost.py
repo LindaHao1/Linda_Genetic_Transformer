@@ -201,6 +201,12 @@ class FilterStateSpec:
     # Penalises spread (slope/ripple) in the passband independently of the level target.
     pv_flatness_weight: float = 0.0
 
+    # Floor applied to stopband S21 values before worst-k aggregation in PV mode.
+    # Values below this (e.g. -40 dB) are clipped up to the floor so that very deep
+    # nulls at isolated frequencies don't inflate the apparent mean stopband rejection.
+    # None = disabled (original behaviour, no clipping).
+    pv_stopband_floor_db: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # Peak matching helper
@@ -314,6 +320,8 @@ def compute_state_cost(
             pb_level = float(np.mean(sorted(pb_vals)[:k_eff]))
         else:
             pb_level = pb_avg
+        if spec.pv_stopband_floor_db is not None:
+            sb_cs_vals = [max(v, spec.pv_stopband_floor_db) for v in sb_cs_vals]
         sb_cs_vals_sorted = sorted(sb_cs_vals, reverse=True)  # highest (worst) first
         worst_k_vals = sb_cs_vals_sorted[:spec.pv_contrast_k]
         worst_k_avg  = float(np.mean(worst_k_vals)) if worst_k_vals else 0.0
@@ -432,6 +440,63 @@ def compute_state_cost(
         ) * spec.weight
 
     return (s21_cost + s11_cost) * shift_penalty_multiplier
+
+
+# ---------------------------------------------------------------------------
+# Per-stopband-region mean S21 (for champion tracking)
+# ---------------------------------------------------------------------------
+
+def compute_stopband_region_means(
+    spec:           "FilterStateSpec",
+    freqs:          List[float],
+    s21_db_values:  List[float],
+) -> List[float]:
+    """
+    Mean S21 (dB) within each entry of ``spec.stopband_regions``.
+
+    Lower (more negative) = better rejection in that region.
+    Used as the sort key for per-region champion tracking; intentionally
+    does NOT apply pv_stopband_floor_db so true rejection depth is visible.
+
+    Returns an empty list when ``spec.stopband_regions`` is empty.
+    """
+    region_means: List[float] = []
+    for lo, hi in spec.stopband_regions:
+        vals = [s21 for f, s21 in zip(freqs, s21_db_values) if lo <= f <= hi]
+        region_means.append(float(np.mean(vals)) if vals else 0.0)
+    return region_means
+
+
+def compute_one_sided_pv_scores(
+    spec:           "FilterStateSpec",
+    freqs:          List[float],
+    s21_db_values:  List[float],
+) -> List[float]:
+    """
+    Per-stopband-region one-sided PV contrast score.
+
+    For each stopband region returns:
+        score = sb_region_mean - pb_mean        (lower = better)
+
+    This is the negative of the region's contribution to PV contrast: a design
+    scores well only when the passband is high AND the stopband is deep.
+    ``pv_stopband_floor_db`` is applied to the stopband values (same as the
+    main cost) so very deep nulls beyond -40 dB don't dominate.
+
+    Returns an empty list when ``spec.stopband_regions`` is empty.
+    """
+    pb_lo, pb_hi = spec.passband
+    pb_vals = [s21 for f, s21 in zip(freqs, s21_db_values) if pb_lo <= f <= pb_hi]
+    pb_mean = float(np.mean(pb_vals)) if pb_vals else 0.0
+
+    scores: List[float] = []
+    for lo, hi in spec.stopband_regions:
+        sb_vals = [s21 for f, s21 in zip(freqs, s21_db_values) if lo <= f <= hi]
+        if spec.pv_stopband_floor_db is not None:
+            sb_vals = [max(v, spec.pv_stopband_floor_db) for v in sb_vals]
+        sb_mean = float(np.mean(sb_vals)) if sb_vals else 0.0
+        scores.append(sb_mean - pb_mean)
+    return scores
 
 
 # ---------------------------------------------------------------------------
@@ -1025,5 +1090,8 @@ def specs_from_config(filter_specs_cfg: list) -> List[FilterStateSpec]:
             pv_passband_order             = float(entry.get("pv_passband_order",               2.0)),
             pv_pb_worst_k                 = int(  entry.get("pv_pb_worst_k",                      0)),
             pv_flatness_weight            = float(entry.get("pv_flatness_weight",               0.0)),
+            pv_stopband_floor_db          = (float(entry["pv_stopband_floor_db"])
+                                             if entry.get("pv_stopband_floor_db") is not None
+                                             else None),
         ))
     return specs

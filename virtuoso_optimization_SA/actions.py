@@ -178,6 +178,101 @@ def action_flip_01(
 
 
 # ---------------------------------------------------------------------------
+# Action: regional density grow / carve  (oval-shaped blob mutation)
+# ---------------------------------------------------------------------------
+
+def action_regional_density(
+    state: DesignState,
+    rng: random.Random,
+    region_max_half_height: int = 5,
+    region_max_half_width: int = 5,
+    region_min_half_size: int = 2,
+    cap_pair_min_dist: int = 2,
+    cap_pair_max_dist: int = 3,
+    require_axis_aligned: bool = True,
+    grid_size: float = 25.0,
+    connect_margin: float = 2.0,
+) -> tuple:
+    """
+    Oval-shaped density mutation on type-0/type-1 pixels.
+
+    Randomly chooses a center and samples half-dimensions in
+    [region_min_half_size, region_max_half_{height,width}].  Within the
+    inscribed ellipse each pixel is flipped with probability ``1 - d``,
+    where ``d`` is the normalised ellipse distance (0 = centre, 1 = edge).
+    Mode is chosen uniformly: *grow* (0→1) or *carve* (1→0).
+
+    Returns (mutated copy, info_dict), or (None, None) if infeasible.
+    """
+    rows = state.rows
+    cols = state.cols
+
+    # Interior columns only (feed columns 0 and cols-1 are fixed).
+    interior_cols = cols - 2
+    if interior_cols <= 0 or rows <= 0:
+        return None, None
+
+    h_half = rng.randint(region_min_half_size, max(region_min_half_size, region_max_half_height))
+    w_half = rng.randint(region_min_half_size, max(region_min_half_size, region_max_half_width))
+
+    r_c = rng.randint(0, rows - 1)
+    c_c = rng.randint(1, cols - 2)   # interior only
+
+    mode = rng.choice(("grow", "carve"))
+
+    new = state.copy()
+    changed_cells = []
+
+    for r in range(max(0, r_c - h_half), min(rows, r_c + h_half + 1)):
+        for c in range(max(1, c_c - w_half), min(cols - 1, c_c + w_half + 1)):
+            if new.matrix[r][c] not in (0, 1):
+                continue
+            d = ((r - r_c) / h_half) ** 2 + ((c - c_c) / w_half) ** 2
+            if d > 1.0:
+                continue
+            p = 1.0 - d ** 0.5   # linear decay in normalised ellipse distance
+            if rng.random() >= p:
+                continue
+            old_val = new.matrix[r][c]
+            if mode == "grow" and old_val == 0:
+                new.matrix[r][c] = 1
+                changed_cells.append({"row": r, "col": c, "from": 0, "to": 1})
+            elif mode == "carve" and old_val == 1:
+                new.matrix[r][c] = 0
+                changed_cells.append({"row": r, "col": c, "from": 1, "to": 0})
+
+    if not changed_cells:
+        return None, None
+
+    if new.pixel_sizes:
+        conn_ok = check_connectivity_sized(
+            new.matrix, new.pixel_sizes, grid_size, connect_margin
+        )
+    else:
+        conn_ok = check_connectivity(new.matrix)
+    if not conn_ok:
+        return None, None
+
+    new.cap_pixel_pairs, new.cap_pair_values = filter_valid_pairs(
+        new.matrix, new.cap_pixel_pairs, new.cap_pair_values,
+        cap_pair_min_dist, cap_pair_max_dist,
+        require_axis_aligned=require_axis_aligned,
+    )
+    info = {
+        "action":       "regional_density",
+        "mode":         mode,
+        "center":       (r_c, c_c),
+        "half_dims":    (h_half, w_half),
+        "changed_cells": changed_cells,
+        "description":  (
+            f"Regional density {mode}: {len(changed_cells)} pixel(s) changed "
+            f"around center ({r_c},{c_c}) with half-dims ({h_half},{w_half})"
+        ),
+    }
+    return new, info
+
+
+# ---------------------------------------------------------------------------
 # Action 2: move one switch
 # ---------------------------------------------------------------------------
 
@@ -1391,6 +1486,7 @@ _ACTION_NAMES = [
     "perturb_pixel_sizes",
     "modify_shunt_cap",
     "perturb_shunt_caps",
+    "regional_density",
 ]
 
 
@@ -1436,6 +1532,9 @@ def _dispatch_action(
     shunt_cap_min: float = 50e-15,
     shunt_cap_max: float = 1000e-15,
     shunt_cap_sigma: float = 50e-15,
+    region_max_half_height: int = 5,
+    region_max_half_width: int = 5,
+    region_min_half_size: int = 2,
 ) -> tuple:
     """Apply a single named action once. Returns (result, info) or (None, None)."""
     if action_name == "flip_01":
@@ -1519,6 +1618,18 @@ def _dispatch_action(
         return action_perturb_shunt_caps(
             state, shunt_cap_sigma, shunt_cap_min, shunt_cap_max, rng,
         )
+    elif action_name == "regional_density":
+        return action_regional_density(
+            state, rng,
+            region_max_half_height=region_max_half_height,
+            region_max_half_width=region_max_half_width,
+            region_min_half_size=region_min_half_size,
+            cap_pair_min_dist=cap_pair_min_dist,
+            cap_pair_max_dist=cap_pair_max_dist,
+            require_axis_aligned=require_axis_aligned,
+            grid_size=grid_size,
+            connect_margin=connect_margin,
+        )
     return None, None
 
 
@@ -1565,6 +1676,9 @@ def random_action(
     shunt_cap_min: float = 50e-15,
     shunt_cap_max: float = 1000e-15,
     shunt_cap_sigma: float = 50e-15,
+    region_max_half_height: int = 5,
+    region_max_half_width: int = 5,
+    region_min_half_size: int = 2,
 ) -> tuple:
     """
     Pick one action by weight, retry it up to ``max_retries_per_action`` times,
@@ -1641,6 +1755,9 @@ def random_action(
         shunt_cap_min=shunt_cap_min,
         shunt_cap_max=shunt_cap_max,
         shunt_cap_sigma=shunt_cap_sigma,
+        region_max_half_height=region_max_half_height,
+        region_max_half_width=region_max_half_width,
+        region_min_half_size=region_min_half_size,
     )
 
     # Build a pool of (name, weight) pairs with positive weight.

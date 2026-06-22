@@ -1,0 +1,97 @@
+# ===========================================================================
+# Experiment c — Impedance-Transformation Filter, 25x29 FINE-TUNE (shunt cap + via only)
+#
+# Expands the best 21x27 metal-only (+ via) design to 25x29, then co-optimises:
+#   * pixel metal 0/1   (flip_01, regional_density)
+#   * vias              (flip_via)
+#   * shunt capacitors  (modify_shunt_cap, perturb_shunt_caps, type-5 pixels)
+#
+# No series MIM cap pairs.  The seed design has no shunt caps; the GA adds them.
+# Seed: same best_design as experiment a (ga_impedance_transfer_21x27_scratch_via_v2).
+# ===========================================================================
+
+_base_: ./base_impedance_transfer_via.yaml
+
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_25x29_finetune_shunt_only_r2"
+
+layout:
+  pixel_size: 12.5
+  grid_size:  10.0
+
+grid:
+  rows: 25
+  cols: 29
+  n_max_vias: 4
+
+  # No series cap pairs
+  enable_cap_pairs: false
+  max_cap_pairs:    0
+
+  # Shunt capacitor pixels (type-5) — co-optimised from the seed
+  enable_shunt_caps:  true
+  max_shunt_caps:     10
+  min_shunt_caps:     0
+  shunt_cap_init_min: 0
+  shunt_cap_init_max: 4     # seed with 0..4 shunt caps; can grow via mutation
+  shunt_cap_min:      50.0e-15
+  shunt_cap_max:      1000.0e-15
+  shunt_cap_sigma:    50.0e-15
+
+seed: 44
+
+ga:
+  n_gen: 300
+
+  # --- Expansion seeding from 21x27 via best design ---
+  finetune_design_path: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_via_v2/sims/gen299_ind4/worker_0/pixsimple_r21c27_ps12p5_gs10p0_x4e3bef_w0/config.yaml"
+
+  finetune_expand:
+    enabled:             true
+    p_completely_random: 0.10
+    p_embed:             0.50
+    p_random_insertion:  0.50
+    p_duplicate:         0.50
+    p_random_fill:       0.35
+    p_zero_pad:          0.15
+    embed_density_min:   0.0
+    embed_density_max:   0.5
+    zero_pad_first:      true
+    init_max_mutations:  12
+    n_immigrants_expanded: 2
+
+  # flip_01 + flip_via + regional_density + shunt-cap actions active
+  # cap-pair actions all zeroed out (no series caps)
+  action_weights:
+    flip_01:             8.0
+    regional_density:    4.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    4.0
+    perturb_shunt_caps:  4.0
+
+  exploitation_action_weights:
+    flip_01:             4.0
+    regional_density:    2.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            2.0
+    perturb_inductor_caps: 0.0
+    modify_shunt_cap:    2.0
+    perturb_shunt_caps:  6.0

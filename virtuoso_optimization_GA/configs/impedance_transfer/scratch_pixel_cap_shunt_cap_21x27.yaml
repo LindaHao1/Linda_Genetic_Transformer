@@ -21,10 +21,10 @@
 # consistent with grid.rows.
 # ===========================================================================
 
-_base_: ./base_impedance_transfer.yaml
+_base_: ./base_impedance_transfer_via.yaml
 
-virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_pixel_cap_shunt_cap_large"
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scartch_pixel_cap_shunt_cap_left_stop_increase"
 
 # ---------------------------------------------------------------------------
 # LAYOUT GEOMETRY — overrides the Virtuoso engine config's layout block.
@@ -73,7 +73,8 @@ ga:
   # Active: flip_01 (metal), flip_via, the three cap-pair actions, and the two
   # shunt-cap actions.  All switch / inductor actions stay at 0.
   action_weights:
-    flip_01:             6.0
+    flip_01:             4.0
+    regional_density:    4.0
     modify_switch:       0.0
     flip_inductor:       0.0
     flip_inductor_value: 0.0
@@ -83,7 +84,7 @@ ga:
     remove_cap_pair:     4.0
     perturb_pair_caps:   4.0
     flip_inductor_state: 0.0
-    flip_via:            2.0
+    flip_via:            3.0
     perturb_inductor_caps: 0.0
     modify_shunt_cap:    4.0
     perturb_shunt_caps:  4.0
@@ -91,6 +92,7 @@ ga:
   exploitation_n: 3
   exploitation_action_weights:
     flip_01:             2.0
+    regional_density:    2.0
     modify_switch:       0.0
     flip_inductor:       0.0
     flip_inductor_value: 0.0
@@ -98,9 +100,9 @@ ga:
     flip_switch_state:   0.0
     add_cap_pair:        2.0
     remove_cap_pair:     2.0
-    perturb_pair_caps:   6.0
+    perturb_pair_caps:   3.0
     flip_inductor_state: 0.0
     flip_via:            2.0
     perturb_inductor_caps: 0.0
     modify_shunt_cap:    2.0
-    perturb_shunt_caps:  6.0
+    perturb_shunt_caps:  3.0

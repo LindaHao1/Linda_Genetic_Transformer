@@ -1,0 +1,49 @@
+# ===========================================================================
+# Experiment b — Impedance-Transformation Filter, 25x29 FINE-TUNE (cap pair + shunt cap)
+#
+# Expands the best 21x27 cap-pair + shunt-cap design to a 25x29 grid by adding
+# 4 rows and 2 cols.  Seed: best_design from
+# ga_impedance_transfer_21x27_scratch_cap_shunt_v2 (cost ≈ -154.7).
+#
+# Active actions: flip_01, flip_via, regional_density, add/remove/perturb cap pairs,
+#                 modify_shunt_cap, perturb_shunt_caps.
+# Inherits all cap-pair and shunt-cap grid settings from
+# scratch_pixel_cap_shunt_cap_21x27.yaml.
+# ===========================================================================
+
+_base_: ./scratch_pixel_cap_shunt_cap_21x27.yaml
+
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_25x29_finetune_cap_shunt_r2"
+
+layout:
+  pixel_size: 12.5
+  grid_size:  10.0
+
+grid:
+  rows: 25   # 21 + 4 extra rows
+  cols: 29   # 27 + 2 extra cols
+  n_max_vias: 4
+  max_cap_pairs:  10   # slightly higher budget for the larger grid
+  max_shunt_caps: 10
+
+seed: 44
+
+ga:
+  n_gen: 300
+
+  # --- Expansion seeding from 21x27 best cap+shunt design ---
+  finetune_design_path: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scratch_cap_shunt_v2/sims/gen299_ind1/worker_3/pixsimple_r21c27_ps12p5_gs10p0_x823032_w3/config.yaml"
+
+  finetune_expand:
+    enabled:             true
+    p_completely_random: 0.10
+    p_embed:             0.50
+    p_random_insertion:  0.50
+    p_duplicate:         0.50
+    p_random_fill:       0.35
+    p_zero_pad:          0.15
+    embed_density_min:   0.0
+    embed_density_max:   0.5
+    zero_pad_first:      true
+    init_max_mutations:  12
+    n_immigrants_expanded: 2
