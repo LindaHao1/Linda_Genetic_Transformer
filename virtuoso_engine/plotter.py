@@ -343,9 +343,7 @@ def _draw_design_matrix(
                         c, r, _ADV_MARKER[ptype],
                         ha="center", va="center",
                         fontsize=8, fontweight="bold",
-                        color=_PIXEL_STYLE[ptype][1],
-                        bbox=dict(boxstyle="square,pad=0.1", facecolor="black",
-                                  edgecolor=_PIXEL_STYLE[ptype][1], linewidth=1.0, alpha=0.7),
+                        color="white",
                     )
 
     # Grid lines

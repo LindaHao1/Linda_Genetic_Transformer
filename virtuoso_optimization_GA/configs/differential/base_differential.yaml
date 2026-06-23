@@ -74,8 +74,8 @@ filter_specs:
     enable_pv_contrast:    true
     pv_contrast_k:         80
     pv_contrast_weight:    8.0
-    pv_passband_weight:    16.0
-    passband_target_db:    -2.0
+    pv_passband_weight:    10.0
+    passband_target_db:    -4.0
     pv_passband_order:     2.0
     pv_pb_worst_k:         10
     pv_flatness_weight:    1.0
@@ -117,7 +117,7 @@ ga:
   selection:       "tournament"
   tournament_size: 5
 
-  n_parallel: 6
+  n_parallel: 8
 
   n_regular_flip: 15
   cap_sigma: 0.0

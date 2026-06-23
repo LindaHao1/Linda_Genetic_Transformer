@@ -68,6 +68,7 @@ def _load_design_from_config(config_path: str | Path) -> DesignState:
         inductor_cap_values    = pix.get("inductor_cap_values", []),
         shunt_cap_values       = pix.get("shunt_cap_values", []),
         pixel_sizes            = pix.get("pixel_sizes", []),
+        pixel_layers           = pix.get("pixel_layers", []),
     )
 
 

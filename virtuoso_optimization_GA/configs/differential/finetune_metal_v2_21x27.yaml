@@ -1,0 +1,32 @@
+# ===========================================================================
+# Experiment — Differential-Mode Filter, 21x27 HALF grid, MULTI-LAYER metal
+#              warm-start from best design of ga_differential_21x27_scratch_multilayer
+#              (gen86_ind0)
+# ===========================================================================
+
+_base_: ./base_differential.yaml
+
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_differential_21x27_metal_v2"
+
+layout:
+  pixel_size: 12.5
+  grid_size:  10.0
+
+grid:
+  rows: 21
+  cols: 27
+
+  enable_multi_layer: true
+  allowed_layers: [0, 1, 2]
+
+seed: 42
+
+ga:
+  finetune_design_path: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_differential_21x27_scratch_multilayer/sims/gen86_ind0/worker_4/diff_r21c27_ps12p5_gs10p0_x13db6a_w4/config.yaml"
+  finetune_expand:
+    enabled: true
+    p_completely_random: 0.3
+    init_max_mutations:  12
+    zero_pad_first:      true
+    n_immigrants_expanded: 5
