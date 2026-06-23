@@ -223,6 +223,7 @@ def action_regional_density(
     require_axis_aligned: bool = True,
     grid_size: float = 25.0,
     connect_margin: float = 2.0,
+    allowed_layers: Optional[List[int]] = None,
 ) -> tuple:
     """
     Oval-shaped density mutation on type-0/type-1 pixels.
@@ -232,6 +233,11 @@ def action_regional_density(
     inscribed ellipse each pixel is flipped with probability ``1 - d``,
     where ``d`` is the normalised ellipse distance (0 = centre, 1 = edge).
     Mode is chosen uniformly: *grow* (0→1) or *carve* (1→0).
+
+    Multi-layer mode (``allowed_layers`` is not None): randomly selects a
+    target layer first, then applies the same grow/carve logic for that
+    specific layer — grow turns empty pixels into metal on the target layer,
+    carve removes metal pixels that are already on the target layer.
 
     Returns (mutated copy, info_dict), or (None, None) if infeasible.
     """
@@ -251,7 +257,12 @@ def action_regional_density(
 
     mode = rng.choice(("grow", "carve"))
 
+    multi_layer = allowed_layers is not None
+    target_layer = rng.choice(allowed_layers) if multi_layer else None
+
     new = state.copy()
+    if multi_layer and not new.pixel_layers:
+        new.pixel_layers = [[0] * cols for _ in range(rows)]
     changed_cells = []
 
     for r in range(max(0, r_c - h_half), min(rows, r_c + h_half + 1)):
@@ -265,12 +276,25 @@ def action_regional_density(
             if rng.random() >= p:
                 continue
             old_val = new.matrix[r][c]
-            if mode == "grow" and old_val == 0:
-                new.matrix[r][c] = 1
-                changed_cells.append({"row": r, "col": c, "from": 0, "to": 1})
-            elif mode == "carve" and old_val == 1:
-                new.matrix[r][c] = 0
-                changed_cells.append({"row": r, "col": c, "from": 1, "to": 0})
+            if multi_layer:
+                old_layer = new.pixel_layers[r][c]
+                if mode == "grow" and old_val == 0:
+                    new.matrix[r][c] = 1
+                    new.pixel_layers[r][c] = target_layer
+                    changed_cells.append({"row": r, "col": c, "from": 0, "to": 1,
+                                          "layer": target_layer})
+                elif mode == "carve" and old_val == 1 and old_layer == target_layer:
+                    new.matrix[r][c] = 0
+                    new.pixel_layers[r][c] = 0
+                    changed_cells.append({"row": r, "col": c, "from": 1, "to": 0,
+                                          "layer": target_layer})
+            else:
+                if mode == "grow" and old_val == 0:
+                    new.matrix[r][c] = 1
+                    changed_cells.append({"row": r, "col": c, "from": 0, "to": 1})
+                elif mode == "carve" and old_val == 1:
+                    new.matrix[r][c] = 0
+                    changed_cells.append({"row": r, "col": c, "from": 1, "to": 0})
 
     if not changed_cells:
         return None, None
@@ -289,6 +313,7 @@ def action_regional_density(
         cap_pair_min_dist, cap_pair_max_dist,
         require_axis_aligned=require_axis_aligned,
     )
+    layer_suffix = f" (layer {target_layer})" if multi_layer else ""
     info = {
         "action":       "regional_density",
         "mode":         mode,
@@ -296,7 +321,7 @@ def action_regional_density(
         "half_dims":    (h_half, w_half),
         "changed_cells": changed_cells,
         "description":  (
-            f"Regional density {mode}: {len(changed_cells)} pixel(s) changed "
+            f"Regional density {mode}{layer_suffix}: {len(changed_cells)} pixel(s) changed "
             f"around center ({r_c},{c_c}) with half-dims ({h_half},{w_half})"
         ),
     }
@@ -1662,6 +1687,7 @@ def _dispatch_action(
             require_axis_aligned=require_axis_aligned,
             grid_size=grid_size,
             connect_margin=connect_margin,
+            allowed_layers=allowed_layers,
         )
     return None, None
 

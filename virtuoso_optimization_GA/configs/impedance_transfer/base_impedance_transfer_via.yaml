@@ -128,7 +128,7 @@ ga:
   selection:       "tournament"
   tournament_size: 5
 
-  n_parallel: 4
+  n_parallel: 8
 
   n_regular_flip: 15
   cap_sigma: 0.0
@@ -158,8 +158,8 @@ ga:
   use_stopband_champions:   true
   n_stopband_champions:     1
   dynamic_state_assignment: false
-  p_champion_parent:        0.0
-  p_champion_parent2:       0.0
+  p_champion_parent:        0.3   # prob parent 1 drawn from sc_pool (state+stopband champs)
+  p_champion_parent2:       0.2   # prob parent 2 drawn from sc_pool (excl. same as p1)
 
   exploitation_n: 3
   exploitation_action_weights:

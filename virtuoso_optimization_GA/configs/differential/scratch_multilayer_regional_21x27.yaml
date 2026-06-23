@@ -1,0 +1,49 @@
+# ===========================================================================
+# Experiment — Differential Multi-Layer Filter, 21x27, flip_01 + regional_density
+#
+# Extends scratch_21x27.yaml (multi-layer, flip_01 only) by also enabling the
+# oval-shaped regional density grow/carve mutation in multi-layer mode.
+# In multi-layer mode regional_density first randomly selects a target layer
+# (M10=0, M9=1, double=2) and then applies the same grow/carve logic used for
+# single-layer — growing turns empty pixels into metal on that layer, carving
+# removes pixels that are already on that layer.
+# ===========================================================================
+
+_base_: ./scratch_21x27.yaml
+
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_differential_21x27_multilayer_regional"
+
+ga:
+  action_weights:
+    flip_01:             6.0
+    regional_density:    2.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  exploitation_action_weights:
+    flip_01:             3.0
+    regional_density:    1.0
+    modify_switch:       0.0
+    flip_inductor:       0.0
+    flip_inductor_value: 0.0
+    perturb_caps:        0.0
+    flip_switch_state:   0.0
+    add_cap_pair:        0.0
+    remove_cap_pair:     0.0
+    perturb_pair_caps:   0.0
+    flip_inductor_state: 0.0
+    flip_via:            0.0
+    perturb_inductor_caps: 0.0
+
+  region_max_half_height: 5
+  region_max_half_width:  5
+  region_min_half_size:   2

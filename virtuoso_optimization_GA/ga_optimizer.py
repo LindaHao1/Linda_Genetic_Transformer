@@ -893,46 +893,42 @@ class SwitchableFilterGA:
                 while len(offspring) < n_regular and attempts < max_tries:
                     attempts += 1
 
-                    # Biased parent 1: with p_champion_parent, pick from state champions.
-                    # Flatten all (si, rank) slots so every champion has equal selection odds.
-                    available_champ_slots = [
-                        (si, k)
-                        for si in range(n_specs)
-                        for k in range(len(state_champions[si]))
-                    ]
+                    # Biased parent 1: with p_champion_parent > 0, pick uniformly from sc_pool.
+                    # sc_pool is the unified champion pool (state champions + stopband champions),
+                    # so this gives every champion equal direct selection probability.
                     if (cfg.p_champion_parent > 0
-                            and available_champ_slots
+                            and sc_pool
                             and self.rng.random() < cfg.p_champion_parent):
-                        si_chosen, k_chosen = self.rng.choice(available_champ_slots)
-                        champ = state_champions[si_chosen][k_chosen]
-                        p1 = champ.copy()
+                        pool_idx = self.rng.randrange(len(sc_pool))
+                        p1 = sc_pool[pool_idx].copy()
                         p1_from_champion = True
-                        p1_cost_override = state_champion_total_costs[si_chosen][k_chosen]
-                        p1_sim_tag = state_champion_sim_tags[si_chosen][k_chosen]
+                        p1_cost_override = sc_pool_costs[pool_idx]
+                        p1_sim_tag = sc_pool_sim_tags[pool_idx]
                     else:
                         p1_idx = _tournament_select_idx(population, costs, cfg.tournament_size, self.rng)
                         p1 = population[p1_idx]
                         p1_from_champion = False
                         p1_cost_override = None
                         p1_sim_tag = population_sim_tags[p1_idx]
-                    # Biased parent 2: with p_champion_parent2, pick from state champions.
-                    # Exclude any slot whose sim_tag matches p1 to avoid same-parent crossover.
-                    available_champ_slots2 = [
-                        (si, k) for si, k in available_champ_slots
-                        if state_champion_sim_tags[si][k] != p1_sim_tag
+                    # Biased parent 2: with p_champion_parent2 > 0, pick from sc_pool.
+                    # Exclude any entry whose sim_tag matches p1 to avoid same-parent crossover.
+                    sc_pool_excl_p1 = [
+                        i for i in range(len(sc_pool))
+                        if sc_pool_sim_tags[i] != p1_sim_tag
                     ]
                     if (cfg.p_champion_parent2 > 0
-                            and available_champ_slots2
+                            and sc_pool_excl_p1
                             and self.rng.random() < cfg.p_champion_parent2):
-                        si_chosen2, k_chosen2 = self.rng.choice(available_champ_slots2)
-                        champ2 = state_champions[si_chosen2][k_chosen2]
-                        p2 = champ2.copy()
+                        pool_idx2 = self.rng.choice(sc_pool_excl_p1)
+                        p2 = sc_pool[pool_idx2].copy()
                         p2_from_champion = True
-                        p2_sim_tag = state_champion_sim_tags[si_chosen2][k_chosen2]
+                        p2_cost_override = sc_pool_costs[pool_idx2]
+                        p2_sim_tag = sc_pool_sim_tags[pool_idx2]
                     else:
                         p2_idx = _tournament_select_idx(population, costs, cfg.tournament_size, self.rng)
                         p2 = population[p2_idx]
                         p2_from_champion = False
+                        p2_cost_override = None
                         p2_sim_tag = population_sim_tags[p2_idx]
                     # If p2 still matches p1 (same individual selected by tournament), skip crossover
                     # for this attempt — cloning identical parents wastes evaluation budget.
@@ -1001,7 +997,7 @@ class SwitchableFilterGA:
                             p1_cost = p1_cost_override
                         else:
                             p1_cost = costs[p1_idx] if not p1_from_champion else 1e9
-                        p2_cost = state_champion_total_costs[si_chosen2][k_chosen2] if p2_from_champion else costs[p2_idx]
+                        p2_cost = p2_cost_override if p2_from_champion else costs[p2_idx]
                         child = (p1 if p1_cost <= p2_cost else p2).copy()
 
                     # Mutation

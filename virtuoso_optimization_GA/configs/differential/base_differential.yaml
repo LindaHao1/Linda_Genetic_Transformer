@@ -117,7 +117,7 @@ ga:
   selection:       "tournament"
   tournament_size: 5
 
-  n_parallel: 3
+  n_parallel: 6
 
   n_regular_flip: 15
   cap_sigma: 0.0

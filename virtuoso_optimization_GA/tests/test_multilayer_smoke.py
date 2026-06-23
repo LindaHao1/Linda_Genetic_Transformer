@@ -28,7 +28,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from virtuoso_optimization_SA.feasibility import generate_random_design
-from virtuoso_optimization_SA.actions import action_flip_01
+from virtuoso_optimization_SA.actions import action_flip_01, action_regional_density
 from virtuoso_optimization_GA.crossover import crossover_zig_zag
 from virtuoso_optimization_GA.crossover_block import crossover_block
 from virtuoso_optimization_GA.crossover_weighted_clustering import (
@@ -146,7 +146,46 @@ def main() -> int:
     check("skill defaults to 0 when layers None",
           set(build_skill_pixel_layers_list(full, None).strip("list()").split()) == {"0"})
 
-    print("[8] backward compatibility")
+    print("[8] action_regional_density multi-layer")
+    rng8 = random.Random(42)
+    ml_design = generate_random_design(rows=9, cols=8, n_switches=0, max_inductors=0,
+                                       n_states=1, cap_min=0.0, cap_max=0.0, rng=rng8,
+                                       p0=0.4, p1=0.6, allowed_layers=LAYERS)
+    rd_result, rd_info = None, None
+    for _ in range(100):
+        rd_result, rd_info = action_regional_density(ml_design, rng8,
+                                                     allowed_layers=LAYERS)
+        if rd_result is not None:
+            break
+    check("regional_density multi-layer succeeds", rd_result is not None)
+    if rd_result is not None:
+        target_layer = rd_info["changed_cells"][0]["layer"]
+        check("all changed cells carry the selected layer",
+              all(cell["layer"] == target_layer for cell in rd_info["changed_cells"]))
+        check("pixel_layers updated for changed cells",
+              all(
+                  (rd_result.pixel_layers[cell["row"]][cell["col"]] == target_layer
+                   if cell["to"] == 1
+                   else rd_result.pixel_layers[cell["row"]][cell["col"]] == 0)
+                  for cell in rd_info["changed_cells"]
+              ))
+        check("selected layer is from allowed_layers", target_layer in LAYERS)
+        check("description includes layer suffix", f"layer {target_layer}" in rd_info["description"])
+    # single-layer path unchanged
+    sl_design = generate_random_design(rows=9, cols=8, n_switches=0, max_inductors=0,
+                                       n_states=1, cap_min=0.0, cap_max=0.0, rng=rng8,
+                                       p0=0.4, p1=0.6)
+    sl_result, sl_info = None, None
+    for _ in range(100):
+        sl_result, sl_info = action_regional_density(sl_design, rng8)
+        if sl_result is not None:
+            break
+    check("regional_density single-layer still works", sl_result is not None)
+    if sl_result is not None:
+        check("single-layer changed_cells have no layer key",
+              "layer" not in sl_info["changed_cells"][0])
+
+    print("[9] backward compatibility")
     rng2 = random.Random(7)
     legacy = generate_random_design(rows=8, cols=7, n_switches=2, max_inductors=0,
                                     n_states=1, cap_min=0.0, cap_max=0.0, rng=rng2,

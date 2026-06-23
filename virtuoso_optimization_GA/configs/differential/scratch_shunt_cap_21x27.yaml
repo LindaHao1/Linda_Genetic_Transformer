@@ -19,8 +19,10 @@
 
 _base_: ./base_differential.yaml
 
-virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
-output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_multilayer_shunt_cap"
+# virtuoso_config: "/disk/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+# output_dir: "/disk/mcao53/Sim_engine_results/ga_differential_21x27_multilayer_shunt_cap"
+virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_differential.yaml"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_differential_21x27_multilayer_shunt_cap"
 
 layout:
   pixel_size: 12.5   # um — metal patch size must include .0 if integer
@@ -40,7 +42,7 @@ grid:
 
   # --- Shunt-capacitor pixels (type 5), co-optimized ---
   enable_shunt_caps:  true
-  max_shunt_caps:     16           # upper bound on simultaneous shunt caps (half design)
+  max_shunt_caps:     8           # upper bound on simultaneous shunt caps (half design)
   min_shunt_caps:     0
   shunt_cap_init_min: 0            # random init seeds 0..6 shunt caps per individual
   shunt_cap_init_max: 6

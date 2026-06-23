@@ -24,7 +24,7 @@
 _base_: ./base_impedance_transfer_via.yaml
 
 virtuoso_config: "/volumes/research-localdata/mcao53/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
-output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scartch_pixel_cap_shunt_cap_left_stop_increase"
+output_dir: "/volumes/research-localdata/mcao53/Sim_engine_results/ga_impedance_transfer_21x27_scartch_pixel_cap_shunt_cap_larger_pix_size"
 
 # ---------------------------------------------------------------------------
 # LAYOUT GEOMETRY — overrides the Virtuoso engine config's layout block.
