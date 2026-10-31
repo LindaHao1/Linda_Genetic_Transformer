@@ -1,300 +1,252 @@
-# RFIC_RL — Pixelated RF Filter Optimization
+# Linda Genetic Transformer
 
-End-to-end flow: Virtuoso layout → EMX EM extraction → Spectre S-parameter → Genetic Algorithm.
+Target-driven octagonal transformer synthesis using Cadence Virtuoso, EMX,
+and a genetic algorithm.
 
----
+The user supplies desired `Lp`, `Ls`, coupling `k`, `Qp`, `Qs`, an initial
+primary/secondary geometry, and legal geometry ranges. The program generates
+candidate layouts, extracts each candidate with EMX, calculates the lumped
+parameters from its differential four-port result, and searches for a geometry
+closer to the target.
 
-## Repository layout
+## Download
 
-```
-virtuoso_engine/          Virtuoso/EMX/Spectre simulation engine
-  config_base.yaml          shared base config (inherited by all mode configs)
-  config_impedance_transfer.yaml   impedance-transfer experiment settings
-  config_differential.yaml         differential-filter experiment settings
-  servers/
-    mars.yaml               server profile: paths + singularity wrapper
-    local.yaml              local (no wrapper)
-  templates/
-    pixelated_design_simple/
-      layout.il             SKILL layout generation script
-      emx.il                SKILL EMX extraction script  ← mesh & parallel here
-    differential_filter/
-      layout.il
+Clone the repository:
 
-virtuoso_optimization_GA/ Genetic algorithm
-  run_ga.py               CLI entry point
-  ga_optimizer.py         SwitchableFilterGA class
-  configs/
-    differential/
-      base_differential.yaml   shared GA parameters for differential mode
-      scratch_21x27.yaml       experiment: metal-only scratch
-      scratch_shunt_cap_21x27.yaml
-      ...
-    impedance_transfer/
-      base_impedance_transfer.yaml
-      scratch_pixel_cap_shunt_cap_21x27.yaml
-      finetune_gen290_cap_shunt_21x27.yaml
-      ...
-
-simulation_engine/        Standalone EMX runner (not used by GA)
+```bash
+git clone https://github.com/LindaHao1/Linda_Genetic_Transformer.git
+cd Linda_Genetic_Transformer
 ```
 
----
+Update an existing clone:
 
-## Configuration hierarchy
-
-Every config uses `_base_:` inheritance and is deep-merged top-to-bottom:
-
-```
-config_base.yaml          (shared defaults: lib name, layout params, sim params)
-  └─ config_differential.yaml / config_impedance_transfer.yaml
-       └─ servers/mars.yaml   (merged automatically when RFIC_SERVER=mars)
+```bash
+git pull origin main
 ```
 
-The GA experiment config adds a third layer on top, overriding only what changes:
+Without Git, open
+<https://github.com/LindaHao1/Linda_Genetic_Transformer>, select
+**Code → Download ZIP**, and extract it. Direct ZIP:
 
+<https://github.com/LindaHao1/Linda_Genetic_Transformer/archive/refs/heads/main.zip>
+
+## Requirements
+
+- Python 3 with NumPy, PyYAML, and the dependencies imported by RFIC_RL.
+- Licensed Cadence Virtuoso and Cadence EMX installations.
+- A writable Virtuoso library attached to the intended PDK.
+- The licensed EMX `.proc` file for the intended metal stack.
+- X11 or Xvfb if required by the local Virtuoso installation.
+
+This repository intentionally excludes proprietary PDKs and process files.
+Every user must provide their own licensed files.
+
+## Configure Virtuoso and EMX
+
+Copy the example:
+
+```bash
+cp \
+  virtuoso_optimization_GA/configs/transformer/transformer_synthesis_example.yaml \
+  my_transformer_site.yaml
 ```
-ga experiment config      (output_dir, grid size, GA weights, finetune path …)
-  └─ virtuoso_config:     points to config_differential.yaml or config_impedance_transfer.yaml
-```
 
-**Key parameters and where to set them:**
+Edit `my_transformer_site.yaml`. Replace all `/path/to/...` values and confirm
+the PDK layers, geometry ranges, and target frequency:
 
-| Parameter | File | Key |
-|---|---|---|
-| EMX mesh edge length | `templates/pixelated_design_simple/emx.il` | `-e <val>` |
-| EMX mesh thickness | `templates/pixelated_design_simple/emx.il` | `-t <val>` |
-| EMX 3D metals | `templates/pixelated_design_simple/emx.il` | `--3d=*` (all) or `--3d=-*` (none) |
-| EMX threads per job | `config_base.yaml` → `simulation.emx_parallel_threads` | integer |
-| Concurrent GA workers | GA experiment config or `base_differential.yaml` → `ga.n_parallel` | integer |
-| Output directory | GA experiment config → `output_dir` | path string |
-| Freq sweep | `config_base.yaml` → `simulation.emx_freq_start/stop/step` | Hz |
-
-### Example: change EMX mesh and parallel workers
-
-In `templates/pixelated_design_simple/emx.il` (line ~74):
-```
-... --quasistatic -e 1.5 -t 1.5 -v 0.5 --3d=* ...
-                   ^^^   ^^^
-                   edge  thickness (um)
-```
-
-In `configs/differential/base_differential.yaml`:
 ```yaml
-ga:
-  n_parallel: 6     # 6 concurrent Virtuoso+EMX workers
-```
+project:
+  lib_name: transformer_synthesis
+  parent_output_dir: ./transformer_runs
+  virtuoso_dir: /path/to/cadence/project
+  virtuoso_binary: /path/to/virtuoso-or-wrapper
 
-In `config_base.yaml`:
-```yaml
+transformer:
+  pri_layer: AP
+  sec_layer: M9
+  gnd_layer: M5
+
+geometry_range:
+  pri_inner_r: {min: 35.0, max: 100.0}
+  pri_width:   {min: 5.0,  max: 18.0}
+  sec_inner_r: {min: 25.0, max: 100.0}
+  sec_width:   {min: 5.0,  max: 18.0}
+
 simulation:
-  emx_parallel_threads: 8    # threads inside each EMX job
+  target_freq: 15e9
+
+paths:
+  proc_file: /path/to/licensed/foundry/process.proc
+  emx_binary: /path/to/emx
 ```
 
----
+Layer names and geometry limits must be valid for the selected PDK. The
+bundled `transformer_layout.il` and `transformer_emx.il` templates are used by
+default.
 
-## Server profiles
+## Terminal usage
 
-The mars server profile (`servers/mars.yaml`) provides:
-- Correct `virtuoso_dir` path
-- Correct `proc_file`, `tsmc_models`, `emx_binary` paths
-- Singularity container command wrapping Virtuoso and EMX
-
-**Always set `RFIC_SERVER=mars` when running on this machine:**
+Check the interface:
 
 ```bash
-export RFIC_SERVER=mars
-# or prefix every command:
-RFIC_SERVER=mars conda run -n rfic python3 ...
+python virtuoso_optimization_GA/transformer_synthesis.py --help
 ```
 
-Without it, the engine falls back to `server.active: local` in `config_base.yaml`
-and uses stale `/disk/<username>/` paths that do not exist.
-
----
-
-## Parallel engine architecture
-
-```
-GeneticAlgorithm
-  └─ ParallelVirtuosoEngine (n_parallel workers)
-       ├─ Worker 0  →  VirtuosoPixelEngine  →  PersistentVirtuosoRunner (Virtuoso process)
-       │                                              └─ EMX subprocess
-       ├─ Worker 1  →  VirtuosoPixelEngine  →  PersistentVirtuosoRunner
-       │                                              └─ EMX subprocess
-       └─ Worker N  ...
-```
-
-Each worker has its own:
-- Virtuoso library: `pySim_w<id>`
-- Output subfolder: `<output_dir>/sims/gen<N>_ind<M>/worker_<id>/`
-- Virtuoso session (persistent across generations — starts once, reused)
-- EMX child process (spawned per simulation)
-
----
-
-## Step 1 — Test a single simulation
-
-Before running the GA, verify the full Virtuoso → EMX pipeline with one design:
-
-```python
-# test_single_sim.py
-import os, sys
-os.environ["RFIC_SERVER"] = "mars"
-sys.path.insert(0, "/volumes/research-localdata/<username>/RFIC_RL")
-
-from virtuoso_engine.engine import VirtuosoPixelEngine
-
-engine = VirtuosoPixelEngine(
-    "virtuoso_engine/config_impedance_transfer.yaml",
-    worker_id=0,
-)
-
-result = engine.run({
-    "mode": "pixelated_design_simple",
-    "project": {
-        "parent_output_dir": "/volumes/research-localdata/<username>/Sim_engine_results/test_single",
-    },
-    "pixelated": {
-        "pixel_state_matrix": [
-            [0, 1, 1, 0],
-            [1, 1, 1, 1],
-            [0, 1, 1, 0],
-        ],
-        "state_list": [[]],
-        "cap_values": [],
-        "feedline": {
-            "feedline_row": 1,
-            "feedline_width": 10.2,
-            "feedline_padding": 10.0,
-            "feedline_width_in": 20,
-            "feedline_width_out": 10.2,
-        },
-    },
-    "layout": {"pixel_size": 12.5, "grid_size": 10.0},
-})
-
-engine.close()
-print("Layout OK:", result.layout_result.success)
-print("EMX OK:   ", result.sim_result.success)
-print("S-params: ", result.s_param_files)
-```
-
-Run it:
-```bash
-cd /volumes/research-localdata/<username>/RFIC_RL
-RFIC_SERVER=mars conda run -n rfic python3 test_single_sim.py
-```
-
-For the **differential** mode, swap the config and mode:
-```python
-engine = VirtuosoPixelEngine("virtuoso_engine/config_differential.yaml", worker_id=0)
-result = engine.run({
-    "mode": "differential_filter",
-    "project": {"parent_output_dir": "..."},
-    "pixelated": { ... },   # half design (engine mirrors it)
-    "layout": {"pixel_size": 12.5, "grid_size": 10.0},
-})
-```
-
----
-
-## Step 2 — Run the GA
+The example below targets `Lp=832.8 pH`, `Ls=620.4 pH`, `k=0.487`, and
+`Qp=Qs=20`. Inductances use henries and geometry uses micrometres.
 
 ```bash
-cd /volumes/research-localdata/<username>/RFIC_RL
-RFIC_SERVER=mars conda run -n rfic python3 \
-    virtuoso_optimization_GA/run_ga.py \
-    virtuoso_optimization_GA/configs/differential/scratch_21x27.yaml
+python virtuoso_optimization_GA/transformer_synthesis.py \
+  --base-config my_transformer_site.yaml \
+  --output-config transformer_job.yaml \
+  --run-name example_transformer \
+  --lp 8.328e-10 \
+  --ls 6.204e-10 \
+  --k 0.487 \
+  --qp 20 \
+  --qs 20 \
+  --pri-inner-r 55 \
+  --pri-width 10 \
+  --sec-inner-r 40 \
+  --sec-width 10 \
+  --population 12 \
+  --generations 20 \
+  --workers 2 \
+  --run
 ```
 
-Log goes to stdout. Redirect to a file and background it for long runs:
-```bash
-RFIC_SERVER=mars conda run -n rfic python3 \
-    virtuoso_optimization_GA/run_ga.py \
-    virtuoso_optimization_GA/configs/differential/scratch_shunt_cap_21x27.yaml \
-    > /tmp/exp_shunt_cap.log 2>&1 &
-
-echo "GA PID: $!"   # save this
-```
-
-**Output structure** (written to `output_dir` in the experiment config):
-```
-ga_<experiment>/
-  ga_config_snapshot.yaml       copy of the GA config used
-  virtuoso_config_snapshot.yaml copy of the engine config used
-  ga_progress.json              per-generation stats
-  ga_progress.png               cost/diversity plot
-  best_design.json              best design found so far
-  population/gen<N>.json        full population snapshots
-  sims/gen<N>_ind<M>/worker_<id>/   per-simulation output
-    config.yaml                 full merged config (use as finetune seed)
-    emx_results/*.s<N>p         S-parameter files
-```
-
-### Fine-tuning from an existing design
-
-Set `ga.finetune_design_path` in your experiment config to a `config.yaml`
-produced by a previous run, then zero out the actions you want to freeze:
-
-```yaml
-# configs/impedance_transfer/finetune_gen290_cap_shunt_21x27.yaml
-_base_: ./base_impedance_transfer_via.yaml
-
-virtuoso_config: "/volumes/research-localdata/<username>/RFIC_RL/virtuoso_engine/config_impedance_transfer.yaml"
-output_dir: "/volumes/research-localdata/<username>/Sim_engine_results/ga_my_finetune"
-
-grid:
-  rows: 21
-  cols: 27
-  enable_cap_pairs: true
-  enable_shunt_caps: true
-
-ga:
-  n_immigrants: 0               # keep metal frozen — no random immigrants
-  action_weights:
-    flip_01:          0.0       # metal frozen
-    add_cap_pair:     4.0
-    remove_cap_pair:  3.0
-    perturb_pair_caps: 6.0
-    modify_shunt_cap: 4.0
-    perturb_shunt_caps: 6.0
-  finetune_design_path: "/volumes/research-localdata/<username>/Sim_engine_results/ga_prev_run/sims/gen290_ind1/worker_7/.../config.yaml"
-  finetune_expand:
-    enabled: true
-    p_completely_random: 0.0
-    init_max_mutations: 6
-    zero_pad_first: true
-    n_immigrants_expanded: 0
-```
-
----
-
-## Killing a GA run cleanly
-
-The GA spawns a tree: **Python GA → Virtuoso runner → EMX child processes**.
-Killing the Python PID alone leaves EMX jobs running as orphans.
+To review the generated job before running EMX, omit `--run`. Start it later:
 
 ```bash
-# 1. Kill the GA Python process
-kill -9 <GA_PID>
-
-# 2. Kill orphaned EMX jobs for that experiment
-ps aux | grep "Sim_engine_results/ga_<experiment_name>" | grep -v grep \
-  | awk '{print $2}' | xargs -r kill -9
-
-# 3. Delete the partial output directory before relaunching
-rm -rf /volumes/research-localdata/<username>/Sim_engine_results/ga_<experiment_name>/
+python virtuoso_optimization_GA/run_ga.py transformer_job.yaml
 ```
 
-To find all running GA processes:
+### Recommended smoke test
+
+Verify the entire Virtuoso-to-EMX path before starting a long search:
+
 ```bash
-ps aux | grep run_ga.py | grep -v grep
+python virtuoso_optimization_GA/transformer_synthesis.py \
+  --base-config my_transformer_site.yaml \
+  --output-config transformer_smoke_test.yaml \
+  --run-name transformer_smoke_test \
+  --lp 8.328e-10 --ls 6.204e-10 --k 0.487 \
+  --qp 20 --qs 20 \
+  --pri-inner-r 55 --pri-width 10 \
+  --sec-inner-r 40 --sec-width 10 \
+  --population 4 --generations 1 --workers 1 \
+  --run
 ```
 
-To find all running EMX processes:
+Confirm that Virtuoso creates the layout and EMX produces an `.s4p` file before
+increasing the population, generations, mesh density, or worker count.
+
+## Results
+
+```text
+transformer_best_design.json
+transformer_ga_progress.csv
+transformer_ga_progress.json
+transformer_engine_config.yaml
+transformer_ga_config_snapshot.yaml
+transformer_parallel_engine.log
+sims/
+  .../transformer_config.yaml
+  .../transformer_generated_layout.il
+  .../transformer_generated_emx.il
+  .../*.gds
+  .../*.s4p
+  .../*_emx.log
+```
+
+`transformer_best_design.json` contains the best geometry, extracted lumped
+parameters, target values, cost, and percentage errors.
+
+The differential extraction uses:
+
+```text
+Zp = Z11 - Z12 - Z21 + Z22
+Zs = Z33 - Z34 - Z43 + Z44
+Lp = imag(Zp)/(2*pi*f)
+Ls = imag(Zs)/(2*pi*f)
+k  = abs(M)/sqrt(Lp*Ls)
+Qp = imag(Zp)/real(Zp)
+Qs = imag(Zs)/real(Zs)
+```
+
+## Use with Codex
+
+If Codex is already installed and signed in, start it from the repository so
+it can inspect the code and local simulator logs:
+
 ```bash
-ps aux | grep "/emx/bin" | grep -v grep
+cd Linda_Genetic_Transformer
+codex
 ```
 
-> **Important:** The commands above only kill processes owned by the current user (`ps aux` filters by the user running the command). They will not affect EMX jobs belonging to other users on the same machine. Do not use `sudo` or `pkill` without a user filter — other researchers may be running their own EMX jobs on shared compute nodes.
+Official Codex documentation: <https://developers.openai.com/codex/>.
+
+### Prompt 1: configure the local installation
+
+```text
+Inspect this repository and configure the transformer synthesis flow. Find the
+installed Cadence Virtuoso and EMX executables and my licensed EMX process
+file. Copy transformer_synthesis_example.yaml to my_transformer_site.yaml and
+update only paths and settings verified on this machine. Do not invent a PDK,
+process file, layer name, executable, component value, or license. Explain each
+change. Run only CLI help and configuration checks; do not start EMX yet.
+```
+
+### Prompt 2: create a synthesis job
+
+```text
+Use my_transformer_site.yaml to create transformer_job.yaml with these targets:
+Lp=<H>, Ls=<H>, k=<value>, Qp=<value>, Qs=<value>. Use this initial geometry in
+micrometres: primary inner radius=<value>, primary width=<value>, secondary
+inner radius=<value>, secondary width=<value>. Do not use --run yet. Validate
+that the initial geometry is inside geometry_range and show the exact command.
+```
+
+### Prompt 3: run and verify a smoke test
+
+```text
+Review transformer_job.yaml and run a smoke test with population 4,
+1 generation, and 1 worker. Monitor it through completion. Verify that
+Virtuoso generated a transformer layout and EMX produced a valid four-port S4P
+file. Report actual log errors and do not fabricate lumped results.
+```
+
+### Prompt 4: run and summarize the full optimization
+
+```text
+The smoke test passed. Run the full optimization from transformer_job.yaml and
+monitor it through completion. Summarize transformer_best_design.json and
+transformer_ga_progress.csv: best geometry, Lp, Ls, k, Qp, Qs, percentage
+errors, and cost. Give paths to the GDS, S4P, and EMX log. Do not change targets
+or bounds without my approval.
+```
+
+Depending on local Codex settings, launching licensed tools, installing
+software, or changing external systems may require user approval.
+
+## Troubleshooting
+
+- **Virtuoso executable not found:** load the Cadence environment or correct
+  `project.virtuoso_binary`.
+- **Process file not found:** correct `paths.proc_file`; use only the licensed
+  process file for the selected PDK and metal stack.
+- **No S4P file:** inspect the EMX log, P1–P4/GND mapping, pin connectivity,
+  layer names, GDS export, and process stack.
+- **Every candidate has a large penalty:** inspect
+  `transformer_parallel_engine.log` and the individual files under `sims/`.
+- **License or memory failures:** reduce workers, population, EMX threads, or
+  mesh density.
+
+## Validation before fabrication
+
+An optimized geometry is not automatically tape-out ready. Perform the required
+DRC, LVS, EM convergence checks, process-corner analysis, and circuit-level
+validation before fabrication.
+
+More implementation detail is available in
+[`virtuoso_optimization_GA/TRANSFORMER_SYNTHESIS.md`](virtuoso_optimization_GA/TRANSFORMER_SYNTHESIS.md).
