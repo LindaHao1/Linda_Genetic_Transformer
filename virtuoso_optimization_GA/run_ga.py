@@ -16,6 +16,7 @@ the config.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -25,11 +26,12 @@ if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
 
 from virtuoso_optimization_GA.ga_optimizer import run_ga  # noqa: E402
+from virtuoso_engine.config_loader import load_config  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Genetic Algorithm optimiser for a pixelated switchable RF filter.",
+        description="Genetic Algorithm optimiser for RF layouts, including transformers.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -64,6 +66,30 @@ def main() -> None:
     print("=" * 70)
     print(f"Best cost : {best_cost:.4f}")
     print(f"Best design:\n{best_design}")
+
+    cfg = load_config(config_path)
+    if cfg.get("mode") == "oct_transformer":
+        output_dir = Path(cfg["project"]["parent_output_dir"]) / cfg.get("outputs", {}).get("run_name", "oct_transformer_ga")
+        best_path = output_dir / "best_design.json"
+        if best_path.exists():
+            best = json.loads(best_path.read_text())
+            metrics = best.get("metrics") or {}
+            if metrics:
+                print("Best lumped parameters:")
+                print(f"  Lp = {metrics.get('Lp'):.6e} H")
+                print(f"  Ls = {metrics.get('Ls'):.6e} H")
+                print(f"  k  = {metrics.get('k'):.6f}")
+                print(f"  Qp = {metrics.get('Qp'):.4f}")
+                print(f"  Qs = {metrics.get('Qs'):.4f}")
+                err = best.get("error_pct") or {}
+                if err:
+                    print("Best percentage errors:")
+                    print(f"  Lp = {err.get('Lp_err_pct'):+.2f}%")
+                    print(f"  Ls = {err.get('Ls_err_pct'):+.2f}%")
+                    print(f"  k  = {err.get('k_err_pct'):+.2f}%")
+                    print(f"  Qp = {err.get('Qp_err_pct'):+.2f}%")
+                    print(f"  Qs = {err.get('Qs_err_pct'):+.2f}%")
+                print(f"  target_freq = {best.get('target_freq'):.6e} Hz")
 
 
 if __name__ == "__main__":

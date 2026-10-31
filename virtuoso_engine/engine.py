@@ -133,6 +133,10 @@ _MODE_TEMPLATES: Dict[str, dict] = {
     "full_layout": {
         "layout": "full_layout/layout.il",
     },
+        "oct_transformer": {
+        "layout": "oct_transformer/layout.il",
+        "emx":    "oct_transformer/emx.il",
+    },
 }
 
 
@@ -198,6 +202,153 @@ class VirtuosoPixelEngine:
         with VirtuosoPixelEngine("config.yaml") as engine:
             results = engine.sweep(...)
     """
+        # ------------------------------------------------------------------
+    # oct_transformer renderers
+    # ------------------------------------------------------------------
+
+    def _render_oct_transformer_layout(
+        self,
+        cfg: dict,
+        cell_name: str,
+        output_path: Path,
+    ) -> None:
+        """
+        Render SKILL layout file for the Python-controlled octagonal transformer.
+
+        This reads the user template:
+            transformer.template_file = .../pysim/transformer_py
+
+        and replaces placeholders like:
+            {{LIB_NAME}}, {{CELL_NAME}},
+            {{PRI_INNER_R}}, {{PRI_WIDTH}},
+            {{SEC_INNER_R}}, {{SEC_WIDTH}}
+        """
+        tr = cfg["transformer"]
+
+        template_value = tr.get("template_file")
+        template_file = (
+            Path(template_value).expanduser()
+            if template_value
+            else _TEMPLATES_DIR / "carrier_transformer/layout.il"
+        )
+        if not template_file.exists():
+            raise FileNotFoundError(f"Transformer SKILL template not found: {template_file}")
+
+        template_text = template_file.read_text()
+
+        pri_width = float(tr["pri_width"])
+        sec_width = float(tr["sec_width"])
+        pri_inner_r = float(tr["pri_inner_r"])
+
+        pin_yoffset = tr.get("pin_yoffset")
+        if pin_yoffset is None:
+            pin_yoffset = float(tr.get("pin_yoffset_factor", 0.6)) * max(pri_width, sec_width)
+
+        gnd_half_size = tr.get("gnd_half_size")
+        if gnd_half_size is None:
+            gnd_half_size = float(tr.get("gnd_half_size_factor", 1.2)) * pri_inner_r
+
+        gnd_width = tr.get("gnd_width")
+        if gnd_width is None:
+            gnd_width = float(tr.get("gnd_width_factor", 1.0)) * pri_width
+
+        replacements = {
+            "{{LIB_NAME}}": cfg["project"]["lib_name"],
+            "{{CELL_NAME}}": cell_name,
+            "{{PRI_LAYER}}": tr.get("pri_layer", "M3"),
+            "{{SEC_LAYER}}": tr.get("sec_layer", "M4"),
+            "{{GND_LAYER}}": tr.get("gnd_layer", "M1"),
+
+            "{{PRI_INNER_R}}": f'{float(tr["pri_inner_r"]):.6f}',
+            "{{PRI_WIDTH}}": f'{float(tr["pri_width"]):.6f}',
+            "{{SEC_INNER_R}}": f'{float(tr["sec_inner_r"]):.6f}',
+            "{{SEC_WIDTH}}": f'{float(tr["sec_width"]):.6f}',
+
+            "{{PIN_SIZE}}": f'{float(tr.get("pin_size", 3.0)):.6f}',
+            "{{PIN_YOFFSET}}": f'{float(pin_yoffset):.6f}',
+            "{{GND_HALF_SIZE}}": f'{float(gnd_half_size):.6f}',
+            "{{GND_WIDTH}}": f'{float(gnd_width):.6f}',
+        }
+
+        rendered = template_text
+        for old, new in replacements.items():
+            rendered = rendered.replace(old, new)
+
+        # AP/top-metal ports can fail EMX connectivity if only the "pin"
+        # purpose is present at the port box. Add matching drawing metal under
+        # P3/P4 so the secondary port labels have a real conductor to contact.
+        rendered = rendered.replace(
+            "  fig = dbCreateRect(cv pinLayerSec pinBox)\n"
+            "  dbCreatePin(netP3 fig)\n",
+            "  dbCreateRect(cv secLayer pinBox)\n"
+            "  fig = dbCreateRect(cv pinLayerSec pinBox)\n"
+            "  dbCreatePin(netP3 fig)\n",
+            1,
+        )
+        rendered = rendered.replace(
+            "  fig = dbCreateRect(cv pinLayerSec pinBox)\n"
+            "  dbCreatePin(netP4 fig)\n",
+            "  dbCreateRect(cv secLayer pinBox)\n"
+            "  fig = dbCreateRect(cv pinLayerSec pinBox)\n"
+            "  dbCreatePin(netP4 fig)\n",
+            1,
+        )
+
+        output_path.write_text(rendered)
+
+    def _render_oct_transformer_emx(
+        self,
+        cfg: dict,
+        cell_name: str,
+        emx_dir: Path,
+        output_path: Path,
+    ) -> None:
+        """
+        Render EMX-only SKILL script for the octagonal transformer.
+
+        This uses:
+            P1 P2 P3 P4 as signal ports
+            GND as local ground
+        """
+        template_text = (_TEMPLATES_DIR / "oct_transformer/emx.il").read_text()
+
+        sim = cfg["simulation"]
+        p = cfg["paths"]
+
+        signals = sim.get("signals", ["P1", "P2", "P3", "P4"])
+        grounds = sim.get("grounds", ["GND"])
+
+        emx_port_flags = ""
+        for sig in signals:
+            emx_port_flags += f" -p {sig}"
+
+# EMX command-line -g is a flag, not "-g GND".
+# Do not append the ground name, otherwise EMX treats "GND" as a frequency.
+        if grounds:
+            emx_port_flags += " -g"
+
+        rendered = string.Template(template_text).substitute(
+            LIB_NAME=cfg["project"]["lib_name"],
+            CELL_NAME=cell_name,
+            DEST_FOLDER=str(emx_dir),
+            EMX_BINARY=p["emx_binary"],
+            PROC_FILE=p["proc_file"],
+
+            EMX_FREQ_START=sim.get("emx_freq_start", "0"),
+            EMX_FREQ_STOP=sim.get("emx_freq_stop", "60e9"),
+            EMX_FREQ_STEP=sim.get("emx_freq_step", "5e8"),
+            EMX_PARALLEL=sim.get("emx_parallel_threads", 8),
+
+            EMX_EDGE_MESH=sim.get("emx_edge_mesh", 0.2),
+            EMX_THICKNESS=sim.get("emx_thickness", 1.0),
+            EMX_VIA_MERGE=sim.get("emx_via_merge", 0.5),
+            EMX_3D_METALS=sim.get("emx_3d_metals", "*"),
+            S_PARAM_SUFFIX=sim.get("sparam_suffix", ""),
+
+            EMX_PORT_FLAGS=emx_port_flags,
+        )
+
+        output_path.write_text(rendered)
 
     def __init__(
         self,
@@ -468,6 +619,7 @@ class VirtuosoPixelEngine:
             self._runner = PersistentVirtuosoRunner(
                 virtuoso_dir=proj["virtuoso_dir"],
                 display=display,
+                virtuoso_binary=proj.get("virtuoso_binary", "virtuoso"),
                 session_log=session_log,
                 label=runner_label,
                 server=cfg.get("server"),
@@ -497,6 +649,8 @@ class VirtuosoPixelEngine:
             self._render_differential_layout(cfg, cell_name, output_path)
         elif mode == "full_layout":
             self._render_full_layout(cfg, cell_name, output_path)
+        elif mode == "oct_transformer":
+            self._render_oct_transformer_layout(cfg, cell_name, output_path)
         else:
             raise ValueError(f"No layout renderer for mode {mode!r}")
 
@@ -517,6 +671,8 @@ class VirtuosoPixelEngine:
             self._render_pixelated_simple_emx(cfg, cell_name, emx_dir, output_path)
         elif mode == "differential_filter":
             self._render_differential_emx(cfg, cell_name, emx_dir, output_path)
+        elif mode == "oct_transformer":
+            self._render_oct_transformer_emx(cfg, cell_name, emx_dir, output_path)
         elif mode == "full_layout":
             # EMX + Spectre not yet implemented for full_layout — emit a no-op script.
             output_path.write_text(
@@ -547,6 +703,13 @@ class VirtuosoPixelEngine:
             return self._run_pixelated_simple_states(cfg, cell_name, emx_dir)
         if mode == "differential_filter":
             return self._run_differential_states(cfg, cell_name, emx_dir)
+        if mode == "oct_transformer":
+            suffix = cfg.get("simulation", {}).get("sparam_suffix", "")
+            s4p = emx_dir / f"{cell_name}{suffix}.s4p"
+            if s4p.exists():
+                return [s4p]
+            print(f"  [engine] WARNING: transformer .s4p not found: {s4p}")
+            return []
         return []
 
     # ------------------------------------------------------------------
@@ -1384,6 +1547,22 @@ def _make_cell_name(cfg: dict) -> str:
     if mode == "full_layout":
         return cfg["full_layout"]["cell_name"] + suffix
 
+    if mode == "oct_transformer":
+        tr = cfg["transformer"]
+
+        # If test_design.cell_name exists, use it.
+        td = cfg.get("test_design", {})
+        if td.get("enabled", False) and td.get("cell_name"):
+            return td["cell_name"] + suffix
+
+        prefix = tr.get("cell_name_prefix", "oct_transformer")
+        return (
+            f"{prefix}"
+            f"_priR{_cellname_safe(tr['pri_inner_r'])}"
+            f"_priW{_cellname_safe(tr['pri_width'])}"
+            f"_secR{_cellname_safe(tr['sec_inner_r'])}"
+            f"_secW{_cellname_safe(tr['sec_width'])}"
+        ) + suffix
     # Default: layout_pixel
     n = cfg["nmos"]
     m = cfg["mim_cap"]
@@ -1395,6 +1574,7 @@ def _make_cell_name(cfg: dict) -> str:
         f"_miml{m['length']}"
         f"_mimw{m['width']}"
     ) + suffix
+
 
 
 def _get_run_labels(cfg: dict) -> list:
@@ -1416,6 +1596,9 @@ def _get_run_labels(cfg: dict) -> list:
         return ["state0"]
     if mode == "full_layout":
         return []  # No Spectre states in layout-only mode
+    if mode == "oct_transformer":
+        return ["s4p"]
+
     return cfg["simulation"]["control_voltages"]
 
 
@@ -1439,6 +1622,9 @@ def _make_plots(
     cfg: Optional[Dict[str, Any]] = None,
 ) -> dict:
     """Dispatch to the appropriate plotter based on mode."""
+    if mode == "oct_transformer":
+        # Transformer EMX produces an .s4p file. Skip old s1p/s2p plotting here.
+        return {}
     if mode == "differential_filter":
         # S2P plot (S21/S11); overlay the full mirrored matrix for context.
         matrix = None
@@ -1514,7 +1700,8 @@ def _apply_worker_config(cfg: dict, worker_id: int) -> dict:
     """
     cfg = copy.deepcopy(cfg)
     proj = cfg["project"]
-    proj["lib_name"]           = f"{proj['lib_name']}_w{worker_id}"
+    if cfg.get("mode") != "oct_transformer":
+        proj["lib_name"]       = f"{proj['lib_name']}_w{worker_id}"
     proj["parent_output_dir"]  = f"{proj['parent_output_dir']}/worker_{worker_id}"
     cfg["_worker_id"]          = worker_id
     return cfg

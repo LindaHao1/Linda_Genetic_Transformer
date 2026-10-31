@@ -1,0 +1,82 @@
+# Copy this file and replace every /path/to/... value for your installation.
+mode: oct_transformer
+
+project:
+  lib_name: transformer_synthesis
+  parent_output_dir: ./transformer_runs
+  virtuoso_dir: /path/to/cadence/project
+  virtuoso_binary: virtuoso
+  display: ":99"
+
+transformer:
+  # template_file is optional; the bundled carrier_transformer/layout.il is used by default.
+  cell_name_prefix: synthesized_xfmr
+  generated_skill_dir: ./transformer_runs/generated
+  pri_layer: AP
+  sec_layer: M9
+  gnd_layer: M5
+  pri_inner_r: 55.0
+  pri_width: 10.0
+  sec_inner_r: 40.0
+  sec_width: 10.0
+  pin_size: 3.0
+  pin_yoffset_factor: 0.6
+  gnd_half_size_factor: 1.2
+  gnd_width_factor: 1.0
+
+geometry_range:
+  pri_inner_r: {min: 35.0, max: 100.0}
+  pri_width: {min: 5.0, max: 18.0}
+  sec_inner_r: {min: 25.0, max: 100.0}
+  sec_width: {min: 5.0, max: 18.0}
+
+target:
+  Lp: 8.328e-10
+  Ls: 6.204e-10
+  k: 0.487
+  Qp: 20.0
+  Qs: 20.0
+
+cost_weights: {Lp: 5.0, Ls: 5.0, k: 5.0, Qp: 3.0, Qs: 3.0}
+
+simulation:
+  target_freq: 15e9
+  emx_freq_start: "0"
+  emx_freq_stop: "120e9"
+  emx_freq_step: "5e8"
+  emx_edge_mesh: 0.5
+  emx_thickness: 0.5
+  emx_via_merge: 0.5
+  emx_3d_metals: "*"
+  emx_parallel_threads: 8
+  sparam_suffix: "_xfmr"
+  signals: [P1, P2, P3, P4]
+  grounds: [GND]
+  touchstone_format: s4p
+
+optimizer:
+  type: genetic_algorithm
+  population_size: 12
+  generations: 20
+  elite_fraction: 0.2
+  tournament_size: 3
+  mutation_rate: 0.25
+  mutation_sigma_fraction: 0.08
+  seed_population_sigma_fraction: 0.20
+  crossover_rate: 0.70
+  random_seed: 1
+  n_parallel: 1
+  q_no_penalty_above_target: true
+  seed_design:
+    pri_inner_r: 55.0
+    pri_width: 10.0
+    sec_inner_r: 40.0
+    sec_width: 10.0
+
+parallel: {num_workers: 1}
+outputs: {run_name: transformer_synthesis}
+test_design: {enabled: false}
+
+paths:
+  proc_file: /path/to/foundry/process.proc
+  emx_binary: /path/to/emx

@@ -204,6 +204,7 @@ class PersistentVirtuosoRunner:
         self,
         virtuoso_dir: str | Path,
         display: str = ":99",
+        virtuoso_binary: str = "virtuoso",
         session_log: Optional[Path] = None,
         default_timeout: int = 3600,
         max_restarts: int = 3,
@@ -212,6 +213,7 @@ class PersistentVirtuosoRunner:
     ) -> None:
         self.virtuoso_dir    = Path(virtuoso_dir)
         self.display         = display
+        self.virtuoso_binary = virtuoso_binary
         self.default_timeout = default_timeout
         self.max_restarts    = max_restarts
         self._label          = label
@@ -267,7 +269,7 @@ class PersistentVirtuosoRunner:
         env["DISPLAY"] = self.display
 
         cmd = [
-            "virtuoso",
+            self.virtuoso_binary,
             "-log",    str(self._session_log),
             "-replay", str(server_il),
         ]
@@ -280,14 +282,21 @@ class PersistentVirtuosoRunner:
         if self._console_fh is not None:          # stale handle from a restart
             self._console_fh.close()
         self._console_fh = open(self._console_log, "w", encoding="utf-8")
-        self._proc = subprocess.Popen(
-            cmd,
-            cwd=str(self.virtuoso_dir),
-            stdin=subprocess.DEVNULL,
-            stdout=self._console_fh,
-            stderr=subprocess.STDOUT,
-            env=env,
-        )
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                cwd=str(self.virtuoso_dir),
+                stdin=subprocess.DEVNULL,
+                stdout=self._console_fh,
+                stderr=subprocess.STDOUT,
+                env=env,
+            )
+        except FileNotFoundError as exc:
+            raise FileNotFoundError(
+                f"Virtuoso executable not found: {self.virtuoso_binary!r}. "
+                "Load the Cadence environment so 'virtuoso' is on PATH, or set "
+                "project.virtuoso_binary to the full executable path in the config."
+            ) from exc
 
         print(
             f"[{self._label}] Started pid={self._proc.pid}, "

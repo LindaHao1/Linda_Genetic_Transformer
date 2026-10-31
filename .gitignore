@@ -11,3 +11,8 @@ Inductor_spar/Simulated_Active_inductance.zip
 
 pixel_gui_designer/gui_settings.json
 virtuoso_optimization_LLM/runs
+
+# Local/proprietary EDA assets and generated transformer runs
+*.proc
+.cadence/
+transformer_runs/

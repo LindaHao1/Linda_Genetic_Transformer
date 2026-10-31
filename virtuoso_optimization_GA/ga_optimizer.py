@@ -27,9 +27,11 @@ Diversity metric
 from __future__ import annotations
 
 import bisect
+import copy
 import json
 import math
 import random
+import select
 import shutil
 import sys
 import time
@@ -38,6 +40,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import yaml
+import numpy as np
 from virtuoso_engine.config_loader import load_config
 
 from virtuoso_optimization_SA.actions import random_action, _ACTION_NAMES
@@ -45,7 +48,7 @@ from virtuoso_optimization_SA.sa_optimizer import _load_design_from_config
 from virtuoso_optimization_SA.cost import (
     compute_total_cost, compute_total_cost_dynamic, compute_state_cost, get_s21_db, get_s11_db,
     compute_cost_breakdown, compute_stopband_region_means, compute_one_sided_pv_scores,
-    specs_from_config, FilterStateSpec,
+    specs_from_config, FilterStateSpec, load_s2p,
 )
 from virtuoso_optimization_SA.inductor_cost import (
     compute_inductor_cost, inductor_spec_from_config,
@@ -2235,12 +2238,617 @@ class InductorGA(SwitchableFilterGA):
 
 
 # ---------------------------------------------------------------------------
+# Octagonal transformer geometry optimization
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TransformerDesign:
+    """Continuous geometry individual for ``mode: oct_transformer``."""
+    pri_inner_r: float
+    pri_width:   float
+    sec_inner_r: float
+    sec_width:   float
+
+    def as_transformer_override(self) -> dict:
+        return {
+            "pri_inner_r": self.pri_inner_r,
+            "pri_width": self.pri_width,
+            "sec_inner_r": self.sec_inner_r,
+            "sec_width": self.sec_width,
+        }
+
+    def __str__(self) -> str:
+        return yaml.dump(self.as_transformer_override(), sort_keys=False).strip()
+
+
+@dataclass
+class TransformerMetrics:
+    Lp: float
+    Ls: float
+    k:  float
+    Qp: float
+    Qs: float
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+class TransformerGA:
+    """GA fine-tuner for the Virtuoso ``oct_transformer`` geometry mode."""
+
+    PARAMS = ("pri_inner_r", "pri_width", "sec_inner_r", "sec_width")
+
+    def __init__(self, config_path: str | Path) -> None:
+        self.config_path = Path(config_path)
+        self.raw = load_config(self.config_path)
+        if self.raw.get("mode") != "oct_transformer":
+            raise ValueError("TransformerGA requires mode: oct_transformer")
+
+        opt = self.raw.get("optimizer", {})
+        parallel = self.raw.get("parallel", {})
+        self.pop_size = int(opt.get("population_size", opt.get("pop_size", 12)))
+        self.n_gen = int(opt.get("generations", opt.get("n_gen", 20)))
+        self.mutation_rate = float(opt.get("mutation_rate", 0.20))
+        self.crossover_rate = float(opt.get("crossover_rate", 0.70))
+        self.elite_fraction = float(opt.get("elite_fraction", 0.20))
+        self.tournament_size = int(opt.get("tournament_size", 3))
+        self.mutation_sigma_fraction = float(opt.get("mutation_sigma_fraction", 0.08))
+        self.seed_population_sigma_fraction = float(opt.get("seed_population_sigma_fraction", 0.20))
+        self.n_parallel = int(opt.get("n_parallel", parallel.get("num_workers", 1)))
+        self.run_until_stop = bool(opt.get("run_until_stop", False))
+        self.seed = opt.get("random_seed", self.raw.get("seed"))
+        self.rng = random.Random(None if self.seed is None else int(self.seed))
+        self.seed_design = self._parse_seed_design(opt.get("seed_design"))
+
+        parent_output = Path(self.raw["project"]["parent_output_dir"])
+        run_name = self.raw.get("outputs", {}).get("run_name", "oct_transformer_ga")
+        self.output_dir = parent_output / run_name
+        self.sims_dir = self.output_dir / "sims"
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.sims_dir.mkdir(parents=True, exist_ok=True)
+
+        self.geometry_range = self._parse_geometry_range(self.raw["geometry_range"])
+        self.target = {k: float(v) for k, v in self.raw.get("target", {}).items()}
+        self.weights = {k: float(v) for k, v in self.raw.get("cost_weights", {}).items()}
+        self.q_no_penalty_above_target = bool(self.raw.get("optimizer", {}).get("q_no_penalty_above_target", False))
+        self.q_maximize = bool(opt.get("q_maximize", False))
+        self.metric_tolerance_pct = {
+            str(k): float(v)
+            for k, v in opt.get("metric_tolerance_pct", {}).items()
+        }
+        self.constraint_penalty_weight = float(opt.get("constraint_penalty_weight", 0.0))
+        self.weight_adjustment_interval = int(opt.get("weight_adjustment_interval", 0))
+        self.weight_error_threshold_pct = float(opt.get("weight_error_threshold_pct", 6.0))
+        self.weight_multiplier = float(opt.get("weight_multiplier", 2.0))
+        self.weight_monitored_metrics = tuple(opt.get("weight_monitored_metrics", ("Lp", "Ls", "k")))
+        invalid_weight_metrics = set(self.weight_monitored_metrics) - {"Lp", "Ls", "k"}
+        if invalid_weight_metrics:
+            raise ValueError(
+                "optimizer.weight_monitored_metrics contains unsupported values: "
+                f"{sorted(invalid_weight_metrics)}"
+            )
+        if self.weight_adjustment_interval < 0:
+            raise ValueError("optimizer.weight_adjustment_interval cannot be negative")
+        if self.weight_error_threshold_pct <= 0.0:
+            raise ValueError("optimizer.weight_error_threshold_pct must be positive")
+        if self.weight_multiplier <= 1.0:
+            raise ValueError("optimizer.weight_multiplier must be greater than 1")
+        self.weight_updates: List[dict] = []
+        self.target_freq = float(self.raw.get("simulation", {}).get("target_freq", 15e9))
+
+        self.engine_config_path = self.output_dir / "engine_config.yaml"
+        engine_cfg = copy.deepcopy(self.raw)
+        engine_cfg["project"]["parent_output_dir"] = str(self.sims_dir)
+        engine_cfg.setdefault("test_design", {})["enabled"] = False
+        engine_cfg.setdefault("parallel", {})["num_workers"] = self.n_parallel
+        with self.engine_config_path.open("w") as f:
+            yaml.dump(engine_cfg, f, default_flow_style=False, sort_keys=False)
+
+        shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
+        self.history: List[dict] = []
+
+    def _parse_seed_design(self, block: Optional[dict]) -> Optional[TransformerDesign]:
+        if not block:
+            return None
+        return TransformerDesign(**{
+            name: float(block[name])
+            for name in self.PARAMS
+        })
+
+    def _parse_geometry_range(self, block: dict) -> Dict[str, Tuple[float, float]]:
+        ranges = {}
+        for name in self.PARAMS:
+            item = block[name]
+            # Width searches may specify only an upper limit. Keep a tiny
+            # positive numerical floor because zero-width layout polygons are
+            # invalid, without imposing a meaningful design lower bound.
+            if "min" in item:
+                lo = float(item["min"])
+            elif name in {"pri_width", "sec_width"}:
+                lo = 1.0e-6
+            else:
+                raise ValueError(f"geometry_range.{name}.min is required")
+            hi = float(item["max"])
+            if hi <= lo:
+                raise ValueError(f"Invalid geometry_range for {name}: max must exceed min")
+            ranges[name] = (lo, hi)
+        return ranges
+
+    def _random_design(self) -> TransformerDesign:
+        vals = {
+            name: self.rng.uniform(*self.geometry_range[name])
+            for name in self.PARAMS
+        }
+        return TransformerDesign(**vals)
+
+    def _random_near_seed(self) -> TransformerDesign:
+        if self.seed_design is None:
+            return self._random_design()
+        vals = self.seed_design.as_transformer_override()
+        for name in self.PARAMS:
+            lo, hi = self.geometry_range[name]
+            sigma = self.seed_population_sigma_fraction * (hi - lo)
+            vals[name] = self._clip(name, vals[name] + self.rng.gauss(0.0, sigma))
+        return TransformerDesign(**vals)
+
+    def _clip(self, name: str, value: float) -> float:
+        lo, hi = self.geometry_range[name]
+        return min(hi, max(lo, value))
+
+    def _crossover(self, a: TransformerDesign, b: TransformerDesign) -> TransformerDesign:
+        vals = {}
+        for name in self.PARAMS:
+            av = getattr(a, name)
+            bv = getattr(b, name)
+            vals[name] = 0.5 * (av + bv)
+        return TransformerDesign(**vals)
+
+    def _mutate(self, d: TransformerDesign) -> TransformerDesign:
+        vals = d.as_transformer_override()
+        for name in self.PARAMS:
+            if self.rng.random() > self.mutation_rate:
+                continue
+            lo, hi = self.geometry_range[name]
+            sigma = self.mutation_sigma_fraction * (hi - lo)
+            vals[name] = self._clip(name, vals[name] + self.rng.gauss(0.0, sigma))
+        return TransformerDesign(**vals)
+
+    def _select(self, scored: List[Tuple[float, TransformerDesign, Optional[TransformerMetrics]]]) -> TransformerDesign:
+        k = min(self.tournament_size, len(scored))
+        contenders = self.rng.sample(scored, k)
+        return min(contenders, key=lambda x: x[0])[1]
+
+    def _override_for_design(self, d: TransformerDesign) -> dict:
+        return {
+            "transformer": d.as_transformer_override(),
+            "test_design": {"enabled": False},
+        }
+
+    def _evaluate_population(
+        self,
+        engine: "ParallelVirtuosoEngine",
+        population: List[TransformerDesign],
+    ) -> List[Tuple[float, TransformerDesign, Optional[TransformerMetrics]]]:
+        results = engine.run_batch([self._override_for_design(d) for d in population])
+        scored = []
+        for design, result in zip(population, results):
+            metrics = self._metrics_from_result(result)
+            cost = self._cost(metrics)
+            scored.append((cost, design, metrics))
+        return scored
+
+    def _metrics_from_result(self, result: "RunResult") -> Optional[TransformerMetrics]:
+        if not result.success or not result.s_param_files:
+            return None
+        try:
+            return self._extract_metrics(result.s_param_files[0])
+        except Exception as exc:  # noqa: BLE001
+            print(f"[TransformerGA] WARNING: metric extraction failed for {result.cell_name}: {exc}")
+            return None
+
+    def _extract_metrics(self, s4p_path: str | Path) -> TransformerMetrics:
+        ntwk = load_s2p(s4p_path)
+        if ntwk.s.shape[1] < 4:
+            raise ValueError(f"Expected a 4-port Touchstone file, got {ntwk.s.shape[1]} ports")
+        idx = int(np.argmin(np.abs(ntwk.f - self.target_freq)))
+        s = ntwk.s[idx]
+        z0 = 50.0
+        ident = np.eye(4, dtype=complex)
+        z = z0 * (ident + s) @ np.linalg.inv(ident - s)
+        freq = float(ntwk.f[idx])
+        omega = 2.0 * math.pi * freq
+
+        zp = z[0, 0] - z[0, 1] - z[1, 0] + z[1, 1]
+        zs = z[2, 2] - z[2, 3] - z[3, 2] + z[3, 3]
+        zm = z[2, 0] - z[2, 1] - z[3, 0] + z[3, 1]
+
+        lp = np.imag(zp) / omega
+        ls = np.imag(zs) / omega
+        m = np.imag(zm) / omega
+        denom = math.sqrt(max(lp * ls, 1e-30))
+        k = float(abs(m) / denom)
+        qp = float(np.imag(zp) / max(np.real(zp), 1e-12))
+        qs = float(np.imag(zs) / max(np.real(zs), 1e-12))
+        return TransformerMetrics(Lp=float(lp), Ls=float(ls), k=k, Qp=qp, Qs=qs)
+
+    def _cost(self, metrics: Optional[TransformerMetrics]) -> float:
+        if metrics is None:
+            return 1e9
+        vals = metrics.as_dict()
+        total = 0.0
+        total_weight = 0.0
+        for name, target in self.target.items():
+            weight = self.weights.get(name, 1.0)
+            value = vals[name]
+            if self.q_maximize and name in {"Qp", "Qs"}:
+                # Monotonically decreasing cost: every Q increase is rewarded,
+                # with no upper target or penalty for exceeding target.
+                proportional_deviation = abs(target) / max(value, 1e-12)
+            elif self.q_no_penalty_above_target and name in {"Qp", "Qs"} and value > target:
+                proportional_deviation = 0.0
+            else:
+                proportional_deviation = abs(value - target) / max(abs(target), 1e-30)
+            total += weight * proportional_deviation
+            total_weight += weight
+        normalized = total / max(total_weight, 1e-30)
+        if self.constraint_penalty_weight > 0.0:
+            # Keep Lp/Ls/k inside explicit tolerances while Q is maximized.
+            # Squaring only the excess produces a smooth feasibility barrier.
+            for name, tolerance_pct in self.metric_tolerance_pct.items():
+                if name not in vals or name not in self.target:
+                    continue
+                error_pct = 100.0 * abs(vals[name] - self.target[name]) / max(
+                    abs(self.target[name]), 1e-30
+                )
+                excess = max(0.0, (error_pct - tolerance_pct) / 100.0)
+                normalized += self.constraint_penalty_weight * excess * excess
+        return float(normalized)
+
+    def _metric_errors_pct(self, metrics: TransformerMetrics) -> Dict[str, float]:
+        vals = metrics.as_dict()
+        return {
+            f"{name}_err_pct": 100.0 * (vals[name] - target) / max(abs(target), 1e-30)
+            for name, target in self.target.items()
+        }
+
+    def _stop_requested(self) -> bool:
+        if not self.run_until_stop:
+            return False
+        if not sys.stdin.isatty():
+            return False
+        ready, _, _ = select.select([sys.stdin], [], [], 0.0)
+        if not ready:
+            return False
+        line = sys.stdin.readline().strip().lower()
+        return line == "stop"
+
+    def _adjust_metric_weights(self, generation: int, metrics: Optional[TransformerMetrics]) -> None:
+        """Increase failing Lp/Ls/k weights at configured generation intervals."""
+        interval = self.weight_adjustment_interval
+        completed_generations = generation + 1
+        if interval <= 0 or completed_generations % interval != 0:
+            return
+        if metrics is None:
+            print(
+                "[TransformerGA] Weight check skipped at generation "
+                f"{completed_generations}: best metrics unavailable"
+            )
+            return
+
+        errors = self._metric_errors_pct(metrics)
+        failing = {
+            name: abs(float(errors[f"{name}_err_pct"]))
+            for name in self.weight_monitored_metrics
+            if abs(float(errors[f"{name}_err_pct"])) > self.weight_error_threshold_pct
+        }
+        old_weights = copy.deepcopy(self.weights)
+        for name in failing:
+            self.weights[name] = float(self.weights.get(name, 1.0)) * self.weight_multiplier
+
+        event = {
+            "completed_generations": completed_generations,
+            "threshold_pct": self.weight_error_threshold_pct,
+            "errors_pct": {
+                name: float(errors[f"{name}_err_pct"])
+                for name in self.weight_monitored_metrics
+            },
+            "failing_metrics": failing,
+            "old_weights": old_weights,
+            "new_weights": copy.deepcopy(self.weights),
+        }
+        self.weight_updates.append(event)
+        (self.output_dir / "weight_updates.json").write_text(json.dumps(self.weight_updates, indent=2))
+
+        if failing:
+            changes = ", ".join(
+                f"{name}: {old_weights.get(name, 1.0):g}->{self.weights[name]:g}"
+                for name in failing
+            )
+            print(
+                f"[TransformerGA] Generation {completed_generations} adaptive weight update: {changes}"
+            )
+        else:
+            print(
+                f"[TransformerGA] Generation {completed_generations} weight check: "
+                f"all Lp/Ls/k errors <= {self.weight_error_threshold_pct:.2f}%"
+            )
+
+    def _write_history(self) -> None:
+        json_path = self.output_dir / "ga_progress.json"
+        csv_path = self.output_dir / "ga_progress.csv"
+        json_path.write_text(json.dumps(self.history, indent=2))
+        fields = [
+            "generation", "rank", "cost",
+            *self.PARAMS,
+            "Lp", "Ls", "k", "Qp", "Qs",
+            "Lp_err_pct", "Ls_err_pct", "k_err_pct", "Qp_err_pct", "Qs_err_pct",
+        ]
+        with csv_path.open("w") as f:
+            f.write(",".join(fields) + "\n")
+            for row in self.history:
+                f.write(",".join(str(row.get(field, "")) for field in fields) + "\n")
+
+    def _record_generation(
+        self,
+        generation: int,
+        scored: List[Tuple[float, TransformerDesign, Optional[TransformerMetrics]]],
+    ) -> None:
+        for rank, (cost, design, metrics) in enumerate(scored):
+            row = {
+                "generation": generation,
+                "rank": rank,
+                "cost": cost,
+                **design.as_transformer_override(),
+            }
+            if metrics is not None:
+                row.update(metrics.as_dict())
+                row.update(self._metric_errors_pct(metrics))
+            self.history.append(row)
+        best_cost, best_design, best_metrics = scored[0]
+        best = {
+            "cost": best_cost,
+            "design": best_design.as_transformer_override(),
+            "metrics": best_metrics.as_dict() if best_metrics is not None else None,
+            "error_pct": self._metric_errors_pct(best_metrics) if best_metrics is not None else None,
+            "target": self.target,
+            "target_freq": self.target_freq,
+        }
+        (self.output_dir / "best_design.json").write_text(json.dumps(best, indent=2))
+        self._write_history()
+
+    def run(self) -> Tuple[TransformerDesign, float]:
+        from virtuoso_engine.parallel_engine import ParallelVirtuosoEngine
+
+        print(f"[TransformerGA] Output: {self.output_dir}")
+        print(f"[TransformerGA] Engine config: {self.engine_config_path}")
+        if self.run_until_stop:
+            print("[TransformerGA] Running until you type 'stop' then press Enter.")
+        if self.seed_design is not None:
+            population = [self.seed_design] + [
+                self._random_near_seed()
+                for _ in range(max(0, self.pop_size - 1))
+            ]
+        else:
+            population = [self._random_design() for _ in range(self.pop_size)]
+        best_design = population[0]
+        best_cost = float("inf")
+
+        log_path = self.output_dir / "parallel_engine.log"
+        with ParallelVirtuosoEngine(
+            self.engine_config_path,
+            num_workers=self.n_parallel,
+            log_path=log_path,
+            quiet=True,
+        ) as engine:
+            gen = 0
+            while True:
+                scored = self._evaluate_population(engine, population)
+                scored.sort(key=lambda x: x[0])
+                self._record_generation(gen, scored)
+
+                if scored[0][0] < best_cost:
+                    best_cost, best_design = scored[0][0], scored[0][1]
+
+                d = scored[0][1]
+                design_txt = (
+                    f" pri_inner_r={d.pri_inner_r:.4f}"
+                    f" pri_width={d.pri_width:.4f}"
+                    f" sec_inner_r={d.sec_inner_r:.4f}"
+                    f" sec_width={d.sec_width:.4f}"
+                )
+                print(f"[TransformerGA] gen {gen:03d}: best={scored[0][0]:.6g}{design_txt}")
+                if scored[0][2] is not None:
+                    m = scored[0][2]
+                    print(
+                        "[TransformerGA]          lumped:"
+                        f" Lp={m.Lp:.6e} H"
+                        f" Ls={m.Ls:.6e} H"
+                        f" k={m.k:.6f}"
+                        f" Qp={m.Qp:.4f}"
+                        f" Qs={m.Qs:.4f}"
+                    )
+                    err = self._metric_errors_pct(m)
+                    print(
+                        "[TransformerGA]          error:"
+                        f" Lp={err['Lp_err_pct']:+.2f}%"
+                        f" Ls={err['Ls_err_pct']:+.2f}%"
+                        f" k={err['k_err_pct']:+.2f}%"
+                        f" Qp={err['Qp_err_pct']:+.2f}%"
+                        f" Qs={err['Qs_err_pct']:+.2f}%"
+                    )
+                else:
+                    print("[TransformerGA]          lumped: unavailable, simulation or S4P extraction failed")
+
+                self._adjust_metric_weights(gen, scored[0][2])
+
+                if self._stop_requested():
+                    print("[TransformerGA] Stop requested; ending after this generation.")
+                    break
+                if not self.run_until_stop and gen >= self.n_gen:
+                    break
+
+                n_elite = max(1, round(self.pop_size * self.elite_fraction))
+                next_pop = [item[1] for item in scored[:n_elite]]
+                while len(next_pop) < self.pop_size:
+                    p1 = self._select(scored)
+                    p2 = self._select(scored)
+                    child = self._crossover(p1, p2) if self.rng.random() < self.crossover_rate else p1
+                    next_pop.append(self._mutate(child))
+                population = next_pop
+                gen += 1
+
+        return best_design, best_cost
+
+
+# ---------------------------------------------------------------------------
 # Convenience function
 # ---------------------------------------------------------------------------
 
-def run_ga(config_path: str | Path) -> Tuple[DesignState, float]:
+def run_adaptive_transformer_ga(config_path: str | Path):
+    """Run staged transformer refinement with adaptive metric weights.
+
+    Each stage is a normal :class:`TransformerGA` run.  After a stage
+    completes, the best Lp/Ls/k percentage errors are inspected.  Metrics
+    outside the configured tolerance have their cost weights multiplied, and
+    the next stage is seeded from the converged geometry.  Q weights are never
+    changed by this supervisor.
+    """
+    config_path = Path(config_path)
+    raw = load_config(config_path)
+    adaptive = raw.get("adaptive_refinement", {})
+    if raw.get("mode") != "oct_transformer":
+        raise ValueError("Adaptive transformer refinement requires mode: oct_transformer")
+
+    monitored = tuple(adaptive.get("monitored_metrics", ("Lp", "Ls", "k")))
+    allowed = {"Lp", "Ls", "k"}
+    invalid = set(monitored) - allowed
+    if invalid:
+        raise ValueError(f"adaptive_refinement.monitored_metrics contains unsupported values: {sorted(invalid)}")
+
+    threshold = float(adaptive.get("error_threshold_pct", 6.0))
+    multiplier = float(adaptive.get("weight_multiplier", 2.0))
+    max_stages = int(adaptive.get("max_stages", 3))
+    refinement_sigma = float(adaptive.get("seed_population_sigma_fraction", 0.10))
+    if threshold <= 0.0:
+        raise ValueError("adaptive_refinement.error_threshold_pct must be positive")
+    if multiplier <= 1.0:
+        raise ValueError("adaptive_refinement.weight_multiplier must be greater than 1")
+    if max_stages < 1:
+        raise ValueError("adaptive_refinement.max_stages must be at least 1")
+
+    parent_output = Path(raw["project"]["parent_output_dir"])
+    base_run_name = raw.get("outputs", {}).get("run_name", "oct_transformer_ga")
+    adaptive_dir = parent_output / base_run_name
+    adaptive_dir.mkdir(parents=True, exist_ok=True)
+
+    weights = {name: float(value) for name, value in raw.get("cost_weights", {}).items()}
+    seed_design = copy.deepcopy(raw.get("optimizer", {}).get("seed_design"))
+    stage_records: List[dict] = []
+    final_design = None
+    final_cost = float("inf")
+    final_best = None
+
+    print(
+        "[AdaptiveTransformerGA] "
+        f"threshold={threshold:.2f}% multiplier={multiplier:g} max_stages={max_stages}"
+    )
+
+    for stage in range(1, max_stages + 1):
+        stage_cfg = copy.deepcopy(raw)
+        stage_name = f"{base_run_name}/stage_{stage:02d}"
+        stage_cfg.setdefault("outputs", {})["run_name"] = stage_name
+        stage_cfg["cost_weights"] = copy.deepcopy(weights)
+        stage_cfg.setdefault("optimizer", {})["run_until_stop"] = False
+        if seed_design is not None:
+            stage_cfg["optimizer"]["seed_design"] = copy.deepcopy(seed_design)
+        if stage > 1:
+            stage_cfg["optimizer"]["seed_population_sigma_fraction"] = refinement_sigma
+        # Prevent the per-stage dispatcher from recursively invoking this
+        # supervisor. TransformerGA itself ignores this block, but disabling it
+        # also makes every saved stage config safe to run independently.
+        stage_cfg.setdefault("adaptive_refinement", {})["enabled"] = False
+
+        stage_config_path = adaptive_dir / f"stage_{stage:02d}_config.yaml"
+        with stage_config_path.open("w") as handle:
+            yaml.dump(stage_cfg, handle, default_flow_style=False, sort_keys=False)
+
+        print(f"[AdaptiveTransformerGA] Stage {stage}/{max_stages}: {stage_name}")
+        print(f"[AdaptiveTransformerGA] Weights: {weights}")
+        final_design, final_cost = TransformerGA(stage_config_path).run()
+
+        stage_output = parent_output / stage_name
+        stage_best_path = stage_output / "best_design.json"
+        if not stage_best_path.exists():
+            raise RuntimeError(f"Adaptive stage did not produce {stage_best_path}")
+        best = json.loads(stage_best_path.read_text())
+        errors = best.get("error_pct")
+        design = best.get("design")
+        if not errors or not design:
+            raise RuntimeError(
+                f"Adaptive stage {stage} has no usable design/metrics; "
+                "inspect its simulation logs before retrying"
+            )
+
+        failing = {
+            name: abs(float(errors[f"{name}_err_pct"]))
+            for name in monitored
+            if abs(float(errors[f"{name}_err_pct"])) > threshold
+        }
+        record = {
+            "stage": stage,
+            "run_name": stage_name,
+            "best_design_path": str(stage_best_path),
+            "cost": best.get("cost"),
+            "design": design,
+            "metrics": best.get("metrics"),
+            "error_pct": errors,
+            "weights_used": copy.deepcopy(weights),
+            "failing_metrics": failing,
+        }
+        stage_records.append(record)
+        final_best = best
+
+        print(
+            "[AdaptiveTransformerGA] Errors: "
+            + ", ".join(f"{name}={float(errors[f'{name}_err_pct']):+.2f}%" for name in monitored)
+        )
+        if not failing:
+            print(f"[AdaptiveTransformerGA] All monitored errors are <= {threshold:.2f}%.")
+            break
+
+        if stage == max_stages:
+            print("[AdaptiveTransformerGA] Maximum refinement stages reached.")
+            break
+
+        for name in failing:
+            weights[name] = float(weights.get(name, 1.0)) * multiplier
+        seed_design = {name: float(design[name]) for name in TransformerGA.PARAMS}
+        print(f"[AdaptiveTransformerGA] Next-stage seed: {seed_design}")
+        print(f"[AdaptiveTransformerGA] Increased weights: {sorted(failing)}")
+
+    summary = {
+        "source_config": str(config_path),
+        "threshold_pct": threshold,
+        "weight_multiplier": multiplier,
+        "max_stages": max_stages,
+        "monitored_metrics": list(monitored),
+        "converged": bool(stage_records and not stage_records[-1]["failing_metrics"]),
+        "stages": stage_records,
+    }
+    (adaptive_dir / "adaptive_summary.json").write_text(json.dumps(summary, indent=2))
+    if final_best is not None:
+        # Keep the conventional top-level best_design.json so run_ga.py and
+        # downstream tooling can find the final adaptive result normally.
+        (adaptive_dir / "best_design.json").write_text(json.dumps(final_best, indent=2))
+    return final_design, final_cost
+
+def run_ga(config_path: str | Path):
     """Run the full GA optimisation from a config file path."""
     raw = load_config(Path(config_path))
+    if raw.get("mode") == "oct_transformer":
+        if raw.get("adaptive_refinement", {}).get("enabled", False):
+            return run_adaptive_transformer_ga(config_path)
+        return TransformerGA(config_path).run()
     if raw.get("inductor_objective", {}).get("enabled", False):
         return InductorGA(config_path).run()
     return SwitchableFilterGA(config_path).run()
