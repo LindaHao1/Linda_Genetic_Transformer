@@ -27,7 +27,7 @@ and edit:
 - transformer metal layers and `geometry_range`
 - `simulation.target_freq`
 
-The bundled octagonal transformer layout template is used when
+The bundled `transformer_layout.il` octagonal transformer template is used when
 `transformer.template_file` is omitted.
 
 ## Supply targets and initial geometry
@@ -58,10 +58,13 @@ python virtuoso_optimization_GA/run_ga.py transformer_job.yaml
 
 The run folder contains:
 
-- `best_design.json`: best geometry, extracted lumped parameters, and errors
-- `ga_progress.csv` and `ga_progress.json`: all generations and candidates
-- `engine_config.yaml`: resolved simulator configuration
-- `sims/`: generated SKILL, EMX logs, GDS, and Touchstone results
+- `transformer_best_design.json`: best geometry, extracted lumped parameters, and errors
+- `transformer_ga_progress.csv` and `transformer_ga_progress.json`: all generations and candidates
+- `transformer_engine_config.yaml`: resolved simulator configuration
+- `transformer_ga_config_snapshot.yaml`: synthesis input used by the run
+- `transformer_parallel_engine.log`: worker and orchestration messages
+- `sims/`: `transformer_config.yaml`, `transformer_generated_layout.il`,
+  `transformer_generated_emx.il`, EMX logs, GDS, and Touchstone results
 
 The extracted differential quantities are:
 

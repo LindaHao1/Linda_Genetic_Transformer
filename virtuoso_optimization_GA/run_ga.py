@@ -70,7 +70,7 @@ def main() -> None:
     cfg = load_config(config_path)
     if cfg.get("mode") == "oct_transformer":
         output_dir = Path(cfg["project"]["parent_output_dir"]) / cfg.get("outputs", {}).get("run_name", "oct_transformer_ga")
-        best_path = output_dir / "best_design.json"
+        best_path = output_dir / "transformer_best_design.json"
         if best_path.exists():
             best = json.loads(best_path.read_text())
             metrics = best.get("metrics") or {}

@@ -133,9 +133,9 @@ _MODE_TEMPLATES: Dict[str, dict] = {
     "full_layout": {
         "layout": "full_layout/layout.il",
     },
-        "oct_transformer": {
-        "layout": "oct_transformer/layout.il",
-        "emx":    "oct_transformer/emx.il",
+    "oct_transformer": {
+        "layout": "carrier_transformer/transformer_layout.il",
+        "emx":    "oct_transformer/transformer_emx.il",
     },
 }
 
@@ -229,7 +229,7 @@ class VirtuosoPixelEngine:
         template_file = (
             Path(template_value).expanduser()
             if template_value
-            else _TEMPLATES_DIR / "carrier_transformer/layout.il"
+            else _TEMPLATES_DIR / "carrier_transformer/transformer_layout.il"
         )
         if not template_file.exists():
             raise FileNotFoundError(f"Transformer SKILL template not found: {template_file}")
@@ -310,7 +310,7 @@ class VirtuosoPixelEngine:
             P1 P2 P3 P4 as signal ports
             GND as local ground
         """
-        template_text = (_TEMPLATES_DIR / "oct_transformer/emx.il").read_text()
+        template_text = (_TEMPLATES_DIR / "oct_transformer/transformer_emx.il").read_text()
 
         sim = cfg["simulation"]
         p = cfg["paths"]
@@ -441,8 +441,11 @@ class VirtuosoPixelEngine:
         for d in (run_dir, emx_dir, log_dir, plot_dir):
             d.mkdir(parents=True, exist_ok=True)
 
+        # Prefix transformer artifacts so mixed-mode result folders remain clear.
+        artifact_prefix = "transformer_" if mode == "oct_transformer" else ""
+
         # --- Save config snapshot ---
-        config_snapshot = run_dir / "config.yaml"
+        config_snapshot = run_dir / f"{artifact_prefix}config.yaml"
         with config_snapshot.open("w") as f:
             yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 
@@ -454,8 +457,8 @@ class VirtuosoPixelEngine:
         runner = self._get_runner(cfg)
 
         # --- Render and run layout script ---
-        layout_il  = run_dir / "generated_layout.il"
-        layout_log = log_dir / "virtuoso_layout.log"
+        layout_il  = run_dir / f"{artifact_prefix}generated_layout.il"
+        layout_log = log_dir / f"{artifact_prefix}virtuoso_layout.log"
         self._render_layout(cfg, cell_name, layout_il)
 
         print(f"{self._lp}[run] Running Virtuoso layout generation ({mode})...")
@@ -473,14 +476,14 @@ class VirtuosoPixelEngine:
                 layout_result=layout_result,
                 sim_result=VirtuosoResult(
                     success=False, returncode=-1,
-                    log_path=log_dir / "virtuoso_sim.log",
+                    log_path=log_dir / f"{artifact_prefix}virtuoso_sim.log",
                     error_message="Skipped due to layout failure.",
                 ),
             )
 
         # --- Render and run simulation / EMX script ---
-        sim_il  = run_dir / "generated_sim.il"
-        sim_log = log_dir / "virtuoso_sim.log"
+        sim_il  = run_dir / f"{artifact_prefix}generated_emx.il"
+        sim_log = log_dir / f"{artifact_prefix}virtuoso_sim.log"
         self._render_sim(cfg, cell_name, emx_dir, sim_il)
 
         print(f"{self._lp}[run] Running Virtuoso EMX + Spectre simulation ({mode})...")

@@ -9,7 +9,7 @@ project:
   display: ":99"
 
 transformer:
-  # template_file is optional; the bundled carrier_transformer/layout.il is used by default.
+  # template_file is optional; bundled transformer_layout.il is used by default.
   cell_name_prefix: synthesized_xfmr
   generated_skill_dir: ./transformer_runs/generated
   pri_layer: AP

@@ -2,7 +2,7 @@
 ; Python-used SKILL template for octagonal transformer
 ;
 ; This file is read by engine.py:
-;   transformer.template_file: ".../templates/carrier_transformer/layout.il"
+;   transformer.template_file: ".../templates/carrier_transformer/transformer_layout.il"
 ;
 ; Python replaces:
 ;   {{LIB_NAME}}, {{CELL_NAME}},

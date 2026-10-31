@@ -2336,7 +2336,7 @@ class TransformerGA:
         self.weight_updates: List[dict] = []
         self.target_freq = float(self.raw.get("simulation", {}).get("target_freq", 15e9))
 
-        self.engine_config_path = self.output_dir / "engine_config.yaml"
+        self.engine_config_path = self.output_dir / "transformer_engine_config.yaml"
         engine_cfg = copy.deepcopy(self.raw)
         engine_cfg["project"]["parent_output_dir"] = str(self.sims_dir)
         engine_cfg.setdefault("test_design", {})["enabled"] = False
@@ -2344,7 +2344,7 @@ class TransformerGA:
         with self.engine_config_path.open("w") as f:
             yaml.dump(engine_cfg, f, default_flow_style=False, sort_keys=False)
 
-        shutil.copy2(self.config_path, self.output_dir / "ga_config_snapshot.yaml")
+        shutil.copy2(self.config_path, self.output_dir / "transformer_ga_config_snapshot.yaml")
         self.history: List[dict] = []
 
     def _parse_seed_design(self, block: Optional[dict]) -> Optional[TransformerDesign]:
@@ -2557,7 +2557,7 @@ class TransformerGA:
             "new_weights": copy.deepcopy(self.weights),
         }
         self.weight_updates.append(event)
-        (self.output_dir / "weight_updates.json").write_text(json.dumps(self.weight_updates, indent=2))
+        (self.output_dir / "transformer_weight_updates.json").write_text(json.dumps(self.weight_updates, indent=2))
 
         if failing:
             changes = ", ".join(
@@ -2574,8 +2574,8 @@ class TransformerGA:
             )
 
     def _write_history(self) -> None:
-        json_path = self.output_dir / "ga_progress.json"
-        csv_path = self.output_dir / "ga_progress.csv"
+        json_path = self.output_dir / "transformer_ga_progress.json"
+        csv_path = self.output_dir / "transformer_ga_progress.csv"
         json_path.write_text(json.dumps(self.history, indent=2))
         fields = [
             "generation", "rank", "cost",
@@ -2613,7 +2613,7 @@ class TransformerGA:
             "target": self.target,
             "target_freq": self.target_freq,
         }
-        (self.output_dir / "best_design.json").write_text(json.dumps(best, indent=2))
+        (self.output_dir / "transformer_best_design.json").write_text(json.dumps(best, indent=2))
         self._write_history()
 
     def run(self) -> Tuple[TransformerDesign, float]:
@@ -2633,7 +2633,7 @@ class TransformerGA:
         best_design = population[0]
         best_cost = float("inf")
 
-        log_path = self.output_dir / "parallel_engine.log"
+        log_path = self.output_dir / "transformer_parallel_engine.log"
         with ParallelVirtuosoEngine(
             self.engine_config_path,
             num_workers=self.n_parallel,
@@ -2777,7 +2777,7 @@ def run_adaptive_transformer_ga(config_path: str | Path):
         final_design, final_cost = TransformerGA(stage_config_path).run()
 
         stage_output = parent_output / stage_name
-        stage_best_path = stage_output / "best_design.json"
+        stage_best_path = stage_output / "transformer_best_design.json"
         if not stage_best_path.exists():
             raise RuntimeError(f"Adaptive stage did not produce {stage_best_path}")
         best = json.loads(stage_best_path.read_text())
@@ -2837,9 +2837,8 @@ def run_adaptive_transformer_ga(config_path: str | Path):
     }
     (adaptive_dir / "adaptive_summary.json").write_text(json.dumps(summary, indent=2))
     if final_best is not None:
-        # Keep the conventional top-level best_design.json so run_ga.py and
-        # downstream tooling can find the final adaptive result normally.
-        (adaptive_dir / "best_design.json").write_text(json.dumps(final_best, indent=2))
+        # Keep a transformer-prefixed top-level result for downstream tooling.
+        (adaptive_dir / "transformer_best_design.json").write_text(json.dumps(final_best, indent=2))
     return final_design, final_cost
 
 def run_ga(config_path: str | Path):
